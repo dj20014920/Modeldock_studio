@@ -1,13 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import path from 'node:path';
 
-// Augment global Navigator type to include `webdriver` (used defensively below).
-declare global {
-  interface Navigator {
-    webdriver?: boolean;
-  }
-}
-
 // Shim for TypeScript to recognize __dirname in CommonJS environment
 declare const __dirname: string;
 

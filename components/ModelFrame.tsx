@@ -1,137 +1,88 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { webViewRegistry } from '../utils/webview-registry';
 import { ModelId } from '../types';
+import { webViewRegistry } from '../utils/webview-registry';
 
 interface ModelFrameProps {
   modelId: ModelId;
+  instanceId?: string; // Make optional to support legacy usages, but should be passed
   url: string;
   title: string;
+  zoomLevel?: number;
+  refreshKey?: number;
 }
 
-export const ModelFrame: React.FC<ModelFrameProps> = ({ modelId, url, title }) => {
+export const ModelFrame: React.FC<ModelFrameProps> = ({ 
+  modelId, 
+  instanceId,
+  url, 
+  title,
+  zoomLevel = 1.0,
+  refreshKey = 0
+}) => {
   const [isLoading, setIsLoading] = useState(true);
-  const [isElectron, setIsElectron] = useState(false);
-  
-  // Config for Electron mode
-  const [preloadPath, setPreloadPath] = useState<string>('');
-  const [userAgent, setUserAgent] = useState<string>('');
-  
-  const viewRef = useRef<any>(null);
+  const webviewRef = useRef<any>(null);
+  const uniqueKey = instanceId || modelId; // Fallback
 
-  // 1. Environment Detection & Config Loading
+  // Register webview with registry
   useEffect(() => {
-    // Check if we are in Electron environment
-    const api = (window as any).electronAPI;
-    const hasElectron = !!api;
-    setIsElectron(hasElectron);
+    const currentWebview = webviewRef.current;
+    if (currentWebview) {
+      webViewRegistry.register(uniqueKey, currentWebview);
 
-    if (hasElectron) {
-      // Electron Mode: Fetch stealth configs
-      try {
-        if (api.getPreloadPath) setPreloadPath(api.getPreloadPath());
-        if (api.getUserAgent) setUserAgent(api.getUserAgent());
-      } catch (e) {
-        console.error("Error fetching electron config:", e);
-      }
-    } else {
-      // Web/Iframe Mode: No config needed, but we stop loading immediately 
-      // or wait for iframe onLoad.
-      console.log("Running in Web/Preview mode. Switching to Iframe fallback.");
-    }
-  }, []);
-
-  // 2. Registry & Event Listeners
-  useEffect(() => {
-    const element = viewRef.current;
-    if (!element) return;
-
-    // Register to registry (stores either <webview> or <iframe>)
-    webViewRegistry.register(modelId, element);
-
-    const handleLoadStart = () => setIsLoading(true);
-    const handleLoadStop = () => setIsLoading(false);
-
-    if (isElectron) {
-      // --- Electron <webview> Events ---
-      const handleDomReady = () => {
-        setIsLoading(false);
-        console.log(`[ModelFrame] ${modelId} DOM ready`);
-      };
-
-      element.addEventListener('dom-ready', handleDomReady);
-      element.addEventListener('did-start-loading', handleLoadStart);
-      element.addEventListener('did-stop-loading', handleLoadStop);
-      element.addEventListener('did-finish-load', handleLoadStop);
-      element.addEventListener('did-fail-load', (event: any) => {
-        console.error(`[ModelFrame] ${modelId} failed to load:`, event);
-        setIsLoading(false);
-      });
+      // Setup event listeners
+      const handleDidFinishLoad = () => setIsLoading(false);
+      currentWebview.addEventListener('did-finish-load', handleDidFinishLoad);
 
       return () => {
-        webViewRegistry.unregister(modelId);
-        element.removeEventListener('dom-ready', handleDomReady);
-        element.removeEventListener('did-start-loading', handleLoadStart);
-        element.removeEventListener('did-stop-loading', handleLoadStop);
-        element.removeEventListener('did-finish-load', handleLoadStop);
-        element.removeEventListener('did-fail-load', handleLoadStop);
-      };
-    } else {
-      // --- Web <iframe> Events ---
-      // For iframes, we rely mainly on the onLoad synthetic event in React,
-      // but we can add a native listener just in case.
-      element.addEventListener('load', handleLoadStop);
-      
-      // Fallback: Iframes don't always fire load if cached or blocked, 
-      // so we force loading to false after a timeout to show the frame.
-      const timer = setTimeout(() => setIsLoading(false), 2000);
-
-      return () => {
-        clearTimeout(timer);
-        webViewRegistry.unregister(modelId);
-        element.removeEventListener('load', handleLoadStop);
+        webViewRegistry.unregister(uniqueKey);
+        if (currentWebview) {
+          currentWebview.removeEventListener('did-finish-load', handleDidFinishLoad);
+        }
       };
     }
-  }, [modelId, isElectron]);
+  }, [uniqueKey, refreshKey]);
+
+  // Handle Zoom
+  useEffect(() => {
+    const currentWebview = webviewRef.current;
+    if (currentWebview && currentWebview.setZoomLevel) {
+        // Electron Zoom Level is different from CSS scale.
+        // 0 is 100%, positive is larger.
+        // Approximation: Math.log2(scale)
+        const electronZoom = Math.log2(zoomLevel);
+        currentWebview.setZoomLevel(electronZoom);
+    }
+  }, [zoomLevel]);
 
   return (
-    <div className="w-full h-full relative bg-white">
+    <div className="w-full h-full relative bg-white overflow-hidden group">
       {/* Loading Indicator */}
       {isLoading && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-sm transition-opacity duration-300 pointer-events-none">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/80 backdrop-blur-sm transition-opacity duration-300 pointer-events-none">
           <div className="flex flex-col items-center gap-3">
             <div className="relative w-12 h-12">
               <div className="absolute inset-0 rounded-full border-4 border-slate-100"></div>
               <div className="absolute inset-0 rounded-full border-4 border-t-indigo-500 animate-spin"></div>
             </div>
             <span className="text-sm font-medium text-slate-500 animate-pulse">
-              Loading {title}...
+              Connecting to {title}...
             </span>
           </div>
         </div>
       )}
 
-      {/* Hybrid Rendering: Webview for Electron, Iframe for Web */}
-      {isElectron ? (
-        <webview
-          ref={viewRef}
-          src={url}
-          partition={`persist:${modelId}`}
-          preload={preloadPath}
-          useragent={userAgent}
-          allowpopups="true"
-          className="w-full h-full flex"
-          style={{ display: 'flex', height: '100%', width: '100%' }}
-        />
-      ) : (
-        <iframe
-          ref={viewRef}
-          src={url}
-          className="w-full h-full border-none"
-          title={title}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-presentation"
-          onLoad={() => setIsLoading(false)}
-        />
-      )}
+      {/* Electron WebView */}
+      <webview
+        key={refreshKey}
+        ref={webviewRef}
+        src={url}
+        style={{ width: '100%', height: '100%' }}
+        partition={`persist:${modelId}`} // Share session cookies per model type
+        allowpopups={true}
+        // @ts-ignore - useragent attribute is valid in Electron
+        useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      />
     </div>
   );
 };

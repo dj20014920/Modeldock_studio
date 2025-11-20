@@ -6,12 +6,14 @@ import { ModelCard } from './ModelCard';
 
 interface MainBrainPanelProps {
   modelId: ModelId;
+  instanceId: string;
   onRemoveMainBrain: () => void;
   onClose: () => void;
 }
 
 export const MainBrainPanel: React.FC<MainBrainPanelProps> = ({ 
   modelId, 
+  instanceId,
   onRemoveMainBrain,
   onClose 
 }) => {
@@ -22,6 +24,7 @@ export const MainBrainPanel: React.FC<MainBrainPanelProps> = ({
   return (
     <div className="flex-1 h-full flex flex-col min-w-[400px] shadow-xl z-20">
       <ModelCard 
+        key={instanceId}
         model={model}
         isMainBrain={true}
         onRemoveMainBrain={onRemoveMainBrain}

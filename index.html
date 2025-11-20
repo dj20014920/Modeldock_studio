@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ModelDock</title>
-    <!-- Load Tailwind CSS via CDN for strict compliance with "No CSS files" rule -->
+    <!-- Load Tailwind CSS via CDN for dev; in production usually bundled, but CDN is allowed if CSP permits -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -23,14 +23,12 @@
       }
     </script>
     <style>
-      /* Minimal global reset to ensure full height */
       html, body, #root {
         height: 100%;
         margin: 0;
         overflow: hidden;
         background-color: #ffffff;
       }
-      /* Custom Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
@@ -46,20 +44,18 @@
         background: #d1d5db;
       }
     </style>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "path": "https://aistudiocdn.com/path@^0.12.7",
-    "url": "https://aistudiocdn.com/url@^0.11.4",
-    "tailwind-merge": "https://aistudiocdn.com/tailwind-merge@^3.4.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
-    "clsx": "https://aistudiocdn.com/clsx@^2.1.1",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "vite": "https://aistudiocdn.com/vite@^7.2.2",
     "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1",
-    "electron": "https://aistudiocdn.com/electron@^39.2.3"
+    "electron": "https://aistudiocdn.com/electron@^39.2.3",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "clsx": "https://aistudiocdn.com/clsx@^2.1.1",
+    "tailwind-merge": "https://aistudiocdn.com/tailwind-merge@^3.4.0"
   }
 }
 </script>

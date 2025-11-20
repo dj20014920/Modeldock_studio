@@ -1,66 +1,108 @@
 
 import React from 'react';
-import { ModelId } from '../types';
+import { ActiveModel } from '../types';
 import { SUPPORTED_MODELS } from '../constants';
 import { ModelCard } from './ModelCard';
+import { clsx } from 'clsx';
 
 interface ModelGridProps {
-  activeModelIds: ModelId[];
-  mainBrainId: ModelId | null;
-  onSetMainBrain: (id: ModelId) => void;
-  onCloseModel: (id: ModelId) => void;
+  activeModels: ActiveModel[];
+  mainBrainInstanceId: string | null;
+  onSetMainBrain: (instanceId: string) => void;
+  onCloseInstance: (instanceId: string) => void;
 }
 
 export const ModelGrid: React.FC<ModelGridProps> = ({ 
-  activeModelIds, 
-  mainBrainId, 
+  activeModels, 
+  mainBrainInstanceId, 
   onSetMainBrain,
-  onCloseModel 
+  onCloseInstance 
 }) => {
-  // Filter out the main brain from the grid
-  const gridModels = activeModelIds.filter(id => id !== mainBrainId);
+  // Filter out the main brain instance from the grid
+  const gridModels = activeModels.filter(m => m.instanceId !== mainBrainInstanceId);
+  const count = gridModels.length;
 
-  if (gridModels.length === 0) {
+  if (count === 0) {
     return (
-      <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400">
-        <p className="text-sm">All active models are in Main Brain view</p>
+      <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 flex-col gap-3 animate-in fade-in duration-500">
+        <div className="w-12 h-12 rounded-xl bg-slate-200/50" />
+        <p className="text-sm font-medium">All active models are in Main Brain view</p>
       </div>
     );
   }
 
-  // Dynamic Grid Layout
-  // If Main Brain is active, we force a single column for the side grid if strictly needed,
-  // or let it auto-flow. For better UX:
-  // - If Main Brain active: 1 column (sidebar style) or 2 columns depending on width.
-  // - If No Main Brain: Auto fit up to 3 columns.
-  
-  const getGridStyle = () => {
-    const count = gridModels.length;
-    if (mainBrainId) {
-      // Side-bar mode (when Main Brain is active)
+  /**
+   * 🧠 Vertical Smart Flow Grid
+   */
+  const getSmartGridLayout = () => {
+    // CASE 1: Sidebar Mode (Main Brain is Active) -> Stack vertically
+    if (mainBrainInstanceId) {
       return {
-        gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-        gridAutoRows: '1fr'
+        containerClass: 'grid-cols-1',
+        getItemClass: () => 'h-full row-span-1'
       };
     }
-    // Full screen mode
-    const cols = count === 1 ? 1 : count <= 4 ? 2 : 3;
+
+    // CASE 2: Single Model -> Full Screen
+    if (count === 1) {
+      return {
+        containerClass: 'grid-cols-1 grid-rows-1',
+        getItemClass: () => 'col-span-1 row-span-1 h-full'
+      };
+    }
+
+    // CASE 3: Two Models -> Side by Side (Standard preference)
+    if (count === 2) {
+      return {
+        containerClass: 'grid-cols-2 grid-rows-1',
+        getItemClass: () => 'col-span-1 row-span-1 h-full'
+      };
+    }
+
+    // CASE 4: 3+ Models (Vertical Flow Logic)
+    // auto-cols-fr ensures that as new columns are created by grid-flow-col, they share equal width.
     return {
-      gridTemplateColumns: `repeat(${cols}, 1fr)`,
+      containerClass: 'grid-rows-2 grid-flow-col auto-cols-fr', 
+      getItemClass: (idx: number) => {
+        const isLast = idx === count - 1;
+        const isOdd = count % 2 !== 0;
+        
+        // If we have an odd number of items, make the very last one take up the full column height
+        if (isOdd && isLast) {
+          return 'row-span-2 h-full';
+        }
+        
+        // Otherwise, it takes up half the height (1 row)
+        return 'row-span-1 h-full';
+      }
     };
   };
 
+  const layout = getSmartGridLayout();
+
   return (
-    <div className="w-full h-full grid bg-slate-200 gap-px overflow-hidden" style={getGridStyle()}>
-      {gridModels.map((id) => {
-        const model = SUPPORTED_MODELS[id];
+    <div className={clsx(
+      "w-full h-full grid bg-slate-200 gap-px overflow-hidden",
+      layout.containerClass
+    )}>
+      {gridModels.map((activeModel, index) => {
+        const modelConfig = SUPPORTED_MODELS[activeModel.modelId];
+        const itemSpanClass = layout.getItemClass(index);
+
         return (
-          <ModelCard 
-            key={id}
-            model={model}
-            onSetMainBrain={() => onSetMainBrain(id)}
-            onClose={() => onCloseModel(id)}
-          />
+          <div 
+            key={activeModel.instanceId} 
+            className={clsx(
+              "relative transition-all duration-300 ease-in-out min-h-0 min-w-0",
+              itemSpanClass
+            )}
+          >
+            <ModelCard 
+              model={modelConfig}
+              onSetMainBrain={() => onSetMainBrain(activeModel.instanceId)}
+              onClose={() => onCloseInstance(activeModel.instanceId)}
+            />
+          </div>
         );
       })}
     </div>

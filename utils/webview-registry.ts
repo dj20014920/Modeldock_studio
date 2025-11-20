@@ -8,7 +8,7 @@ import { ModelId } from '../types';
  */
 class WebViewRegistry {
   private static instance: WebViewRegistry;
-  private webviews: Map<ModelId, any> = new Map();
+  private webviews: Map<string, any> = new Map(); // Key: instanceId (not just ModelId, to support multiple instances)
 
   private constructor() {}
 
@@ -19,22 +19,24 @@ class WebViewRegistry {
     return WebViewRegistry.instance;
   }
 
-  public register(id: ModelId, webview: any) {
-    this.webviews.set(id, webview);
-    console.log(`[WebViewRegistry] Registered: ${id}`);
+  public register(instanceId: string, webview: any) {
+    this.webviews.set(instanceId, webview);
+    // console.debug(`[WebViewRegistry] Registered: ${instanceId}`);
   }
 
-  public unregister(id: ModelId) {
-    this.webviews.delete(id);
-    console.log(`[WebViewRegistry] Unregistered: ${id}`);
+  public unregister(instanceId: string) {
+    if (this.webviews.has(instanceId)) {
+      this.webviews.delete(instanceId);
+      // console.debug(`[WebViewRegistry] Unregistered: ${instanceId}`);
+    }
   }
 
-  public get(id: ModelId): any | undefined {
-    return this.webviews.get(id);
+  public get(instanceId: string): any | undefined {
+    return this.webviews.get(instanceId);
   }
 
-  public getAll(): Map<ModelId, any> {
-    return this.webviews;
+  public getAll(): any[] {
+    return Array.from(this.webviews.values());
   }
 }
 

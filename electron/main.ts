@@ -1,7 +1,6 @@
 import { app, BrowserWindow, session, shell, Session, WebContents } from 'electron';
 import path from 'node:path';
 import process from 'node:process';
-import fs from 'node:fs';
 
 // Shim for TypeScript to recognize __dirname in CommonJS environment
 declare const __dirname: string;
@@ -94,38 +93,14 @@ function createWindow() {
 
   configureSession(session.defaultSession);
 
-  // 🔧 개발/프로덕션 모드 자동 감지 (Robust Development Mode Detection)
-  // 1순위: 환경변수로 명시적 지정
-  // 2순위: dist/index.html 존재 여부로 자동 판단 (프로덕션 빌드 완료 여부)
-  const DEV_SERVER_URL = 'http://localhost:5173';
-  const indexPath = path.join(DIST_PATH, 'index.html');
-  const isDevMode = process.env.VITE_DEV_SERVER_URL || !fs.existsSync(indexPath);
-
-  if (isDevMode) {
-    const devUrl = process.env.VITE_DEV_SERVER_URL || DEV_SERVER_URL;
-    console.log(`[Electron] 🚀 개발 모드: Vite dev server 로드 (${devUrl})`);
-    win.loadURL(devUrl);
+  if (process.env.VITE_DEV_SERVER_URL) {
+    win.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    console.log(`[Electron] 📦 프로덕션 모드: 빌드된 파일 로드 (${indexPath})`);
-    win.loadFile(indexPath);
-  }
-
-  // 개발 모드에서 DevTools 자동 오픈
-  if (isDevMode) {
-    win.webContents.openDevTools({ mode: 'detach' });
+    win.loadFile(path.join(DIST_PATH, 'index.html'));
   }
 
   win.once('ready-to-show', () => {
     win?.show();
-  });
-
-  // 로드 실패 시 상세 에러 로그
-  win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    console.error(`[Electron] ❌ 페이지 로드 실패:`, {
-      errorCode,
-      errorDescription,
-      validatedURL
-    });
   });
 
   // 메인 윈도우의 새 창 처리 (사실상 거의 발생 안 함, webview에서 발생)
@@ -143,14 +118,11 @@ app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() === 'webview') {
     // webview가 세션을 가질 때 설정 (이벤트 루프 다음 틱에 실행)
     setImmediate(() => {
-        if(!contents.isDestroyed() && contents.session) {
-          configureSession(contents.session);
-        }
+        if(contents.session) configureSession(contents.session);
     });
 
-    // 2. Google 로그인 팝업 처리 (contents가 파괴되지 않았을 때만)
-    if (!contents.isDestroyed()) {
-      contents.setWindowOpenHandler(({ url }) => {
+    // 2. Google 로그인 팝업 처리
+    contents.setWindowOpenHandler(({ url }) => {
       // Google 로그인 관련 URL은 앱 내부 팝업으로 허용
       // 이렇게 해야 세션(쿠키)이 앱 내부 스토리지에 저장됨
       if (url.includes('accounts.google.com') || url.includes('google.com/signin')) {
@@ -175,8 +147,7 @@ app.on('web-contents-created', (_event, contents) => {
       }
       
       return { action: 'allow' };
-      });
-    }
+    });
   }
 });
 

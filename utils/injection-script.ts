@@ -12,7 +12,8 @@ export const generateInjectionScript = (text: string, inputSelector: string, sub
       try {
         const input = document.querySelector('${inputSelector}');
         if (!input) {
-          console.warn('ModelDock: Input element not found for selector: ${inputSelector}');
+          // Silent fail or debug log
+          // console.warn('ModelDock: Input element not found for selector: ${inputSelector}');
           return;
         }
 
@@ -35,7 +36,11 @@ export const generateInjectionScript = (text: string, inputSelector: string, sub
         else {
           // Native setter hack for React/Vue to detect change
           const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-          nativeInputValueSetter.call(input, ${safeText});
+          if (nativeInputValueSetter) {
+            nativeInputValueSetter.call(input, ${safeText});
+          } else {
+            input.value = ${safeText};
+          }
           
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -46,8 +51,6 @@ export const generateInjectionScript = (text: string, inputSelector: string, sub
           const submitBtn = document.querySelector('${submitSelector}');
           if (submitBtn && !submitBtn.disabled) {
             submitBtn.click();
-          } else {
-             console.warn('ModelDock: Submit button not found or disabled');
           }
         }, 100);
 

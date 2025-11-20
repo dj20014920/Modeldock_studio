@@ -1,5 +1,6 @@
-import React, { useState, KeyboardEvent } from 'react';
-import { Send, Copy, Zap, AlertTriangle, CheckCircle2 } from 'lucide-react';
+
+import React, { useState, KeyboardEvent, useEffect } from 'react';
+import { Send, Copy, Zap, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 import { DispatchMode, ModelId } from '../types';
 import { INPUT_SELECTORS } from '../constants';
 import { webViewRegistry } from '../utils/webview-registry';
@@ -9,14 +10,42 @@ import { clsx } from 'clsx';
 interface ChatMessageInputProps {
   activeModelIds: ModelId[];
   mainBrainId: ModelId | null;
+  forcedInputText?: string | null; 
+  onInputHandled?: () => void;    
 }
 
-export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({ activeModelIds, mainBrainId }) => {
+type ActionStatus = 'idle' | 'copied' | 'sent' | 'error';
+
+export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({ 
+  activeModelIds, 
+  forcedInputText, 
+  onInputHandled 
+}) => {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<DispatchMode>('manual');
   const [showConsent, setShowConsent] = useState(false);
   const [hasConsented, setHasConsented] = useState(false);
-  const [lastActionStatus, setLastActionStatus] = useState<'idle' | 'copied' | 'sent'>('idle');
+  const [lastActionStatus, setLastActionStatus] = useState<ActionStatus>('idle');
+  const [errorMessage, setErrorMessage] = useState<string>('');
+  
+  // Handle external text injection (e.g., from Prompt Library)
+  useEffect(() => {
+    if (forcedInputText) {
+      setInput(forcedInputText);
+      
+      // Focus the textarea
+      const textarea = document.querySelector('textarea#main-chat-input') as HTMLTextAreaElement;
+      if (textarea) {
+        textarea.focus();
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+      }
+
+      if (onInputHandled) {
+        onInputHandled();
+      }
+    }
+  }, [forcedInputText, onInputHandled]);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -36,42 +65,75 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({ activeModelI
     }
   };
 
-  const performAutoInjection = () => {
-    let sentCount = 0;
+  const performAutoInjection = async () => {
+    setLastActionStatus('idle');
+    setErrorMessage('');
 
-    activeModelIds.forEach((id) => {
-      const view = webViewRegistry.get(id);
-      const selectorConfig = INPUT_SELECTORS[id];
-
-      if (view && selectorConfig) {
-        // Check if it's an Electron Webview with executeJavaScript
-        if (typeof view.executeJavaScript === 'function') {
-          const script = generateInjectionScript(input, selectorConfig.inputSelector, selectorConfig.submitSelector);
-          view.executeJavaScript(script).catch((err: any) => {
-            console.error(`Failed to inject into ${id}`, err);
-          });
-          sentCount++;
-        } else {
-          // Fallback for Iframe Mode (Web Preview)
-          // Direct DOM manipulation across iframes is blocked by CORS unless same-origin.
-          // We just log here to prevent crash.
-          console.warn(`[${id}] Auto-injection skipped: Not in Electron mode.`);
-        }
-      } else {
-        console.warn(`Skipping ${id}: No view or selector config found.`);
+    try {
+      const webviews = webViewRegistry.getAll();
+      
+      if (webviews.length === 0) {
+        setErrorMessage('No active models found');
+        setLastActionStatus('error');
+        setTimeout(() => setLastActionStatus('idle'), 3000);
+        return;
       }
-    });
 
-    if (sentCount > 0) {
-      setLastActionStatus('sent');
-      setInput('');
-      setTimeout(() => setLastActionStatus('idle'), 2000);
-    } else {
-      // If in iframe mode, we can't really "send", so maybe fallback to copy behavior visually?
-      // For now, just clear input to simulate action if user insisted.
-      console.log("Action simulated in Preview Mode");
-      setInput('');
+      let successCount = 0;
+
+      // We iterate over ALL active webviews.
+      // We don't need to map by ModelId because the webview itself knows what it is loading,
+      // but to find the correct selector, we need to know the model type.
+      // The registry stores instances. 
+      // Ideally, the registry or the webview element should have the modelId attribute.
+      
+      // Since we can't easily get props from the DOM element in the registry,
+      // we'll iterate our known Active Models, find their selectors, and try to apply to all webviews
+      // that match the partition or URL. 
+      //
+      // SIMPLIFICATION: We try to inject into ALL registered webviews using the selector 
+      // corresponding to the modelId derived from their partition or src (heuristic).
+      
+      for (const webview of webviews) {
+        try {
+            // Get Model ID from partition "persist:gemini" -> "gemini"
+            const partition = webview.getAttribute('partition') || '';
+            const modelId = partition.replace('persist:', '') as ModelId;
+            
+            const selectorConfig = INPUT_SELECTORS[modelId];
+            if (!selectorConfig) continue;
+
+            const code = generateInjectionScript(
+              input,
+              selectorConfig.inputSelector,
+              selectorConfig.submitSelector
+            );
+
+            // Execute Javascript in the webview
+            await webview.executeJavaScript(code);
+            successCount++;
+        } catch (e) {
+            console.error('Injection failed for a webview', e);
+        }
+      }
+
+      if (successCount > 0) {
+        setLastActionStatus('sent');
+        setInput('');
+      } else {
+        setErrorMessage('Injection failed');
+        setLastActionStatus('error');
+      }
+    } catch (error: any) {
+      console.error('Auto-injection failed:', error);
+      setErrorMessage('System Error');
+      setLastActionStatus('error');
     }
+
+    setTimeout(() => {
+      setLastActionStatus('idle');
+      setErrorMessage('');
+    }, 3000);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -94,7 +156,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({ activeModelI
   };
 
   return (
-    <div className="border-t border-slate-200 bg-white p-4 relative z-50">
+    <div className="border-t border-slate-200 bg-white p-4 relative z-50 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
       {/* Risk Consent Modal */}
       {showConsent && (
         <div className="absolute bottom-full left-0 w-full p-4 bg-amber-50 border-t border-amber-200 shadow-lg animate-in slide-in-from-bottom-2">
@@ -103,26 +165,25 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({ activeModelI
               <AlertTriangle size={24} />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-amber-900">Enable Auto-Routing?</h3>
+              <h3 className="font-bold text-amber-900">자동 전송 기능을 활성화하시겠습니까?</h3>
               <p className="text-sm text-amber-800 mt-1">
-                Auto-routing injects text directly into the AI model's web page. 
-                This behaves like a user typing, but rapid automated actions can sometimes trigger bot detection mechanisms on strict platforms.
+                자동 전송은 모든 활성 AI 모델의 입력창에 직접 텍스트를 입력하고 전송 버튼을 누릅니다.
               </p>
               <p className="text-sm text-amber-800 mt-2 font-medium">
-                Use responsibly. We recommend Manual Mode for sensitive accounts.
+                민감한 계정에서는 수동 모드(Manual Mode) 사용을 권장합니다.
               </p>
               <div className="mt-4 flex gap-3">
                 <button 
                   onClick={() => setShowConsent(false)}
                   className="px-4 py-2 bg-white border border-amber-200 text-amber-800 rounded hover:bg-amber-100 text-sm font-medium"
                 >
-                  Cancel
+                  취소
                 </button>
                 <button 
                   onClick={() => { setHasConsented(true); setShowConsent(false); setMode('auto'); }}
                   className="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 text-sm font-medium shadow-sm"
                 >
-                  I Understand, Enable Auto
+                  네, 활성화합니다
                 </button>
               </div>
             </div>
@@ -146,31 +207,46 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({ activeModelI
               {mode === 'manual' ? <Copy size={12} /> : <Zap size={12} />}
               {mode} Mode
             </button>
-            <span className="text-xs text-slate-400">
-              {mode === 'manual' ? 'Copies to clipboard for you to paste' : 'Injects directly into chats'}
+            <span className="text-xs text-slate-400 hidden sm:inline-block">
+              {mode === 'manual' ? '클립보드에 복사합니다' : '모든 모델에 동시 전송합니다'}
             </span>
           </div>
           
           {/* Feedback Toast */}
           <div className={clsx(
-            "text-xs font-medium flex items-center gap-1.5 transition-opacity duration-300",
-            lastActionStatus === 'idle' ? "opacity-0" : "opacity-100",
-            lastActionStatus === 'copied' ? "text-green-600" : "text-indigo-600"
+            "text-xs font-medium flex items-center gap-1.5 transition-all duration-300",
+            lastActionStatus === 'idle' ? "opacity-0 translate-y-2" : "opacity-100 translate-y-0",
+            lastActionStatus === 'copied' && "text-green-600",
+            lastActionStatus === 'sent' && "text-indigo-600",
+            lastActionStatus === 'error' && "text-red-500"
           )}>
-            <CheckCircle2 size={14} />
-            {lastActionStatus === 'copied' ? 'Copied to clipboard!' : 'Sent to all models!'}
+            {lastActionStatus === 'copied' && <><CheckCircle2 size={14} /> 복사 완료!</>}
+            {lastActionStatus === 'sent' && <><CheckCircle2 size={14} /> 전송 완료!</>}
+            {lastActionStatus === 'error' && <><XCircle size={14} /> {errorMessage || '오류 발생'}</>}
           </div>
         </div>
 
         {/* Input Area */}
-        <div className="relative flex items-end gap-2 bg-slate-50 border border-slate-300 rounded-xl p-2 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 transition-all shadow-sm">
+        <div className={clsx(
+          "relative flex items-end gap-2 bg-slate-50 border rounded-xl p-2 transition-all shadow-sm",
+          lastActionStatus === 'error' 
+            ? "border-red-300 focus-within:ring-2 focus-within:ring-red-500/20"
+            : "border-slate-300 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500"
+        )}>
           <textarea
+            id="main-chat-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={mode === 'manual' ? "Type here, then send to copy..." : "Type message to auto-send to all..."}
-            className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] py-2.5 px-2 text-sm text-slate-800 placeholder:text-slate-400"
+            placeholder={mode === 'manual' ? "내용을 입력하고 전송 버튼을 누르면 복사됩니다..." : "내용을 입력하면 모든 활성 모델에 자동 전송됩니다..."}
+            className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] py-2.5 px-2 text-sm text-slate-800 placeholder:text-slate-400 font-sans"
             rows={1}
+            style={{ height: 'auto' }}
+            onInput={(e) => {
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = 'auto';
+              target.style.height = target.scrollHeight + 'px';
+            }}
           />
           <button
             onClick={handleSend}

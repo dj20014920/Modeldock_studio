@@ -1,8 +1,8 @@
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { ModelConfig } from '../types';
 import { ModelFrame } from './ModelFrame';
-import { Crown, X, Maximize2, Minimize2 } from 'lucide-react';
+import { Crown, X, Minimize2, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface ModelCardProps {
@@ -20,6 +20,25 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   onRemoveMainBrain,
   onClose 
 }) => {
+  // State for Frame Controls
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleZoomIn = useCallback(() => {
+    setZoomLevel(prev => Math.min(prev + 0.1, 1.5)); // Max 150%
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomLevel(prev => Math.max(prev - 0.1, 0.5)); // Min 50%
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshKey(prev => prev + 1);
+  }, []);
+
+  // Formatter for zoom percentage
+  const zoomPercent = Math.round(zoomLevel * 100);
+
   return (
     <div className={clsx(
       "bg-white relative overflow-hidden flex flex-col h-full transition-all duration-300",
@@ -27,21 +46,58 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     )}>
       {/* Model Header Bar */}
       <div className={clsx(
-        "h-10 flex items-center px-3 justify-between z-10 transition-colors select-none",
+        "h-11 flex items-center px-3 justify-between z-10 transition-colors select-none shrink-0",
         isMainBrain ? "bg-amber-50 border-b border-amber-200" : "bg-white border-b border-slate-100"
       )}>
-        <div className="flex items-center gap-2">
-          <div className={clsx("w-2 h-2 rounded-full", model.iconColor)} />
+        {/* Left: Identity */}
+        <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+          <div className={clsx("w-2.5 h-2.5 rounded-full shrink-0 shadow-sm", model.iconColor)} />
           <span className={clsx(
-            "font-semibold text-sm tracking-tight",
+            "font-semibold text-sm tracking-tight truncate",
             isMainBrain ? "text-amber-900" : "text-slate-700"
           )}>
             {model.name}
-            {isMainBrain && <span className="ml-2 text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full font-bold uppercase">Main Brain</span>}
+            {isMainBrain && <span className="ml-2 text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full font-bold uppercase hidden sm:inline-block">Main Brain</span>}
           </span>
         </div>
         
-        <div className="flex items-center gap-1">
+        {/* Right: Controls */}
+        <div className="flex items-center gap-1 ml-2">
+          
+          {/* Zoom Controls Group */}
+          <div className="hidden sm:flex items-center bg-slate-50 rounded-md mr-2 border border-slate-200 shadow-sm">
+            <button 
+              onClick={(e) => { e.stopPropagation(); handleZoomOut(); }}
+              className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-l-md transition-colors disabled:opacity-30"
+              disabled={zoomLevel <= 0.5}
+              title="Zoom Out"
+            >
+              <ZoomOut size={13} />
+            </button>
+            <span className="text-[10px] font-medium text-slate-600 w-9 text-center font-mono tabular-nums">
+              {zoomPercent}%
+            </span>
+            <button 
+              onClick={(e) => { e.stopPropagation(); handleZoomIn(); }}
+              className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-r-md transition-colors disabled:opacity-30"
+              disabled={zoomLevel >= 1.5}
+              title="Zoom In"
+            >
+              <ZoomIn size={13} />
+            </button>
+          </div>
+
+          {/* Refresh */}
+          <button 
+            onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
+            title="Refresh"
+            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all"
+          >
+            <RotateCw size={15} />
+          </button>
+
+          <div className="w-px h-4 bg-slate-200 mx-1" />
+
           {/* Main Brain Toggle */}
           {!isMainBrain && onSetMainBrain && (
             <button 
@@ -77,10 +133,15 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         </div>
       </div>
 
-      {/* Iframe/Webview Container */}
-      <div className="flex-1 relative bg-slate-50">
-        {/* Pass model.id so ModelFrame can register with registry */}
-        <ModelFrame modelId={model.id} url={model.url} title={model.name} />
+      {/* Iframe Container */}
+      <div className="flex-1 relative bg-slate-50 overflow-hidden">
+        <ModelFrame 
+          modelId={model.id} 
+          url={model.url} 
+          title={model.name} 
+          zoomLevel={zoomLevel}
+          refreshKey={refreshKey}
+        />
       </div>
     </div>
   );
