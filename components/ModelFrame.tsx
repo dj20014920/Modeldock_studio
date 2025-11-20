@@ -53,12 +53,11 @@ export const ModelFrame: React.FC<ModelFrameProps> = ({ modelId, url, title }) =
 
     if (isElectron) {
       // --- Electron <webview> Events ---
-      const handleDomReady = () => setIsLoading(false);
-      
-      // Safe check for isLoading method
-      if (typeof element.isLoading === 'function' && !element.isLoading()) {
+      const handleDomReady = () => {
         setIsLoading(false);
-      }
+        // DOM ready 이후에만 isLoading() 같은 메서드를 안전하게 호출 가능
+        // 여기서는 이미 loading을 false로 설정했으므로 추가 체크 불필요
+      };
 
       element.addEventListener('dom-ready', handleDomReady);
       element.addEventListener('did-start-loading', handleLoadStart);
@@ -117,7 +116,7 @@ export const ModelFrame: React.FC<ModelFrameProps> = ({ modelId, url, title }) =
           partition={`persist:${modelId}`}
           preload={preloadPath}
           useragent={userAgent}
-          allowpopups={true}
+          allowpopups="true"
           className="w-full h-full flex"
           style={{ display: 'flex', height: '100%', width: '100%' }}
         />

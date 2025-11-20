@@ -1,6 +1,7 @@
 import { app, BrowserWindow, session, shell, Session } from 'electron';
 import path from 'node:path';
 import process from 'node:process';
+import fs from 'node:fs';
 
 // Shim for TypeScript to recognize __dirname in CommonJS environment
 declare const __dirname: string;
@@ -119,11 +120,38 @@ function createWindow() {
   // Configure default session
   configureSession(session.defaultSession);
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    win.loadURL(process.env.VITE_DEV_SERVER_URL);
+  // 🔧 개발/프로덕션 모드 자동 감지 (Robust Development Mode Detection)
+  // 1순위: 환경변수로 명시적 지정
+  // 2순위: dist/index.html 존재 여부로 자동 판단 (프로덕션 빌드 완료 여부)
+  const DEV_SERVER_URL = 'http://localhost:5173';
+  const indexPath = path.join(DIST_PATH, 'index.html');
+  const isDevMode = process.env.VITE_DEV_SERVER_URL || !fs.existsSync(indexPath);
+
+  if (isDevMode) {
+    const devUrl = process.env.VITE_DEV_SERVER_URL || DEV_SERVER_URL;
+    console.log(`[Electron] 🚀 개발 모드: Vite dev server 로드 (${devUrl})`);
+    win.loadURL(devUrl);
+    
+    // 개발 모드: DevTools 자동 오픈으로 에러 확인 용이하게
+    win.webContents.openDevTools();
   } else {
-    win.loadFile(path.join(DIST_PATH, 'index.html'));
+    console.log(`[Electron] 📦 프로덕션 모드: 빌드된 파일 로드 (${indexPath})`);
+    win.loadFile(indexPath);
   }
+
+  // 🔍 로드 실패 감지 및 디버깅 로그
+  win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[Electron] ❌ 로드 실패:`);
+    console.error(`   URL: ${validatedURL}`);
+    console.error(`   Error Code: ${errorCode}`);
+    console.error(`   Description: ${errorDescription}`);
+  });
+
+  // 콘솔 메시지 캡처 (React/Vite 에러 확인용)
+  win.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    const levelMap = ['VERBOSE', 'INFO', 'WARNING', 'ERROR'];
+    console.log(`[Renderer ${levelMap[level]}] ${message}`);
+  });
 
   // Smooth showing
   win.once('ready-to-show', () => {
