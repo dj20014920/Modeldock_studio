@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "unusedLocals": true,
+    "unusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": "."
+  },
+  "include": ["index.tsx", "App.tsx", "components/**/*", "types.ts", "constants.ts"],
+  "references": [{ "path": "./electron/tsconfig.json" }]
+}

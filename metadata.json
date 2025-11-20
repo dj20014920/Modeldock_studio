@@ -1,0 +1,5 @@
+{
+  "name": "ModelDock",
+  "description": "A unified interface for AI models using Electron, optimized for multitasking with Gemini, Claude, and more.",
+  "requestFramePermissions": []
+}
