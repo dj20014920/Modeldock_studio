@@ -13,6 +13,7 @@ interface ModelFrameProps {
 export const ModelFrame: React.FC<ModelFrameProps> = ({
   url,
   title,
+  zoomLevel = 1,
   refreshKey = 0
 }) => {
   const [isLoading, setIsLoading] = useState(true);
@@ -39,7 +40,12 @@ export const ModelFrame: React.FC<ModelFrameProps> = ({
         key={refreshKey}
         src={url}
         title={title}
-        className="w-full h-full border-none"
+        className="absolute top-0 left-0 border-none origin-top-left"
+        style={{
+          width: `${100 / zoomLevel}%`,
+          height: `${100 / zoomLevel}%`,
+          transform: `scale(${zoomLevel})`
+        }}
         onLoad={() => setIsLoading(false)}
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; microphone; camera; geolocation"
       />

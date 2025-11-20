@@ -12,11 +12,11 @@ interface ModelGridProps {
   onCloseInstance: (instanceId: string) => void;
 }
 
-export const ModelGrid: React.FC<ModelGridProps> = ({ 
-  activeModels, 
-  mainBrainInstanceId, 
+export const ModelGrid: React.FC<ModelGridProps> = ({
+  activeModels,
+  mainBrainInstanceId,
   onSetMainBrain,
-  onCloseInstance 
+  onCloseInstance
 }) => {
   // Filter out the main brain instance from the grid
   const gridModels = activeModels.filter(m => m.instanceId !== mainBrainInstanceId);
@@ -62,16 +62,16 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
     // CASE 4: 3+ Models (Vertical Flow Logic)
     // auto-cols-fr ensures that as new columns are created by grid-flow-col, they share equal width.
     return {
-      containerClass: 'grid-rows-2 grid-flow-col auto-cols-fr', 
+      containerClass: 'grid-rows-2 grid-flow-col auto-cols-fr',
       getItemClass: (idx: number) => {
         const isLast = idx === count - 1;
         const isOdd = count % 2 !== 0;
-        
+
         // If we have an odd number of items, make the very last one take up the full column height
         if (isOdd && isLast) {
           return 'row-span-2 h-full';
         }
-        
+
         // Otherwise, it takes up half the height (1 row)
         return 'row-span-1 h-full';
       }
@@ -82,7 +82,7 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
 
   return (
     <div className={clsx(
-      "w-full h-full grid bg-slate-200 gap-px overflow-hidden",
+      "w-full h-full grid bg-slate-200 gap-px overflow-auto",
       layout.containerClass
     )}>
       {gridModels.map((activeModel, index) => {
@@ -90,14 +90,14 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
         const itemSpanClass = layout.getItemClass(index);
 
         return (
-          <div 
-            key={activeModel.instanceId} 
+          <div
+            key={activeModel.instanceId}
             className={clsx(
               "relative transition-all duration-300 ease-in-out min-h-0 min-w-0",
               itemSpanClass
             )}
           >
-            <ModelCard 
+            <ModelCard
               model={modelConfig}
               onSetMainBrain={() => onSetMainBrain(activeModel.instanceId)}
               onClose={() => onCloseInstance(activeModel.instanceId)}

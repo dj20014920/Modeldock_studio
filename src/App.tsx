@@ -20,7 +20,7 @@ const App: React.FC = () => {
 
   const [mainBrainInstanceId, setMainBrainInstanceId] = usePersistentState<string | null>('saved_main_brain', null);
   const [sidebarView, setSidebarView] = usePersistentState<SidebarView>('saved_view', 'models');
-  
+
   // --- UI State (Transient) ---
   const [isPromptLibraryOpen, setIsPromptLibraryOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -37,10 +37,9 @@ const App: React.FC = () => {
         modelId: id,
         instanceId: `${id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       };
-      
-      // UX: Switch to chats view to show the new instance
-      setSidebarView('chats');
-      
+
+
+
       return [...prev, newInstance];
     });
   }, [setActiveModels, setSidebarView]);
@@ -86,8 +85,8 @@ const App: React.FC = () => {
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Sidebar Navigation */}
-        <Sidebar 
-          activeModels={activeModels} 
+        <Sidebar
+          activeModels={activeModels}
           currentView={sidebarView}
           onViewChange={setSidebarView}
           onTriggerPrompt={() => setIsPromptLibraryOpen(true)}
@@ -100,7 +99,7 @@ const App: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="flex-1 flex flex-col overflow-hidden relative bg-slate-100">
-          
+
           {/* Model Viewport (Grid + Main Brain) */}
           <div className="flex-1 flex overflow-hidden">
             {activeModels.length === 0 ? (
@@ -109,16 +108,16 @@ const App: React.FC = () => {
                   <span className="text-4xl">🤖</span>
                 </div>
                 <div className="text-center">
-                   <h3 className="text-lg font-semibold text-slate-600">No Active Models</h3>
-                   <p className="text-sm mt-1">Select a model from the sidebar to launch your workspace.</p>
+                  <h3 className="text-lg font-semibold text-slate-600">No Active Models</h3>
+                  <p className="text-sm mt-1">Select a model from the sidebar to launch your workspace.</p>
                 </div>
               </div>
             ) : (
               <>
                 {/* Grid Area - Conditionally resized */}
                 <div className={`transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${mainBrainInstanceId ? 'w-1/3 min-w-[350px] border-r border-slate-200 shadow-lg z-10' : 'w-full'}`}>
-                  <ModelGrid 
-                    activeModels={activeModels} 
+                  <ModelGrid
+                    activeModels={activeModels}
                     mainBrainInstanceId={mainBrainInstanceId}
                     onSetMainBrain={handleSetMainBrain}
                     onCloseInstance={handleCloseSpecificInstance}
@@ -127,7 +126,7 @@ const App: React.FC = () => {
 
                 {/* Main Brain Area - Conditionally rendered */}
                 {mainBrainInstanceId && mainBrainModel && (
-                  <MainBrainPanel 
+                  <MainBrainPanel
                     modelId={mainBrainModel.modelId}
                     instanceId={mainBrainInstanceId}
                     onRemoveMainBrain={handleRemoveMainBrain}
@@ -140,24 +139,24 @@ const App: React.FC = () => {
 
           {/* Global Chat Input Footer */}
           {activeModels.length > 0 && (
-             <ChatMessageInput 
-               activeModelIds={activeModelTypes} 
-               mainBrainId={mainBrainModel?.modelId || null}
-               forcedInputText={injectedPromptText}
-               onInputHandled={() => setInjectedPromptText(null)}
-             />
+            <ChatMessageInput
+              activeModelIds={activeModelTypes}
+              mainBrainId={mainBrainModel?.modelId || null}
+              forcedInputText={injectedPromptText}
+              onInputHandled={() => setInjectedPromptText(null)}
+            />
           )}
-          
+
         </main>
 
         {/* Modals Layer (Portals conceptually) */}
-        <PromptLibrary 
-          isOpen={isPromptLibraryOpen} 
+        <PromptLibrary
+          isOpen={isPromptLibraryOpen}
           onClose={() => setIsPromptLibraryOpen(false)}
           onSelectPrompt={(content) => setInjectedPromptText(content)}
         />
 
-        <SettingsModal 
+        <SettingsModal
           isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
         />

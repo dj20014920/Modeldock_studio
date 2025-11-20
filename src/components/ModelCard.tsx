@@ -13,15 +13,15 @@ interface ModelCardProps {
   onClose?: () => void;
 }
 
-export const ModelCard: React.FC<ModelCardProps> = ({ 
-  model, 
-  isMainBrain = false, 
-  onSetMainBrain, 
+export const ModelCard: React.FC<ModelCardProps> = ({
+  model,
+  isMainBrain = false,
+  onSetMainBrain,
   onRemoveMainBrain,
-  onClose 
+  onClose
 }) => {
   // State for Frame Controls
-  const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [zoomLevel, setZoomLevel] = useState(0.75);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleZoomIn = useCallback(() => {
@@ -60,13 +60,13 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             {isMainBrain && <span className="ml-2 text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full font-bold uppercase hidden sm:inline-block">Main Brain</span>}
           </span>
         </div>
-        
+
         {/* Right: Controls */}
         <div className="flex items-center gap-1 ml-2">
-          
+
           {/* Zoom Controls Group */}
           <div className="hidden sm:flex items-center bg-slate-50 rounded-md mr-2 border border-slate-200 shadow-sm">
-            <button 
+            <button
               onClick={(e) => { e.stopPropagation(); handleZoomOut(); }}
               className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-l-md transition-colors disabled:opacity-30"
               disabled={zoomLevel <= 0.5}
@@ -77,7 +77,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             <span className="text-[10px] font-medium text-slate-600 w-9 text-center font-mono tabular-nums">
               {zoomPercent}%
             </span>
-            <button 
+            <button
               onClick={(e) => { e.stopPropagation(); handleZoomIn(); }}
               className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-r-md transition-colors disabled:opacity-30"
               disabled={zoomLevel >= 1.5}
@@ -88,7 +88,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
           </div>
 
           {/* Refresh */}
-          <button 
+          <button
             onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
             title="Refresh"
             className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all"
@@ -100,7 +100,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
           {/* Main Brain Toggle */}
           {!isMainBrain && onSetMainBrain && (
-            <button 
+            <button
               onClick={(e) => { e.stopPropagation(); onSetMainBrain(); }}
               title="Set as Main Brain"
               className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-md transition-all"
@@ -111,7 +111,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
           {/* Demote Main Brain */}
           {isMainBrain && onRemoveMainBrain && (
-            <button 
+            <button
               onClick={(e) => { e.stopPropagation(); onRemoveMainBrain(); }}
               title="Return to Grid"
               className="p-1.5 text-amber-600 hover:text-slate-600 hover:bg-amber-100 rounded-md transition-all"
@@ -122,7 +122,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
           {/* Close Model */}
           {onClose && (
-            <button 
+            <button
               onClick={(e) => { e.stopPropagation(); onClose(); }}
               title="Close Model"
               className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
@@ -135,10 +135,10 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
       {/* Iframe Container */}
       <div className="flex-1 relative bg-slate-50 overflow-hidden">
-        <ModelFrame 
-          modelId={model.id} 
-          url={model.url} 
-          title={model.name} 
+        <ModelFrame
+          modelId={model.id}
+          url={model.url}
+          title={model.name}
           zoomLevel={zoomLevel}
           refreshKey={refreshKey}
         />

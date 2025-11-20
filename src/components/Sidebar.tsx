@@ -200,7 +200,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {currentView === 'chats' ? 'Active Sessions' : 'Available Models'}
         </span>
         {currentView === 'models' && (
-          <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">Max 3</span>
+          <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">Max 3 / model</span>
         )}
       </div>
 
