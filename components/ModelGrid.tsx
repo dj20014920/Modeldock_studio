@@ -1,52 +1,66 @@
+
 import React from 'react';
 import { ModelId } from '../types';
 import { SUPPORTED_MODELS } from '../constants';
-import { ModelFrame } from './ModelFrame';
+import { ModelCard } from './ModelCard';
 
 interface ModelGridProps {
   activeModelIds: ModelId[];
+  mainBrainId: ModelId | null;
+  onSetMainBrain: (id: ModelId) => void;
+  onCloseModel: (id: ModelId) => void;
 }
 
-export const ModelGrid: React.FC<ModelGridProps> = ({ activeModelIds }) => {
-  // Determine grid columns based on active count
-  // 1 model = full width
-  // 2 models = 2 cols
-  // 3+ models = auto-fit (simplified for this demo to max 2 cols for aesthetics)
-  const gridStyle = {
-    gridTemplateColumns: `repeat(${Math.min(activeModelIds.length, 2)}, 1fr)`,
+export const ModelGrid: React.FC<ModelGridProps> = ({ 
+  activeModelIds, 
+  mainBrainId, 
+  onSetMainBrain,
+  onCloseModel 
+}) => {
+  // Filter out the main brain from the grid
+  const gridModels = activeModelIds.filter(id => id !== mainBrainId);
+
+  if (gridModels.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400">
+        <p className="text-sm">All active models are in Main Brain view</p>
+      </div>
+    );
+  }
+
+  // Dynamic Grid Layout
+  // If Main Brain is active, we force a single column for the side grid if strictly needed,
+  // or let it auto-flow. For better UX:
+  // - If Main Brain active: 1 column (sidebar style) or 2 columns depending on width.
+  // - If No Main Brain: Auto fit up to 3 columns.
+  
+  const getGridStyle = () => {
+    const count = gridModels.length;
+    if (mainBrainId) {
+      // Side-bar mode (when Main Brain is active)
+      return {
+        gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+        gridAutoRows: '1fr'
+      };
+    }
+    // Full screen mode
+    const cols = count === 1 ? 1 : count <= 4 ? 2 : 3;
+    return {
+      gridTemplateColumns: `repeat(${cols}, 1fr)`,
+    };
   };
 
   return (
-    <div className="w-full h-full grid gap-px bg-slate-200" style={gridStyle}>
-      {activeModelIds.map((id) => {
+    <div className="w-full h-full grid bg-slate-200 gap-px overflow-hidden" style={getGridStyle()}>
+      {gridModels.map((id) => {
         const model = SUPPORTED_MODELS[id];
         return (
-          <div key={id} className="bg-white relative overflow-hidden flex flex-col h-full">
-            {/* Model Header Bar */}
-            <div className="h-12 border-b border-slate-100 flex items-center px-4 justify-between bg-white z-10">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${model.iconColor}`} />
-                <span className="font-semibold text-sm text-slate-700 tracking-tight">{model.name}</span>
-              </div>
-              <button className="text-slate-400 hover:text-slate-600 transition-colors">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="1" />
-                  <circle cx="19" cy="12" r="1" />
-                  <circle cx="5" cy="12" r="1" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Iframe Container */}
-            <div className="flex-1 relative">
-              <ModelFrame url={model.url} title={model.name} />
-              
-              {/* Visual Overlay (Optional: To mimic the screenshot's clean look before login) 
-                  In a real app, we might show this only if not logged in. 
-                  For now, we render the iframe directly. 
-              */}
-            </div>
-          </div>
+          <ModelCard 
+            key={id}
+            model={model}
+            onSetMainBrain={() => onSetMainBrain(id)}
+            onClose={() => onCloseModel(id)}
+          />
         );
       })}
     </div>

@@ -2,26 +2,40 @@
 import React, { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ModelGrid } from './components/ModelGrid';
+import { MainBrainPanel } from './components/MainBrainPanel';
 import { Header } from './components/Header';
-import { SUPPORTED_MODELS } from './constants';
 import { ModelId } from './types';
 
 const App: React.FC = () => {
-  // State to track which models are active in the grid
-  // Defaulting to Gemini and Claude as per the screenshot
   const [activeModels, setActiveModels] = useState<ModelId[]>(['gemini', 'claude']);
+  const [mainBrainId, setMainBrainId] = useState<ModelId | null>(null);
 
   const toggleModel = (id: ModelId) => {
     if (activeModels.includes(id)) {
+      // If removing the main brain, reset main brain state
+      if (mainBrainId === id) {
+        setMainBrainId(null);
+      }
       setActiveModels(activeModels.filter((m) => m !== id));
     } else {
       setActiveModels([...activeModels, id]);
     }
   };
 
+  const handleSetMainBrain = (id: ModelId) => {
+    setMainBrainId(id);
+  };
+
+  const handleRemoveMainBrain = () => {
+    setMainBrainId(null);
+  };
+
+  const handleCloseModel = (id: ModelId) => {
+    toggleModel(id);
+  };
+
   return (
     <div className="flex flex-col h-screen w-full bg-white text-slate-800 font-sans overflow-hidden selection:bg-blue-100">
-      {/* Custom Title Bar / Header */}
       <Header />
 
       <div className="flex flex-1 overflow-hidden">
@@ -31,15 +45,35 @@ const App: React.FC = () => {
           onToggleModel={toggleModel} 
         />
 
-        {/* Main Content Area (Split Panes) */}
-        <main className="flex-1 relative bg-slate-50">
+        {/* Main Content Area */}
+        <main className="flex-1 flex overflow-hidden relative bg-slate-100">
           {activeModels.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-slate-400 flex-col gap-4">
+            <div className="flex-1 flex items-center justify-center h-full text-slate-400 flex-col gap-4">
               <div className="w-16 h-16 rounded-2xl bg-slate-200 animate-pulse" />
               <p>Select a model from the sidebar to get started</p>
             </div>
           ) : (
-            <ModelGrid activeModelIds={activeModels} />
+            <>
+              {/* Grid Area (Research / Comparison) */}
+              {/* If Main Brain is active, this takes up less space or sits on the left */}
+              <div className={`transition-all duration-300 ease-in-out ${mainBrainId ? 'w-1/3 min-w-[350px] border-r border-slate-200' : 'w-full'}`}>
+                <ModelGrid 
+                  activeModelIds={activeModels} 
+                  mainBrainId={mainBrainId}
+                  onSetMainBrain={handleSetMainBrain}
+                  onCloseModel={handleCloseModel}
+                />
+              </div>
+
+              {/* Main Brain Area */}
+              {mainBrainId && (
+                <MainBrainPanel 
+                  modelId={mainBrainId} 
+                  onRemoveMainBrain={handleRemoveMainBrain}
+                  onClose={() => handleCloseModel(mainBrainId)}
+                />
+              )}
+            </>
           )}
         </main>
       </div>
