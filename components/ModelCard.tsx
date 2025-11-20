@@ -77,9 +77,10 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         </div>
       </div>
 
-      {/* Iframe Container */}
+      {/* Iframe/Webview Container */}
       <div className="flex-1 relative bg-slate-50">
-        <ModelFrame url={model.url} title={model.name} />
+        {/* Pass model.id so ModelFrame can register with registry */}
+        <ModelFrame modelId={model.id} url={model.url} title={model.name} />
       </div>
     </div>
   );

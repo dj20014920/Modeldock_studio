@@ -33,3 +33,12 @@ export interface SidebarItemProps {
   isActive: boolean;
   onClick: () => void;
 }
+
+export type DispatchMode = 'manual' | 'auto';
+
+export interface InjectionSelector {
+  inputSelector: string;
+  submitSelector: string;
+  // Optional: specialized handling flags
+  inputType?: 'textarea' | 'contenteditable'; 
+}

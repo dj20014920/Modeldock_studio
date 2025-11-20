@@ -1,5 +1,5 @@
 
-import { ModelConfig, ModelId } from './types';
+import { ModelConfig, ModelId, InjectionSelector } from './types';
 import { Bot, Cpu, MessageSquare, Sparkles } from 'lucide-react';
 
 export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
@@ -145,3 +145,40 @@ export const NAV_ITEMS = [
   { icon: Sparkles, label: 'Prompts' },
   { icon: Cpu, label: 'Settings' },
 ];
+
+// Selectors for Auto-Injection
+// Note: These are subject to change as AI providers update their UIs.
+// We try to use robust selectors where possible.
+export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
+  chatgpt: {
+    inputSelector: '#prompt-textarea',
+    submitSelector: 'button[data-testid="send-button"]',
+    inputType: 'contenteditable'
+  },
+  claude: {
+    inputSelector: 'div[contenteditable="true"]',
+    submitSelector: 'button[aria-label="Send Message"]',
+    inputType: 'contenteditable'
+  },
+  gemini: {
+    inputSelector: 'div[contenteditable="true"][role="textbox"]',
+    submitSelector: 'button[aria-label="Send message"]',
+    inputType: 'contenteditable'
+  },
+  perplexity: {
+    inputSelector: 'textarea[placeholder*="Ask"]',
+    submitSelector: 'button[aria-label="Submit"]',
+    inputType: 'textarea'
+  },
+  deepseek: {
+    inputSelector: 'textarea',
+    submitSelector: 'div[role="button"]', // Generic fallback, needs specific verification
+    inputType: 'textarea'
+  },
+  mistral: {
+    inputSelector: 'textarea',
+    submitSelector: 'button[type="submit"]',
+    inputType: 'textarea'
+  }
+  // ... others can be added as identified
+};
