@@ -1,5 +1,8 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 process.env.DIST = path.join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(__dirname, '../public');
@@ -54,7 +57,7 @@ function createWindow() {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
     // win.webContents.openDevTools(); // Uncomment for debugging
   } else {
-    win.loadFile(path.join(process.env.DIST!, 'index.html'));
+    win.loadFile(path.join(process.env.DIST, 'index.html'));
   }
 
   // Open external links in system browser, not inside the app
