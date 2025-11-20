@@ -1,67 +1,53 @@
-import { app, BrowserWindow, session, shell, Session } from 'electron';
+import { app, BrowserWindow, session, shell, Session, WebContents } from 'electron';
 import path from 'node:path';
 import process from 'node:process';
-import fs from 'node:fs';
 
 // Shim for TypeScript to recognize __dirname in CommonJS environment
 declare const __dirname: string;
 
-// Fix: Remove import.meta.url (ESM) causing crash in CommonJS build
-// In CommonJS (Electron default), __dirname is globally available.
 const DIST_PATH = path.join(__dirname, '../dist');
-const PUBLIC_PATH = app.isPackaged ? DIST_PATH : path.join(__dirname, '../public');
+
+// 1. 봇 탐지 방지 플래그 (가장 중요)
+// Google이 Electron을 '자동화 도구'로 인식하지 못하게 합니다.
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy,SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure');
 
 let win: BrowserWindow | null;
 
-// 🚀 Ultra-Critical: Exact Chrome Match Configuration (Updated to Chrome 130)
-// Matching current stable Chrome version to pass stringent bot checks.
-const CHROME_MAJOR = '130';
-const CHROME_FULL_VERSION = '130.0.6723.58';
-const USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_FULL_VERSION} Safari/537.36`;
+// Chrome 122 (Electron 29 기반)에 맞춘 깨끗한 User Agent
+// 특정 버전을 명시하는 것보다 일반적인 형태가 로그인 성공률이 높습니다.
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
-// 🛡️ Security & Stealth Configuration
+// 앱 전체에 기본 UserAgent 적용
+app.userAgentFallback = USER_AGENT;
+
 const configureSession = (ses: Session) => {
-  // 1. User Agent Spoofing
   ses.setUserAgent(USER_AGENT);
 
-  // 2. Request Headers: Client Hints Injection & Anti-Detection
   const filter = { urls: ['*://*/*'] };
   
+  // 2. 요청 헤더 세탁
   ses.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     const requestHeaders = details.requestHeaders;
     
-    // Force User-Agent
     requestHeaders['User-Agent'] = USER_AGENT;
 
-    // ⚡️ CRITICAL: Inject correct Client Hints for macOS/Chrome 130
-    // Without this, modern sites (Gemini/Claude) detect the mismatch and block the load.
-    requestHeaders['sec-ch-ua'] = `"Chromium";v="${CHROME_MAJOR}", "Google Chrome";v="${CHROME_MAJOR}", "Not?A_Brand";v="99"`;
-    requestHeaders['sec-ch-ua-mobile'] = '?0';
-    requestHeaders['sec-ch-ua-platform'] = '"macOS"';
-    requestHeaders['sec-ch-ua-platform-version'] = '"14.1.0"'; // Fake a modern macOS version
-    requestHeaders['sec-ch-ua-full-version'] = `"${CHROME_FULL_VERSION}"`;
-    requestHeaders['sec-ch-ua-full-version-list'] = `"Chromium";v="${CHROME_FULL_VERSION}", "Google Chrome";v="${CHROME_FULL_VERSION}", "Not?A_Brand";v="99.0.0.0"`;
-    
-    // Remove Electron signatures
+    // Electron 관련 헤더 제거
     delete requestHeaders['Sec-Electron-Version'];
     delete requestHeaders['X-Electron-Version'];
 
     callback({ requestHeaders });
   });
 
-  // 3. Response Headers: Aggressive Stripping (Like a Chrome Extension)
-  // Removes CSP, Frame Options, and Isolation policies that prevent <webview> rendering.
+  // 3. 응답 헤더 수정 (X-Frame-Options 제거 등)
   ses.webRequest.onHeadersReceived(filter, (details, callback) => {
     const responseHeaders = details.responseHeaders || {};
 
     const headersToDelete = [
       'x-frame-options',
       'content-security-policy',
-      'content-security-policy-report-only',
-      'cross-origin-opener-policy', // COOP: Breaks popup/redirect flows
-      'cross-origin-embedder-policy', // COEP
-      'cross-origin-resource-policy', // CORP
-      'x-content-type-options'        // Strict MIME checks
+      'cross-origin-opener-policy', 
+      'cross-origin-embedder-policy',
     ];
 
     Object.keys(responseHeaders).forEach((header) => {
@@ -70,30 +56,18 @@ const configureSession = (ses: Session) => {
       }
     });
 
-    // Optional: Fix Set-Cookie SameSite=Lax issues inside webviews
-    if (responseHeaders['set-cookie']) {
-      responseHeaders['set-cookie'] = responseHeaders['set-cookie'].map(cookie => {
-        // Force None/Secure to allow cross-partition like behavior if needed
-        return cookie; 
-      });
-    }
-
     callback({
       cancel: false,
       responseHeaders,
     });
   });
 
-  // 4. Permissions: Auto-allow permissions for seamless AI experience
+  // 4. 권한 자동 허용
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedPermissions = [
-      'media', 
-      'geolocation', 
-      'notifications', 
-      'clipboard-read', 
-      'clipboard-sanitized-write',
-      'audio-capture', 
-      'video-capture'
+      'media', 'geolocation', 'notifications', 
+      'clipboard-read', 'clipboard-sanitized-write',
+      'audio-capture', 'video-capture'
     ];
     callback(allowedPermissions.includes(permission));
   });
@@ -109,55 +83,27 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      webviewTag: true, // Enable <webview>
-      sandbox: false, // Often needed for complex preload scripts
-      webSecurity: true // Keep true, we handle headers via webRequest
+      webviewTag: true,
+      sandbox: false,
+      webSecurity: true 
     },
     backgroundColor: '#ffffff',
-    show: false // Wait until ready-to-show to prevent white flash
+    show: false 
   });
 
-  // Configure default session
   configureSession(session.defaultSession);
 
-  // 🔧 개발/프로덕션 모드 자동 감지 (Robust Development Mode Detection)
-  // 1순위: 환경변수로 명시적 지정
-  // 2순위: dist/index.html 존재 여부로 자동 판단 (프로덕션 빌드 완료 여부)
-  const DEV_SERVER_URL = 'http://localhost:5173';
-  const indexPath = path.join(DIST_PATH, 'index.html');
-  const isDevMode = process.env.VITE_DEV_SERVER_URL || !fs.existsSync(indexPath);
-
-  if (isDevMode) {
-    const devUrl = process.env.VITE_DEV_SERVER_URL || DEV_SERVER_URL;
-    console.log(`[Electron] 🚀 개발 모드: Vite dev server 로드 (${devUrl})`);
-    win.loadURL(devUrl);
-    
-    // 개발 모드: DevTools 자동 오픈으로 에러 확인 용이하게
-    win.webContents.openDevTools();
+  if (process.env.VITE_DEV_SERVER_URL) {
+    win.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    console.log(`[Electron] 📦 프로덕션 모드: 빌드된 파일 로드 (${indexPath})`);
-    win.loadFile(indexPath);
+    win.loadFile(path.join(DIST_PATH, 'index.html'));
   }
 
-  // 🔍 로드 실패 감지 및 디버깅 로그
-  win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    console.error(`[Electron] ❌ 로드 실패:`);
-    console.error(`   URL: ${validatedURL}`);
-    console.error(`   Error Code: ${errorCode}`);
-    console.error(`   Description: ${errorDescription}`);
-  });
-
-  // 콘솔 메시지 캡처 (React/Vite 에러 확인용)
-  win.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    const levelMap = ['VERBOSE', 'INFO', 'WARNING', 'ERROR'];
-    console.log(`[Renderer ${levelMap[level]}] ${message}`);
-  });
-
-  // Smooth showing
   win.once('ready-to-show', () => {
     win?.show();
   });
 
+  // 메인 윈도우의 새 창 처리 (사실상 거의 발생 안 함, webview에서 발생)
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http')) {
       shell.openExternal(url);
@@ -166,9 +112,46 @@ function createWindow() {
   });
 }
 
-// ⚡️ SUPER CRITICAL: Handle ALL Partitions (The "Stealth Mode" Hook)
-// Any time a <webview partition="persist:xxx"> is created, this hook fires.
-// We apply the exact same header stripping and UA spoofing to that isolated session.
+// ⚡️ 중요: Webview 내부에서 발생하는 팝업(로그인 창) 처리
+app.on('web-contents-created', (_event, contents) => {
+  // 1. 모든 webview contents에 대해 세션 설정 적용
+  if (contents.getType() === 'webview') {
+    // webview가 세션을 가질 때 설정 (이벤트 루프 다음 틱에 실행)
+    setImmediate(() => {
+        if(contents.session) configureSession(contents.session);
+    });
+
+    // 2. Google 로그인 팝업 처리
+    contents.setWindowOpenHandler(({ url }) => {
+      // Google 로그인 관련 URL은 앱 내부 팝업으로 허용
+      // 이렇게 해야 세션(쿠키)이 앱 내부 스토리지에 저장됨
+      if (url.includes('accounts.google.com') || url.includes('google.com/signin')) {
+        return { 
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 500,
+            height: 600,
+            autoHideMenuBar: true,
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+            }
+          }
+        };
+      }
+      
+      // 그 외 일반 링크는 외부 브라우저로
+      if (url.startsWith('http')) {
+        shell.openExternal(url);
+        return { action: 'deny' };
+      }
+      
+      return { action: 'allow' };
+    });
+  }
+});
+
+// 파티션 세션 처리
 app.on('session-created', (ses) => {
   configureSession(ses);
 });
