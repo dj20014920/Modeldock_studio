@@ -53,18 +53,19 @@ export const ModelFrame: React.FC<ModelFrameProps> = ({ modelId, url, title }) =
 
     if (isElectron) {
       // --- Electron <webview> Events ---
-      const handleDomReady = () => setIsLoading(false);
-      
-      // Safe check for isLoading method
-      if (typeof element.isLoading === 'function' && !element.isLoading()) {
+      const handleDomReady = () => {
         setIsLoading(false);
-      }
+        console.log(`[ModelFrame] ${modelId} DOM ready`);
+      };
 
       element.addEventListener('dom-ready', handleDomReady);
       element.addEventListener('did-start-loading', handleLoadStart);
       element.addEventListener('did-stop-loading', handleLoadStop);
       element.addEventListener('did-finish-load', handleLoadStop);
-      element.addEventListener('did-fail-load', handleLoadStop); // Safety
+      element.addEventListener('did-fail-load', (event: any) => {
+        console.error(`[ModelFrame] ${modelId} failed to load:`, event);
+        setIsLoading(false);
+      });
 
       return () => {
         webViewRegistry.unregister(modelId);
@@ -117,7 +118,7 @@ export const ModelFrame: React.FC<ModelFrameProps> = ({ modelId, url, title }) =
           partition={`persist:${modelId}`}
           preload={preloadPath}
           useragent={userAgent}
-          allowpopups={true}
+          allowpopups="true"
           className="w-full h-full flex"
           style={{ display: 'flex', height: '100%', width: '100%' }}
         />
