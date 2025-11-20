@@ -13,14 +13,14 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
   claude: {
     id: 'claude',
     name: 'Claude',
-    url: 'https://claude.ai/new',
+    url: 'https://claude.ai/chats',
     iconColor: 'bg-orange-500',
     themeColor: 'border-orange-200'
   },
   chatgpt: {
     id: 'chatgpt',
     name: 'ChatGPT',
-    url: 'https://chatgpt.com',
+    url: 'https://chat.openai.com',
     iconColor: 'bg-green-500',
     themeColor: 'border-green-200'
   },
@@ -145,6 +145,7 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
   }
 };
 
+// For the sidebar visual construction
 export const NAV_ITEMS = [
   { id: 'chats', icon: MessageSquare, label: 'Chats' },
   { id: 'models', icon: Bot, label: 'Models' },
@@ -152,39 +153,36 @@ export const NAV_ITEMS = [
   { id: 'settings', icon: Cpu, label: 'Settings' },
 ] as const;
 
-// --- Updated Selectors for Auto-Injection (As of May 2024) ---
+// Selectors for Auto-Injection
 export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   chatgpt: {
-    // Target the ID directly, reliable fallback
-    inputSelector: '#prompt-textarea', 
+    inputSelector: '#prompt-textarea',
     submitSelector: 'button[data-testid="send-button"]',
     inputType: 'contenteditable'
   },
   claude: {
-    // Claude uses ProseMirror with contenteditable
-    inputSelector: 'div[contenteditable="true"].ProseMirror', 
+    inputSelector: 'div[contenteditable="true"]',
     submitSelector: 'button[aria-label="Send Message"]',
     inputType: 'contenteditable'
   },
   gemini: {
-    // Gemini uses a rich-textarea component
-    inputSelector: 'div[role="textbox"][contenteditable="true"]', 
+    inputSelector: 'div[contenteditable="true"][role="textbox"]',
     submitSelector: 'button[aria-label="Send message"]',
     inputType: 'contenteditable'
   },
+  grok: {
+    inputSelector: 'textarea', 
+    submitSelector: 'button[type="submit"]',
+    inputType: 'textarea'
+  },
   perplexity: {
-    inputSelector: 'textarea[placeholder*="Ask"]', 
+    inputSelector: 'textarea[placeholder*="Ask"]',
     submitSelector: 'button[aria-label="Submit"]',
     inputType: 'textarea'
   },
   deepseek: {
-    inputSelector: 'textarea#chat-input', 
-    submitSelector: 'div[role="button"].ds-button', // Need to be generic sometimes
-    inputType: 'textarea'
-  },
-  grok: {
     inputSelector: 'textarea',
-    submitSelector: 'button[type="submit"]',
+    submitSelector: 'div[role="button"]',
     inputType: 'textarea'
   },
   mistral: {

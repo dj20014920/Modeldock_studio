@@ -1,15 +1,15 @@
 
-export type ModelId = 
-  | 'gemini' 
-  | 'claude' 
-  | 'chatgpt' 
-  | 'perplexity' 
-  | 'deepseek' 
+export type ModelId =
+  | 'gemini'
+  | 'claude'
+  | 'chatgpt'
+  | 'perplexity'
+  | 'deepseek'
   | 'grok'
-  | 'qwen' 
-  | 'lmarena' 
-  | 'kimi' 
-  | 'mistral' 
+  | 'qwen'
+  | 'lmarena'
+  | 'kimi'
+  | 'mistral'
   | 'openrouter'
   | 'aistudio'
   | 'codex'
@@ -47,7 +47,7 @@ export interface InjectionSelector {
   inputSelector: string;
   submitSelector: string;
   // Optional: specialized handling flags
-  inputType?: 'textarea' | 'contenteditable'; 
+  inputType?: 'textarea' | 'contenteditable';
 }
 
 // --- Prompt Library Types ---
@@ -66,16 +66,4 @@ export interface PromptData {
 
 export type SidebarView = 'chats' | 'models';
 
-// --- Electron WebView Type Augmentation ---
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      webview: React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement> & {
-        src?: string;
-        partition?: string;
-        allowpopups?: boolean;
-        preload?: string;
-      }, HTMLElement>;
-    }
-  }
-}
+

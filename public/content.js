@@ -9,19 +9,43 @@
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type !== 'INJECT_INPUT') return;
 
-    const { text, inputSelector, submitSelector } = request.payload;
-    const input = document.querySelector(inputSelector);
-    
-    if (!input) {
-      // Frame mismatch is expected as we broadcast to all frames
+    const { text, targets } = request.payload;
+
+    // Find the matching target for this frame's URL
+    const currentHost = window.location.hostname;
+    // We need to map ModelId to Hostname or check if the current URL matches the model's URL
+    // Since we don't have the URL map here, we can rely on the fact that targets might contain enough info,
+    // OR we can just try all selectors (less safe).
+    // Better: The payload 'targets' should ideally contain the expected hostname or we check `SUPPORTED_MODELS` logic.
+    // But `ChatMessageInput` sent `activeSelectors` which has `modelId`.
+
+    // Let's assume we try to match based on the selectors presence. 
+    // OR better, we check if the element exists.
+
+    let matchedTarget = null;
+    for (const target of targets) {
+      // Simple heuristic: Check if the input selector exists in this frame
+      if (document.querySelector(target.inputSelector)) {
+        matchedTarget = target;
+        break;
+      }
+    }
+
+    if (!matchedTarget) {
+      // This frame doesn't match any active model's selector
       return;
     }
 
+    const { inputSelector, submitSelector } = matchedTarget;
+    const input = document.querySelector(inputSelector);
+
+    if (!input) return; // Should not happen if we just checked, but safety first
+
     try {
       const success = robustInject(input, text);
-      
+
       if (success) {
-         // Smart Submit Logic
+        // Smart Submit Logic
         setTimeout(() => {
           if (submitSelector) {
             const submitBtn = document.querySelector(submitSelector);
@@ -34,7 +58,7 @@
             }
           }
         }, 200); // Slight delay to allow validation state to update
-        
+
         sendResponse({ status: 'success', host: window.location.host });
       } else {
         sendResponse({ status: 'failed_injection', host: window.location.host });
@@ -44,7 +68,7 @@
       console.error('[ModelDock] Injection Error:', err);
       sendResponse({ status: 'error', message: err.toString() });
     }
-    
+
     return true;
   });
 
@@ -56,11 +80,11 @@
 
     // Strategy 1: execCommand (Best for Rich Text Editors like Claude/Gmail)
     if (document.queryCommandSupported('insertText')) {
-       // Select all content first to replace or just append? 
-       // Context implies appending or replacing. Let's replace for chat inputs mostly.
-       // But simpler to just insert.
-       const success = document.execCommand('insertText', false, text);
-       if (success) return true;
+      // Select all content first to replace or just append? 
+      // Context implies appending or replacing. Let's replace for chat inputs mostly.
+      // But simpler to just insert.
+      const success = document.execCommand('insertText', false, text);
+      if (success) return true;
     }
 
     // Strategy 2: Native Value Setter (Best for React Inputs/Textareas)
@@ -69,13 +93,13 @@
     if (tag === 'textarea' || tag === 'input') {
       const proto = window.HTMLTextAreaElement.prototype;
       const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      
+
       if (nativeSetter) {
         nativeSetter.call(element, text);
       } else {
         element.value = text;
       }
-      
+
       element.dispatchEvent(new Event('input', { bubbles: true }));
       element.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
@@ -104,6 +128,6 @@
     });
     element.dispatchEvent(event);
   }
-  
+
   console.log('[ModelDock] Hooked into frame:', window.location.host);
 })();

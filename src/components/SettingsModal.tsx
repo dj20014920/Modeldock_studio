@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Monitor, Database, Shield, Info, X } from 'lucide-react';
+import { Monitor, Shield, Info, X } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -19,9 +19,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             <X size={20} />
           </button>
         </div>
-        
+
         <div className="p-6 space-y-6">
-          
+
           {/* Section 1 */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
@@ -45,17 +45,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             <div className="space-y-2">
               <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
                 <div className="flex flex-col">
-                   <span className="text-sm font-medium text-slate-700">Clear Local Data</span>
-                   <span className="text-xs text-slate-400">Removes local prompts and preferences.</span>
+                  <span className="text-sm font-medium text-slate-700">Clear Local Data</span>
+                  <span className="text-xs text-slate-400">Removes local prompts and preferences.</span>
                 </div>
-                <button 
-                   onClick={() => {
-                      if(confirm('Clear all local settings?')) {
-                        localStorage.clear();
-                        window.location.reload();
-                      }
-                   }}
-                   className="text-xs bg-white border border-red-200 text-red-600 px-3 py-1.5 rounded hover:bg-red-50 font-medium transition-colors"
+                <button
+                  onClick={() => {
+                    if (confirm('Clear all local settings?')) {
+                      localStorage.clear();
+                      window.location.reload();
+                    }
+                  }}
+                  className="text-xs bg-white border border-red-200 text-red-600 px-3 py-1.5 rounded hover:bg-red-50 font-medium transition-colors"
                 >
                   Clear Data
                 </button>
@@ -63,8 +63,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             </div>
           </div>
 
-           {/* Section 3 */}
-           <div className="space-y-3">
+          {/* Section 3 */}
+          <div className="space-y-3">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
               <Info size={14} /> About
             </h3>
