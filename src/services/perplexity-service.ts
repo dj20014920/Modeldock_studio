@@ -1,3 +1,11 @@
+import * as mammoth from 'mammoth';
+import * as pdfjsLib from 'pdfjs-dist';
+// @ts-ignore
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+
+// Set worker source for PDF.js
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
 export interface PerplexityFile {
     name: string;
     type: string;
@@ -37,6 +45,13 @@ class PerplexityService {
         error: null,
         deepResearchEnabled: false
     };
+
+    // Multi-turn conversation state
+    private conversationState: {
+        frontendContextUuid?: string;
+        lastBackendUuid?: string;
+        readWriteToken?: string;
+    } = {};
 
     private listeners: Set<Listener> = new Set();
     private proxyTabId: number | null = null;
@@ -78,6 +93,12 @@ class PerplexityService {
 
     public toggleDeepResearch() {
         this.state.deepResearchEnabled = !this.state.deepResearchEnabled;
+        this.notify();
+    }
+
+    public resetConversation() {
+        this.state.messages = [];
+        this.conversationState = {};
         this.notify();
     }
 
@@ -170,35 +191,34 @@ class PerplexityService {
                 this.decrementQuota();
             }
 
-            // 3. Process Files
+            // 3. Process Files (Client-Side Extraction)
             let finalQuery = text;
-            const uploadedFileIds = [];
 
             if (files.length > 0) {
+                finalQuery += '\n\n';
                 for (const file of files) {
-                    if (this.isTextFile(file.type) || file.name.match(/\.(txt|md|csv|json|js|ts|py|html|css)$/i)) {
-                        const content = this.base64ToText(file.data);
-                        finalQuery += `\n\n--- Attached File: ${file.name} ---\n${content}\n--- End File ---`;
-                    } else {
-                        const uploaded = await this.uploadFile(file);
-                        if (uploaded && uploaded.id) {
-                            uploadedFileIds.push(uploaded.id);
-                        }
+                    try {
+                        const extractedText = await this.extractTextFromFile(file);
+                        finalQuery += `[Attachment: ${file.name}]\n\`\`\`${this.getFileExtension(file.name)}\n${extractedText}\n\`\`\`\n\n`;
+                    } catch (e) {
+                        console.error(`Failed to extract text from ${file.name}:`, e);
+                        finalQuery += `[Attachment: ${file.name}]\n(Error extracting content: ${e instanceof Error ? e.message : 'Unknown error'})\n\n`;
                     }
                 }
+                finalQuery += 'Please refer to the attached file(s) above for context.';
             }
 
-            // 4. Prepare Payload (Matching api.ts structure)
+            // 4. Prepare Payload (Matching HAR analysis)
             const isDeep = this.state.deepResearchEnabled;
+            const isFollowUp = !!this.conversationState.lastBackendUuid;
 
             const params: any = {
                 search_focus: 'internet',
                 sources: ['web'],
                 search_recency_filter: null,
-                mode: isDeep ? 'research' : 'copilot', // api.ts line 40
-                model_preference: 'pplx_alpha', // api.ts line 41
+                mode: isDeep ? 'research' : 'concise', // 'concise' matches HAR for turbo/standard
+                model_preference: 'turbo', // Default to turbo as seen in HAR
                 prompt_source: 'user',
-                query_source: 'home',
                 is_related_query: false,
                 is_sponsored: false,
                 is_incognito: false,
@@ -213,12 +233,26 @@ class PerplexityService {
                 use_schematized_api: true,
                 send_back_text_in_streaming_api: false,
                 version: '2.18',
-                attachments: uploadedFileIds.length > 0 ? uploadedFileIds : [],
-                language: "en-US",
+                attachments: [], // We embed in text as we don't have the upload ID
+                language: "en-US", // Or detect from browser/user settings
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 frontend_uuid: this.generateUUID(),
-                frontend_context_uuid: this.generateUUID(),
             };
+
+            if (isFollowUp) {
+                // Multi-turn: Follow-up Query
+                params.query_source = 'followup';
+                params.followup_source = 'link';
+                params.last_backend_uuid = this.conversationState.lastBackendUuid;
+                params.read_write_token = this.conversationState.readWriteToken;
+                // IMPORTANT: Do NOT send frontend_context_uuid in follow-up requests
+            } else {
+                // Multi-turn: Initial Query
+                params.query_source = 'home';
+                // Generate and store new context UUID for this session
+                this.conversationState.frontendContextUuid = this.generateUUID();
+                params.frontend_context_uuid = this.conversationState.frontendContextUuid;
+            }
 
             if (isDeep) {
                 Object.assign(params, {
@@ -241,8 +275,6 @@ class PerplexityService {
                 : 'https://www.perplexity.ai/rest/sse/perplexity_ask';
 
             if (this.capturedEndpoint) {
-                // If we captured an endpoint, prefer it, but respect deep/ask switch if possible
-                // For now, just use captured if available as it's likely the correct one for the current session
                 endpoint = this.capturedEndpoint;
             }
 
@@ -266,16 +298,70 @@ class PerplexityService {
         }
     }
 
-    private isTextFile(mimeType: string): boolean {
-        return mimeType.startsWith('text/') ||
-            mimeType.includes('json') ||
-            mimeType.includes('javascript') ||
-            mimeType.includes('xml');
+    private getFileExtension(filename: string): string {
+        return filename.split('.').pop() || 'txt';
+    }
+
+    private async extractTextFromFile(file: PerplexityFile): Promise<string> {
+        const buffer = this.base64ToArrayBuffer(file.data);
+        const type = file.type.toLowerCase();
+
+        // 1. PDF
+        if (type === 'application/pdf' || file.name.endsWith('.pdf')) {
+            try {
+                const loadingTask = pdfjsLib.getDocument({ data: buffer });
+                const pdf = await loadingTask.promise;
+                let fullText = '';
+
+                // Limit pages to avoid massive context
+                const maxPages = Math.min(pdf.numPages, 10);
+
+                for (let i = 1; i <= maxPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items
+                        .map((item: any) => item.str)
+                        .join(' ');
+                    fullText += `[Page ${i}]\n${pageText}\n\n`;
+                }
+
+                if (pdf.numPages > 10) {
+                    fullText += `\n... (Truncated: ${pdf.numPages - 10} more pages)`;
+                }
+
+                return fullText;
+            } catch (e) {
+                throw new Error('PDF parsing failed');
+            }
+        }
+
+        // 2. DOCX
+        if (type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || file.name.endsWith('.docx')) {
+            try {
+                const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+                return result.value;
+            } catch (e) {
+                throw new Error('DOCX parsing failed');
+            }
+        }
+
+        // 3. Text/Code/JSON
+        if (type.startsWith('text/') || type.includes('json') || type.includes('javascript') || type.includes('xml') || file.name.endsWith('.ts') || file.name.endsWith('.md')) {
+            return this.base64ToText(file.data);
+        }
+
+        // 4. Images (Unsupported via Text Embedding)
+        if (type.startsWith('image/')) {
+            return `[Image Attachment: ${file.name}]\n(Note: Image content analysis is not supported in this mode. Please describe the image or use the official app.)`;
+        }
+
+        // Fallback for unknown types
+        return `[Attachment: ${file.name}]\n(Binary file content omitted)`;
     }
 
     private base64ToText(dataUrl: string): string {
         try {
-            const base64 = dataUrl.split(',')[1];
+            const base64 = dataUrl.split(',')[1] || dataUrl;
             return atob(base64);
         } catch (e) {
             console.error('Failed to decode base64 file', e);
@@ -283,8 +369,15 @@ class PerplexityService {
         }
     }
 
-    private async uploadFile(file: PerplexityFile): Promise<PerplexityFile> {
-        return { ...file, id: 'mock-file-id-' + Date.now() };
+    private base64ToArrayBuffer(dataUrl: string): ArrayBuffer {
+        const base64 = dataUrl.split(',')[1] || dataUrl;
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
     }
 
     private handleChunk(chunk: string) {
@@ -302,6 +395,15 @@ class PerplexityService {
 
                 try {
                     const data = JSON.parse(jsonStr);
+
+                    // Capture Multi-turn Context from the FIRST valid response packet
+                    if (data.backend_uuid && !this.conversationState.lastBackendUuid) {
+                        this.conversationState.lastBackendUuid = data.backend_uuid;
+                    }
+                    if (data.read_write_token && !this.conversationState.readWriteToken) {
+                        this.conversationState.readWriteToken = data.read_write_token;
+                    }
+                    // Note: We don't need to capture context_uuid as it's not sent back in follow-ups
 
                     // Handle different data structures based on api.ts logic
                     let newText = '';

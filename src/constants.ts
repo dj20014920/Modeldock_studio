@@ -161,30 +161,31 @@ export const NAV_ITEMS = [
 // Selectors for Auto-Injection
 export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   chatgpt: {
-    inputSelector: '#prompt-textarea, textarea[data-id="root"]',
+    inputSelector: '#prompt-textarea, textarea[data-id="root"], textarea[data-testid="prompt-textarea"]',
     submitSelector: 'button[data-testid="send-button"], button[aria-label="Send prompt"]',
     inputType: 'textarea',
     delayBeforeSubmit: 300
   },
   claude: {
-    inputSelector: 'div[contenteditable="true"][aria-label*="Message"], div[contenteditable="true"]',
-    submitSelector: 'button[aria-label*="Send Message"], button[aria-label="Send"]',
+    inputSelector: 'div[data-testid="message-composer"] [contenteditable="true"], div[contenteditable="true"][aria-label*="Message"], div[contenteditable="true"]',
+    submitSelector: 'button[aria-label*="Send Message"], button[aria-label="Send"], button:has(svg path[d*="M"])',
     inputType: 'contenteditable',
-    delayBeforeSubmit: 500
+    delayBeforeSubmit: 600,
+    forceEnter: true
   },
   gemini: {
     inputSelector: 'div[contenteditable="true"][role="textbox"], rich-textarea > div',
     submitSelector: 'button[aria-label="Send message"], button[aria-label="보내기"], button[data-test-id="send-button"], button[aria-label*="Send"]',
     inputType: 'contenteditable',
-    forceEnter: true, // Gemini often requires Enter or very specific button clicks
+    forceEnter: true,
     delayBeforeSubmit: 800
   },
   grok: {
-    inputSelector: 'textarea, div[contenteditable="true"]',
-    submitSelector: 'button[aria-label="Send"], button[type="submit"]',
-    inputType: 'textarea',
+    inputSelector: 'div[role="textbox"][contenteditable="true"], textarea, div[contenteditable="true"]',
+    submitSelector: 'button[aria-label="Send"], button[type="submit"], button:has(svg path[d*="M"])',
+    inputType: 'contenteditable', // Changed to contenteditable priority
     forceEnter: true,
-    delayBeforeSubmit: 500
+    delayBeforeSubmit: 1000
   },
   perplexity: {
     inputSelector: 'textarea[placeholder*="Ask"], textarea',
@@ -200,10 +201,11 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     delayBeforeSubmit: 500
   },
   mistral: {
-    inputSelector: 'textarea, div[contenteditable="true"]',
-    submitSelector: 'button[type="submit"], button[aria-label="Send"]',
+    inputSelector: 'textarea, div[contenteditable="true"], input[type="text"]',
+    submitSelector: 'button[type="submit"], button[aria-label="Send"], button[aria-label="Chat"]',
     inputType: 'textarea',
-    forceEnter: true
+    forceEnter: true,
+    delayBeforeSubmit: 500
   },
   qwen: {
     inputSelector: 'textarea, div[contenteditable="true"]',
@@ -229,17 +231,19 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     forceEnter: true
   },
   aistudio: {
-    inputSelector: 'textarea, div[contenteditable="true"]',
-    submitSelector: 'button[aria-label="Run"], button[aria-label="Send"]',
+    inputSelector: 'textarea, div[contenteditable="true"], .input-area',
+    submitSelector: 'button[aria-label="Run"], button[aria-label="Send"], button[tooltip*="Run prompt"]',
     inputType: 'textarea',
-    forceEnter: true, // AI Studio often needs Ctrl+Enter, but Enter might work for chat
-    delayBeforeSubmit: 1000
+    forceEnter: true,
+    delayBeforeSubmit: 1200,
+    submitKey: { key: 'Enter', ctrlKey: true }
   },
   codex: {
-    inputSelector: 'textarea, div[contenteditable="true"]',
-    submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+    inputSelector: 'div[data-testid="codex-input"] textarea, div[data-testid="codex-input"] [contenteditable="true"], .monaco-editor, .cm-content',
+    submitSelector: 'button[data-testid="composer-send-button"], button[aria-label*="Generate"], button[aria-label="Send"]',
     inputType: 'textarea',
-    forceEnter: true
+    forceEnter: true,
+    delayBeforeSubmit: 500
   },
   claudecode: {
     inputSelector: 'div[contenteditable="true"]',
@@ -248,7 +252,7 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     forceEnter: true
   },
   githubcopilot: {
-    inputSelector: 'textarea, div[contenteditable="true"]',
+    inputSelector: 'textarea[class*="ChatInput"], textarea, div[contenteditable="true"]',
     submitSelector: 'button[aria-label="Send"], button[type="submit"]',
     inputType: 'textarea',
     forceEnter: true
@@ -257,7 +261,7 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     inputSelector: 'textarea, .cm-content',
     submitSelector: 'button[aria-label="Send"], button[type="submit"]',
     inputType: 'textarea',
-    forceEnter: true // Replit usually needs Enter
+    forceEnter: true
   },
   genspark: {
     inputSelector: 'textarea, div[contenteditable="true"]',
@@ -272,11 +276,11 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     forceEnter: true
   },
   v0: {
-    inputSelector: 'textarea, div[contenteditable="true"]',
-    submitSelector: 'button[aria-label="Send"], button[type="submit"]',
-    inputType: 'textarea',
+    inputSelector: 'div.tiptap.ProseMirror[contenteditable="true"], div[data-editor="true"] div[contenteditable="true"], textarea',
+    submitSelector: 'button[data-testid="prompt-form-send-button"], button[aria-label="Send"], button[type="submit"]',
+    inputType: 'contenteditable',
     forceEnter: true,
-    delayBeforeSubmit: 500
+    delayBeforeSubmit: 800
   },
   vooster: {
     inputSelector: 'textarea',

@@ -3,7 +3,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ModelConfig } from '../types';
 import { ModelFrame } from './ModelFrame';
 import { PerplexityChat } from './PerplexityChat';
-import { Crown, X, Minimize2, RotateCw, ZoomIn, ZoomOut, Link2 } from 'lucide-react';
+import { Crown, X, Minimize2, RotateCw, ZoomIn, ZoomOut, Link2, ExternalLink } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface ModelCardProps {
@@ -48,6 +48,10 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const handleRefresh = useCallback(() => {
     setRefreshKey(prev => prev + 1);
   }, []);
+
+  const handleOpenInNewTab = useCallback(() => {
+    window.open(model.url, '_blank');
+  }, [model.url]);
 
   const scheduleSyncReset = useCallback(() => {
     if (syncResetTimer.current) {
@@ -170,6 +174,15 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all"
           >
             <RotateCw size={15} />
+          </button>
+
+          {/* Open in New Tab */}
+          <button
+            onClick={(e) => { e.stopPropagation(); handleOpenInNewTab(); }}
+            title="Open in New Tab"
+            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all"
+          >
+            <ExternalLink size={15} />
           </button>
 
           {supportsSessionSync && (

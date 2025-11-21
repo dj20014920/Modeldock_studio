@@ -1,34 +1,62 @@
-// ModelDock Content Script v6.0 (Deep Search & Enhanced Event Simulation)
-// Handles complex DOM structures, Shadow DOM, dynamic selectors, and robust event simulation
+// ModelDock Content Script v8.0 (The "Reference Implementation" Port)
+// Ported from text-injection-bridge.ts.back to solve v0, Codex, Claude, and Grok issues.
 
 (() => {
   if (window.hasModelDockListener) return;
   window.hasModelDockListener = true;
 
+  // --- v0 Main World Injection (CRITICAL) ---
+  const IS_V0 = window.location.hostname.includes('v0.app') || window.location.hostname.includes('v0.dev');
+  if (IS_V0) {
+    console.log('[ModelDock] 🔧 V0 detected - injecting main world interceptor');
+    const injectMainWorldScript = () => {
+      const script = document.createElement('script');
+      script.textContent = `
+        (function() {
+          console.log('[V0 Main World] 🎯 PostMessage interceptor installed');
+          const originalPostMessage = window.postMessage.bind(window);
+          window.postMessage = function(message, targetOrigin, transfer) {
+            if (message && message.type === 'MODEL_DOCK_INJECT_TEXT') {
+              window.dispatchEvent(new CustomEvent('__MD_V0_INJECT_REQUEST', { detail: message }));
+              return; 
+            }
+            if (transfer) originalPostMessage(message, targetOrigin, transfer);
+            else originalPostMessage(message, targetOrigin);
+          };
+        })();
+      `;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    };
+    if (document.documentElement) injectMainWorldScript();
+    else document.addEventListener('DOMContentLoaded', injectMainWorldScript, { once: true });
+
+    window.addEventListener('__MD_V0_INJECT_REQUEST', (event) => {
+      const customEvent = event;
+      console.log('[ModelDock] 📥 V0 CustomEvent received');
+      // Re-route to handleInjection
+      if (customEvent.detail && customEvent.detail.payload) {
+        handleInjection(customEvent.detail.payload.text, customEvent.detail.payload.targets);
+      }
+    });
+  }
+
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type !== 'INJECT_INPUT') return;
-
     const { text, targets } = request.payload;
     handleInjection(text, targets).then((result) => {
       sendResponse(result);
     });
-
-    return true; // Keep channel open for async response
+    return true;
   });
 
-  // --- Deep Search Helper ---
+  // --- Deep Search & Helpers ---
   function queryShadow(root, selector) {
     if (!root) return null;
-
-    // 1. Try direct query in current root
     try {
       const el = root.querySelector(selector);
       if (el) return el;
-    } catch (e) {
-      // Ignore invalid selectors
-    }
-
-    // 2. Traverse children with shadowRoot
+    } catch (e) { }
     const elements = root.querySelectorAll('*');
     for (const element of elements) {
       if (element.shadowRoot) {
@@ -39,19 +67,39 @@
     return null;
   }
 
+  function isElementVisible(el) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return false;
+    const style = window.getComputedStyle(el);
+    return style.visibility !== 'hidden' && style.display !== 'none';
+  }
+
+  // --- Advanced Event Triggering ---
+  function triggerInputEvents(element) {
+    element.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+    try {
+      element.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, cancelable: true, inputType: 'insertText', data: (element.value || element.textContent)
+      }));
+    } catch (e) { }
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    // React 17+
+    try {
+      element.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+    } catch (e) { }
+  }
+
   async function handleInjection(text, targets) {
-    // 1. Identify the correct target for this frame using Deep Search
     let matchedTarget = null;
     let foundInput = null;
 
+    // 1. Find Input
     for (const target of targets) {
-      // Split selectors by comma to try multiple variations
       const selectors = target.inputSelector.split(',').map(s => s.trim());
-
       for (const selector of selectors) {
-        // Use Deep Search (Shadow DOM support)
         const el = queryShadow(document.body, selector);
-        if (el) {
+        if (el && isElementVisible(el)) {
           matchedTarget = target;
           foundInput = el;
           break;
@@ -60,32 +108,82 @@
       if (foundInput) break;
     }
 
+    if (!foundInput) {
+      // Fallback: try finding ANY visible textarea or contenteditable if specific selectors fail
+      // This helps with Mistral or generic pages
+      const fallbacks = document.querySelectorAll('textarea, [contenteditable="true"]');
+      for (const fb of fallbacks) {
+        if (isElementVisible(fb)) {
+          foundInput = fb;
+          // Try to guess model ID or use default
+          matchedTarget = targets[0] || { modelId: 'unknown', forceEnter: true };
+          console.log('[ModelDock] Using fallback input:', fb);
+          break;
+        }
+      }
+    }
+
     if (!foundInput || !matchedTarget) {
       return { status: 'no_target_match', host: window.location.host };
     }
 
-    const { submitSelector, modelId, forceEnter, delayBeforeSubmit } = matchedTarget;
+    const { submitSelector, modelId, forceEnter, delayBeforeSubmit, submitKey } = matchedTarget;
 
     try {
-      // 2. Inject Text based on Model/Element Type
+      // 2. Inject Text
       const injectionSuccess = await robustInject(foundInput, text, modelId);
 
       if (injectionSuccess) {
-        // Wait for UI to update (React state sync)
-        await new Promise(r => setTimeout(r, delayBeforeSubmit || 200));
+        await new Promise(r => setTimeout(r, delayBeforeSubmit || 300));
 
-        // 3. Smart Submit
+        // 3. Submit
         let submitted = false;
 
-        // Priority 1: Click Button (if selector exists and not forceEnter-only)
+        // Filter sidebar buttons!
+        const isSidebarButton = (btn) => {
+          const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+          const cls = (btn.className || '').toLowerCase();
+          return label.includes('menu') || label.includes('sidebar') || label.includes('nav') ||
+            cls.includes('sidebar') || cls.includes('menu');
+        };
+
         if (submitSelector) {
-          submitted = await trySubmit(submitSelector);
+          const selectors = submitSelector.split(',').map(s => s.trim());
+          // Poll for button
+          const startTime = Date.now();
+          while (Date.now() - startTime < 2000 && !submitted) {
+            for (const sel of selectors) {
+              const btn = queryShadow(document.body, sel);
+              if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true' && isElementVisible(btn)) {
+                if (isSidebarButton(btn)) {
+                  console.warn('[ModelDock] Ignoring sidebar button:', sel);
+                  continue;
+                }
+
+                // Click sequence
+                btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                btn.click();
+                btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                submitted = true;
+                console.log('[ModelDock] Submitted via button:', sel);
+                break;
+              }
+            }
+            if (!submitted) await new Promise(r => setTimeout(r, 100));
+          }
         }
 
-        // Priority 2: Force Enter (if configured or button failed)
+        // Fallback: Force Enter / Key
         if ((forceEnter || !submitted) && !submitted) {
-          console.log('[ModelDock] Attempting Enter key fallback...');
-          dispatchEnter(foundInput);
+          console.log('[ModelDock] Attempting Key fallback...');
+          dispatchKey(foundInput, submitKey || { key: 'Enter' });
+
+          // Codex specific: Try Cmd+Enter if simple Enter fails (or just do it anyway for safety)
+          if (modelId === 'codex') {
+            dispatchKey(foundInput, { key: 'Enter', metaKey: true });
+            dispatchKey(foundInput, { key: 'Enter', ctrlKey: true });
+          }
           submitted = true;
         }
 
@@ -102,142 +200,80 @@
   async function robustInject(element, text, modelId) {
     element.focus();
 
-    // --- Model Specific Handling ---
+    // v0 / TipTap / ProseMirror / CodeMirror -> Paste Event
+    const isTipTap = element.classList.contains('ProseMirror') || element.classList.contains('tiptap') ||
+      element.classList.contains('cm-content') || element.classList.contains('monaco-editor') ||
+      modelId === 'v0' || modelId === 'replit' || modelId === 'codex';
 
-    // Claude & Gemini & Kimi (ContentEditable)
-    if (modelId === 'claude' || modelId === 'gemini' || modelId === 'kimi' || modelId === 'claudecode') {
-      // Use execCommand for best compatibility
+    if (isTipTap) {
+      console.log('[ModelDock] TipTap/Code editor detected, using paste');
+      try {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.setData('text/plain', text);
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true, cancelable: true, clipboardData: dataTransfer
+        });
+        element.dispatchEvent(pasteEvent);
+        triggerInputEvents(element);
+        return true;
+      } catch (e) {
+        console.warn('[ModelDock] Paste failed, falling back to execCommand');
+      }
+    }
+
+    // ContentEditable (Claude, Gemini, etc)
+    if (element.isContentEditable || modelId === 'claude' || modelId === 'gemini') {
+      // Try execCommand first (best for undo history and internal state)
       const success = document.execCommand('insertText', false, text);
-
-      // Fallback if execCommand fails or is blocked
       if (!success) {
         element.textContent = text;
       }
-
-      // Crucial: Trigger input events
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-
-      // Gemini sometimes needs a specific keyup to unlock the button
-      if (modelId === 'gemini') {
-        element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
-        element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'a' }));
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-
+      triggerInputEvents(element);
       return true;
     }
 
-    // Standard Inputs (Textarea/Input)
-    if (element.tagName.toLowerCase() === 'textarea' || element.tagName.toLowerCase() === 'input') {
+    // Textarea / Input
+    if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
       const proto = window.HTMLTextAreaElement.prototype;
       const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-
       if (nativeSetter) {
         nativeSetter.call(element, text);
       } else {
         element.value = text;
       }
+      triggerInputEvents(element);
 
-      // Dispatch comprehensive event suite to wake up React/Vue
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-
-      // Simulate a keypress to trigger "dirty" state
-      element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Process' }));
-      element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Process' }));
-
-      // DeepSeek specific: adjust height to trigger internal state
-      if (modelId === 'deepseek') {
-        element.style.height = 'auto';
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        // Simulate typing for DeepSeek
-        element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: ' ' }));
-        element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: ' ' }));
-      }
-
-      return true;
-    }
-
-    // Fallback for unknown types (e.g. div contenteditable without specific ID)
-    if (element.isContentEditable) {
-      element.innerText = text;
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      return true;
-    }
-
-    // CodeMirror (Replit)
-    if (element.classList.contains('cm-content')) {
-      // CodeMirror is hard to inject directly via DOM.
-      // Try clipboard paste
-      const dataTransfer = new DataTransfer();
-      dataTransfer.setData('text/plain', text);
-      element.dispatchEvent(new ClipboardEvent('paste', {
-        bubbles: true,
-        clipboardData: dataTransfer
-      }));
-      return true;
-    }
-
-    return false;
-  }
-
-  async function trySubmit(selectorString) {
-    // Split selectors by comma
-    const selectors = selectorString.split(',').map(s => s.trim());
-
-    // Poll for the button to become enabled (max 2.0 seconds)
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < 2000) {
-
-      for (const selector of selectors) {
-        // Use Deep Search for button too
-        const btn = queryShadow(document.body, selector);
-
-        if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
-          // Found and enabled!
-
-          // Full Click Sequence
-          btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-          btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-          btn.click();
-          btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-
-          console.log('[ModelDock] Submitted via button click:', selector);
-          return true;
+      // Grok specific: verify and retry with execCommand if needed
+      if (modelId === 'grok') {
+        if (element.value !== text) {
+          document.execCommand('insertText', false, text);
         }
       }
-
-      // Wait 100ms before next check
-      await new Promise(r => setTimeout(r, 100));
+      return true;
     }
 
-    console.warn('[ModelDock] Submit button not found or remained disabled');
     return false;
   }
 
-  function dispatchEnter(element) {
-    // Simulate a realistic Enter key press sequence
+  function dispatchKey(element, keyConfig) {
+    const { key, ctrlKey, metaKey, shiftKey } = keyConfig;
+    const code = key === 'Enter' ? 'Enter' : key;
+    const keyCode = key === 'Enter' ? 13 : 0;
+
     const keyEvents = [
-      { type: 'keydown', code: 'Enter', key: 'Enter', keyCode: 13, which: 13 },
-      { type: 'keypress', code: 'Enter', key: 'Enter', keyCode: 13, which: 13 },
-      { type: 'keyup', code: 'Enter', key: 'Enter', keyCode: 13, which: 13 }
+      { type: 'keydown', code, key, keyCode, which: keyCode },
+      { type: 'keypress', code, key, keyCode, which: keyCode },
+      { type: 'keyup', code, key, keyCode, which: keyCode }
     ];
 
     keyEvents.forEach(evt => {
       element.dispatchEvent(new KeyboardEvent(evt.type, {
-        bubbles: true,
-        cancelable: true,
-        key: evt.key,
-        code: evt.code,
-        keyCode: evt.keyCode,
-        which: evt.which,
-        shiftKey: false,
-        ctrlKey: false,
-        metaKey: false
+        bubbles: true, cancelable: true,
+        key: evt.key, code: evt.code, keyCode: evt.keyCode, which: evt.which,
+        shiftKey: !!shiftKey, ctrlKey: !!ctrlKey, metaKey: !!metaKey, composed: true
       }));
     });
   }
 
-  console.log('[ModelDock] Content Script Loaded (v6.0 - Enhanced Events)');
+  console.log('[ModelDock] Content Script Loaded (v8.0 - Reference Port)');
 })();

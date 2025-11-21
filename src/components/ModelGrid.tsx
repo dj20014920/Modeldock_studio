@@ -67,22 +67,16 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
       };
     }
 
-    // CASE 4: 3+ Models (Vertical Flow Logic)
+    // CASE 4: 3+ Models (Responsive Smart Grid)
+    // Dynamically adds rows based on available width (min-width: 320px)
     return {
-      containerClass: 'grid-rows-2 grid-flow-col auto-cols-fr',
-      style: {},
-      getItemClass: (idx: number) => {
-        const isLast = idx === count - 1;
-        const isOdd = count % 2 !== 0;
-
-        // If we have an odd number of items, make the very last one take up the full column height
-        if (isOdd && isLast) {
-          return 'row-span-2 h-full';
-        }
-
-        // Otherwise, it takes up half the height (1 row)
-        return 'row-span-1 h-full';
-      }
+      containerClass: '',
+      style: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+        gridAutoRows: 'minmax(400px, 1fr)',
+      },
+      getItemClass: () => 'h-full'
     };
   };
 
@@ -96,9 +90,9 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
       )}
       style={layout.style}
     >
-      {gridModels.map((activeModel, index) => {
+      {gridModels.map((activeModel) => {
         const modelConfig = SUPPORTED_MODELS[activeModel.modelId];
-        const itemSpanClass = layout.getItemClass(index);
+        const itemSpanClass = layout.getItemClass();
 
         return (
           <div

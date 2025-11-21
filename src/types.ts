@@ -54,6 +54,12 @@ export interface InjectionSelector {
   inputType?: 'textarea' | 'contenteditable';
   forceEnter?: boolean;
   delayBeforeSubmit?: number; // ms to wait before clicking/entering
+  submitKey?: {
+    key: string;
+    ctrlKey?: boolean;
+    metaKey?: boolean;
+    shiftKey?: boolean;
+  };
 }
 
 // --- Prompt Library Types ---
