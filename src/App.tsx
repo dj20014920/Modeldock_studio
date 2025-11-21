@@ -8,6 +8,7 @@ import { ChatMessageInput } from './components/ChatMessageInput';
 import { PromptLibrary } from './components/PromptLibrary';
 import { SettingsModal } from './components/SettingsModal';
 import { ModelId, ActiveModel, SidebarView } from './types';
+import { SUPPORTED_MODELS } from './constants';
 import { usePersistentState } from './hooks/usePersistentState';
 
 const App: React.FC = () => {
@@ -44,11 +45,19 @@ const App: React.FC = () => {
         const containerRect = containerRef.current.getBoundingClientRect();
         const newWidth = e.clientX - containerRect.left;
         const totalWidth = containerRect.width;
-        let newPercent = (newWidth / totalWidth) * 100;
 
-        // Constraints (Min 20%, Max 80%)
+        // Calculate max width for grid to ensure Main Brain has at least 400px
+        const minMainBrainWidth = 400;
+        const maxGridWidth = totalWidth - minMainBrainWidth;
+
+        let newPercent = (newWidth / totalWidth) * 100;
+        const maxPercent = (maxGridWidth / totalWidth) * 100;
+
+        // Constraints
+        // Min: 20% or 300px (whichever is larger effectively, but 20% is a safe floor)
+        // Max: Calculated based on Main Brain min width
         if (newPercent < 20) newPercent = 20;
-        if (newPercent > 80) newPercent = 80;
+        if (newPercent > maxPercent) newPercent = maxPercent;
 
         setGridWidthPercent(newPercent);
       }
@@ -115,6 +124,37 @@ const App: React.FC = () => {
   const handleRemoveMainBrain = () => {
     setMainBrainInstanceId(null);
   };
+
+  React.useEffect(() => {
+    const hasChromeRuntime = typeof chrome !== 'undefined' && !!chrome.runtime?.id;
+    if (!hasChromeRuntime) return;
+
+    const syncableModels = Object.values(SUPPORTED_MODELS).filter((model) => model.sessionSync?.method === 'cookiePartition');
+    if (!syncableModels.length) return;
+
+    const safeSendMessage = (message: unknown) => {
+      chrome.runtime.sendMessage(message, () => {
+        if (chrome.runtime.lastError) {
+          console.warn('[ModelDock] Session sync message failed', chrome.runtime.lastError.message);
+        }
+      });
+    };
+
+    safeSendMessage({
+      type: 'REGISTER_SESSION_SYNC_MODELS',
+      payload: syncableModels.map((model) => ({
+        modelId: model.id,
+        domains: model.sessionSync?.domains || []
+      }))
+    });
+
+    syncableModels.forEach((model) => {
+      safeSendMessage({
+        type: 'SYNC_MODEL_SESSION',
+        payload: { modelId: model.id }
+      });
+    });
+  }, []);
 
   // Computed properties
   const activeModelTypes = Array.from(new Set(activeModels.map(m => m.modelId)));

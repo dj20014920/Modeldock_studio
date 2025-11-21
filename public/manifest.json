@@ -10,7 +10,8 @@
     "tabs",
     "activeTab",
     "scripting",
-    "webNavigation"
+    "webNavigation",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -40,6 +41,15 @@
         "content.js"
       ],
       "all_frames": true,
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.perplexity.ai/*"
+      ],
+      "js": [
+        "perplexity-proxy.js"
+      ],
       "run_at": "document_idle"
     }
   ],

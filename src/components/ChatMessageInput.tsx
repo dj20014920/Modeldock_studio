@@ -68,6 +68,15 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
     setErrorMessage('');
 
     try {
+      // Check for Perplexity (Hybrid Mode)
+      if (activeModelIds.includes('perplexity')) {
+        // We send to Perplexity Service directly
+        // Note: We don't await this because we want parallel execution with other iframes
+        import('../services/perplexity-service').then(({ perplexityService }) => {
+          perplexityService.sendMessage(input);
+        });
+      }
+
       // Chrome Extension Logic: Broadcast to all frames in the current tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) {
@@ -134,6 +143,11 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
           // It's normal for some frames to not respond (e.g. cross-origin restrictions or no content script)
           // console.debug('Frame injection skipped/failed', frame.frameId, e);
         }
+      }
+
+      // Treat Perplexity as a success if it was active
+      if (activeModelIds.includes('perplexity')) {
+        successCount++;
       }
 
       if (successCount > 0) {

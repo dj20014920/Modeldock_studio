@@ -1,8 +1,9 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ModelConfig } from '../types';
 import { ModelFrame } from './ModelFrame';
-import { Crown, X, Minimize2, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { PerplexityChat } from './PerplexityChat';
+import { Crown, X, Minimize2, RotateCw, ZoomIn, ZoomOut, Link2 } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface ModelCardProps {
@@ -23,6 +24,18 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   // State for Frame Controls
   const [zoomLevel, setZoomLevel] = useState(0.75);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [sessionSyncState, setSessionSyncState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const syncResetTimer = useRef<number | null>(null);
+
+  const supportsSessionSync = model.sessionSync?.method === 'cookiePartition';
+
+  useEffect(() => {
+    return () => {
+      if (syncResetTimer.current) {
+        window.clearTimeout(syncResetTimer.current);
+      }
+    };
+  }, []);
 
   const handleZoomIn = useCallback(() => {
     setZoomLevel(prev => Math.min(prev + 0.1, 1.5)); // Max 150%
@@ -35,6 +48,69 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const handleRefresh = useCallback(() => {
     setRefreshKey(prev => prev + 1);
   }, []);
+
+  const scheduleSyncReset = useCallback(() => {
+    if (syncResetTimer.current) {
+      window.clearTimeout(syncResetTimer.current);
+    }
+    syncResetTimer.current = window.setTimeout(() => {
+      setSessionSyncState('idle');
+    }, 2500);
+  }, []);
+
+  const sendRuntimeMessage = useCallback((message: unknown) => {
+    return new Promise<any>((resolve, reject) => {
+      if (typeof chrome === 'undefined' || !chrome.runtime?.id) {
+        reject(new Error('Chrome runtime unavailable'));
+        return;
+      }
+
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }, []);
+
+  const handleSessionSync = useCallback(async () => {
+    if (!supportsSessionSync) return;
+
+    setSessionSyncState('loading');
+    try {
+      const response = await sendRuntimeMessage({
+        type: 'SYNC_MODEL_SESSION',
+        payload: { modelId: model.id }
+      });
+
+      if (!response || response.ok !== true) {
+        throw new Error(response?.error || 'Session sync failed');
+      }
+
+      setSessionSyncState('success');
+      handleRefresh();
+    } catch (error) {
+      console.error('[ModelDock] Session sync failed', error);
+      setSessionSyncState('error');
+    } finally {
+      scheduleSyncReset();
+    }
+  }, [handleRefresh, model.id, scheduleSyncReset, sendRuntimeMessage, supportsSessionSync]);
+
+  const sessionSyncTooltip = (() => {
+    switch (sessionSyncState) {
+      case 'loading':
+        return '세션 동기화 중...';
+      case 'success':
+        return '세션 동기화 완료';
+      case 'error':
+        return '세션 동기화 실패 - 다시 시도하세요';
+      default:
+        return '로그인 세션 동기화';
+    }
+  })();
 
   // Formatter for zoom percentage
   const zoomPercent = Math.round(zoomLevel * 100);
@@ -96,6 +172,28 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             <RotateCw size={15} />
           </button>
 
+          {supportsSessionSync && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleSessionSync(); }}
+              title={sessionSyncTooltip}
+              className={clsx(
+                'p-1.5 rounded-md transition-all',
+                sessionSyncState === 'loading' && 'text-indigo-600 bg-indigo-50',
+                sessionSyncState === 'success' && 'text-emerald-600 bg-emerald-50',
+                sessionSyncState === 'error' && 'text-red-500 bg-red-50',
+                sessionSyncState === 'idle' && 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+              )}
+              disabled={sessionSyncState === 'loading'}
+            >
+              <Link2
+                size={15}
+                className={clsx(
+                  sessionSyncState === 'loading' && 'animate-spin'
+                )}
+              />
+            </button>
+          )}
+
           <div className="w-px h-4 bg-slate-200 mx-1" />
 
           {/* Main Brain Toggle */}
@@ -135,13 +233,17 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
       {/* Iframe Container */}
       <div className="flex-1 relative bg-slate-50 overflow-hidden">
-        <ModelFrame
-          modelId={model.id}
-          url={model.url}
-          title={model.name}
-          zoomLevel={zoomLevel}
-          refreshKey={refreshKey}
-        />
+        {model.id === 'perplexity' ? (
+          <PerplexityChat />
+        ) : (
+          <ModelFrame
+            modelId={model.id}
+            url={model.url}
+            title={model.name}
+            zoomLevel={zoomLevel}
+            refreshKey={refreshKey}
+          />
+        )}
       </div>
     </div>
   );

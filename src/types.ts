@@ -27,6 +27,10 @@ export interface ModelConfig {
   url: string;
   iconColor: string; // Tailwind class for dot indicator
   themeColor: string; // Border/Accent color
+  sessionSync?: {
+    method: 'cookiePartition';
+    domains: string[];
+  };
 }
 
 // New interface for managing multiple instances of the same model
@@ -48,6 +52,8 @@ export interface InjectionSelector {
   submitSelector: string;
   // Optional: specialized handling flags
   inputType?: 'textarea' | 'contenteditable';
+  forceEnter?: boolean;
+  delayBeforeSubmit?: number; // ms to wait before clicking/entering
 }
 
 // --- Prompt Library Types ---
