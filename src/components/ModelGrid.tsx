@@ -35,11 +35,17 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
    * 🧠 Vertical Smart Flow Grid
    */
   const getSmartGridLayout = () => {
-    // CASE 1: Sidebar Mode (Main Brain is Active) -> Stack vertically
+    // CASE 1: Sidebar Mode (Main Brain is Active) -> Responsive Grid
     if (mainBrainInstanceId) {
       return {
-        containerClass: 'grid-cols-1',
-        getItemClass: () => 'h-full row-span-1'
+        containerClass: '',
+        style: {
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
+          gridAutoRows: 'minmax(300px, 1fr)',
+          alignContent: 'start',
+        },
+        getItemClass: () => 'h-full'
       };
     }
 
@@ -47,6 +53,7 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
     if (count === 1) {
       return {
         containerClass: 'grid-cols-1 grid-rows-1',
+        style: {},
         getItemClass: () => 'col-span-1 row-span-1 h-full'
       };
     }
@@ -55,14 +62,15 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
     if (count === 2) {
       return {
         containerClass: 'grid-cols-2 grid-rows-1',
+        style: {},
         getItemClass: () => 'col-span-1 row-span-1 h-full'
       };
     }
 
     // CASE 4: 3+ Models (Vertical Flow Logic)
-    // auto-cols-fr ensures that as new columns are created by grid-flow-col, they share equal width.
     return {
       containerClass: 'grid-rows-2 grid-flow-col auto-cols-fr',
+      style: {},
       getItemClass: (idx: number) => {
         const isLast = idx === count - 1;
         const isOdd = count % 2 !== 0;
@@ -81,10 +89,13 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
   const layout = getSmartGridLayout();
 
   return (
-    <div className={clsx(
-      "w-full h-full grid bg-slate-200 gap-px overflow-auto",
-      layout.containerClass
-    )}>
+    <div
+      className={clsx(
+        "w-full h-full grid bg-slate-200 gap-px overflow-auto",
+        layout.containerClass
+      )}
+      style={layout.style}
+    >
       {gridModels.map((activeModel, index) => {
         const modelConfig = SUPPORTED_MODELS[activeModel.modelId];
         const itemSpanClass = layout.getItemClass(index);

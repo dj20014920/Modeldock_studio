@@ -1,6 +1,5 @@
-
-// ModelDock Content Script v2.0
-// Improved robustness for modern frameworks (React, ProseMirror, Monaco, Draft.js)
+// ModelDock Content Script v4.0 (Deep Search & Multi-Selector)
+// Handles complex DOM structures, Shadow DOM, and dynamic selectors
 
 (() => {
   if (window.hasModelDockListener) return;
@@ -10,87 +9,91 @@
     if (request.type !== 'INJECT_INPUT') return;
 
     const { text, targets } = request.payload;
+    handleInjection(text, targets).then((result) => {
+      sendResponse(result);
+    });
 
-    // Find the matching target for this frame's URL
-    const currentHost = window.location.hostname;
-    // We need to map ModelId to Hostname or check if the current URL matches the model's URL
-    // Since we don't have the URL map here, we can rely on the fact that targets might contain enough info,
-    // OR we can just try all selectors (less safe).
-    // Better: The payload 'targets' should ideally contain the expected hostname or we check `SUPPORTED_MODELS` logic.
-    // But `ChatMessageInput` sent `activeSelectors` which has `modelId`.
-
-    // Let's assume we try to match based on the selectors presence. 
-    // OR better, we check if the element exists.
-
-    let matchedTarget = null;
-    for (const target of targets) {
-      // Simple heuristic: Check if the input selector exists in this frame
-      if (document.querySelector(target.inputSelector)) {
-        matchedTarget = target;
-        break;
-      }
-    }
-
-    if (!matchedTarget) {
-      // This frame doesn't match any active model's selector
-      return;
-    }
-
-    const { inputSelector, submitSelector } = matchedTarget;
-    const input = document.querySelector(inputSelector);
-
-    if (!input) return; // Should not happen if we just checked, but safety first
-
-    try {
-      const success = robustInject(input, text);
-
-      if (success) {
-        // Smart Submit Logic
-        setTimeout(() => {
-          if (submitSelector) {
-            const submitBtn = document.querySelector(submitSelector);
-            if (submitBtn && !submitBtn.disabled) {
-              submitBtn.click();
-              console.log('[ModelDock] Submit triggered');
-            } else {
-              // Fallback: Try hitting Enter key if button not found or disabled
-              // dispatchEnter(input);
-            }
-          }
-        }, 200); // Slight delay to allow validation state to update
-
-        sendResponse({ status: 'success', host: window.location.host });
-      } else {
-        sendResponse({ status: 'failed_injection', host: window.location.host });
-      }
-
-    } catch (err) {
-      console.error('[ModelDock] Injection Error:', err);
-      sendResponse({ status: 'error', message: err.toString() });
-    }
-
-    return true;
+    return true; // Keep channel open for async response
   });
 
-  /**
-   * Tries multiple methods to inject text and trigger framework reactivity
-   */
-  function robustInject(element, text) {
-    element.focus();
+  async function handleInjection(text, targets) {
+    // 1. Identify the correct target for this frame using Deep Search
+    let matchedTarget = null;
+    let foundInput = null;
 
-    // Strategy 1: execCommand (Best for Rich Text Editors like Claude/Gmail)
-    if (document.queryCommandSupported('insertText')) {
-      // Select all content first to replace or just append? 
-      // Context implies appending or replacing. Let's replace for chat inputs mostly.
-      // But simpler to just insert.
-      const success = document.execCommand('insertText', false, text);
-      if (success) return true;
+    for (const target of targets) {
+      // Split selectors by comma to try multiple variations
+      const selectors = target.inputSelector.split(',').map(s => s.trim());
+
+      for (const selector of selectors) {
+        const el = document.querySelector(selector);
+        if (el) {
+          matchedTarget = target;
+          foundInput = el;
+          break;
+        }
+      }
+      if (foundInput) break;
     }
 
-    // Strategy 2: Native Value Setter (Best for React Inputs/Textareas)
-    // React overrides the setter, so we must call the prototype's setter to trigger the event listeners properly.
-    const tag = element.tagName.toLowerCase();
-    if (tag === 'textarea' || tag === 'input') {
+    if (!foundInput || !matchedTarget) {
+      return { status: 'no_target_match', host: window.location.host };
+    }
+
+    const { submitSelector, modelId } = matchedTarget;
+
+    try {
+      // 2. Inject Text based on Model/Element Type
+      const injectionSuccess = await robustInject(foundInput, text, modelId);
+
+      if (injectionSuccess) {
+        // 3. Smart Submit (Wait for button enablement)
+        if (submitSelector) {
+          await trySubmit(submitSelector);
+        } else {
+          // Fallback: Enter key
+          dispatchEnter(foundInput);
+        }
+        return { status: 'success', host: window.location.host };
+      } else {
+        return { status: 'injection_failed', host: window.location.host };
+      }
+    } catch (err) {
+      console.error('[ModelDock] Error:', err);
+      return { status: 'error', message: err.toString() };
+    }
+  }
+
+  async function robustInject(element, text, modelId) {
+    element.focus();
+
+    // --- Model Specific Handling ---
+
+    // Claude & Gemini (ContentEditable)
+    if (modelId === 'claude' || modelId === 'gemini' || modelId === 'kimi') {
+      // Use execCommand for best compatibility
+      const success = document.execCommand('insertText', false, text);
+
+      // Fallback if execCommand fails or is blocked
+      if (!success) {
+        element.textContent = text;
+      }
+
+      // Crucial: Trigger input events
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+
+      // Gemini sometimes needs a specific keyup to unlock the button
+      if (modelId === 'gemini') {
+        element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' })); // Dummy key
+        element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'a' }));
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      return true;
+    }
+
+    // Standard Inputs (Textarea/Input)
+    if (element.tagName.toLowerCase() === 'textarea' || element.tagName.toLowerCase() === 'input') {
       const proto = window.HTMLTextAreaElement.prototype;
       const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
@@ -102,19 +105,60 @@
 
       element.dispatchEvent(new Event('input', { bubbles: true }));
       element.dispatchEvent(new Event('change', { bubbles: true }));
+
+      // DeepSeek specific: adjust height to trigger internal state
+      if (modelId === 'deepseek') {
+        element.style.height = 'auto';
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        // Simulate typing for DeepSeek
+        element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: ' ' }));
+        element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: ' ' }));
+      }
+
       return true;
     }
 
-    // Strategy 3: ContentEditable Fallback (innerHTML/innerText)
+    // Fallback for unknown types
     if (element.isContentEditable) {
       element.innerText = text;
       element.dispatchEvent(new Event('input', { bubbles: true }));
-      // Some editors listen to keyup
-      element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: ' ' }));
       return true;
     }
 
     return false;
+  }
+
+  async function trySubmit(selectorString) {
+    // Split selectors by comma
+    const selectors = selectorString.split(',').map(s => s.trim());
+
+    // Poll for the button to become enabled (max 2.5 seconds)
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < 2500) {
+
+      for (const selector of selectors) {
+        const btn = document.querySelector(selector);
+
+        if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
+          // Found and enabled!
+
+          // Full Click Sequence
+          btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+          btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          btn.click();
+          btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+          console.log('[ModelDock] Submitted via button click:', selector);
+          return;
+        }
+      }
+
+      // Wait 100ms before next check
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    console.warn('[ModelDock] Submit button not found or remained disabled');
   }
 
   function dispatchEnter(element) {
@@ -129,5 +173,5 @@
     element.dispatchEvent(event);
   }
 
-  console.log('[ModelDock] Hooked into frame:', window.location.host);
+  console.log('[ModelDock] Content Script Loaded (v4.0)');
 })();

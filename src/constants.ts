@@ -154,6 +154,7 @@ export const NAV_ITEMS = [
 ] as const;
 
 // Selectors for Auto-Injection
+// Selectors for Auto-Injection
 export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   chatgpt: {
     inputSelector: '#prompt-textarea',
@@ -162,33 +163,48 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   },
   claude: {
     inputSelector: 'div[contenteditable="true"]',
-    submitSelector: 'button[aria-label="Send Message"]',
+    submitSelector: 'button[aria-label="Send Message"], button[aria-label="Send"]',
     inputType: 'contenteditable'
   },
   gemini: {
-    inputSelector: 'div[contenteditable="true"][role="textbox"]',
-    submitSelector: 'button[aria-label="Send message"]',
+    inputSelector: 'div[contenteditable="true"][role="textbox"], rich-textarea > div',
+    submitSelector: 'button[aria-label="Send message"], button[aria-label="보내기"], button[data-test-id="send-button"]',
     inputType: 'contenteditable'
   },
   grok: {
-    inputSelector: 'textarea', 
-    submitSelector: 'button[type="submit"]',
+    inputSelector: 'textarea',
+    submitSelector: 'button[aria-label="Send"], button[type="submit"]',
     inputType: 'textarea'
   },
   perplexity: {
-    inputSelector: 'textarea[placeholder*="Ask"]',
-    submitSelector: 'button[aria-label="Submit"]',
+    inputSelector: 'textarea[placeholder*="Ask"], textarea',
+    submitSelector: 'button[aria-label="Submit"], button[type="submit"]',
     inputType: 'textarea'
   },
   deepseek: {
-    inputSelector: 'textarea',
-    submitSelector: 'div[role="button"]',
+    inputSelector: 'textarea, #chat-input',
+    submitSelector: 'div[role="button"][aria-label="Send"], button[type="submit"]',
     inputType: 'textarea'
   },
   mistral: {
     inputSelector: 'textarea',
     submitSelector: 'button[type="submit"]',
     inputType: 'textarea'
+  },
+  qwen: {
+    inputSelector: 'textarea',
+    submitSelector: 'button[class*="send-btn"], button[type="submit"]',
+    inputType: 'textarea'
+  },
+  lmarena: {
+    inputSelector: 'textarea', // Often has specific IDs but textarea is safe fallback
+    submitSelector: 'button.send-button, button[id="send-message-button"]',
+    inputType: 'textarea'
+  },
+  kimi: {
+    inputSelector: 'div[contenteditable="true"], textarea',
+    submitSelector: 'button[class*="sendButton"], div[class*="sendButton"]',
+    inputType: 'contenteditable'
   }
 };
 

@@ -26,6 +26,47 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [injectedPromptText, setInjectedPromptText] = useState<string | null>(null);
 
+  // --- Resizable Layout State ---
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [gridWidthPercent, setGridWidthPercent] = usePersistentState<number>('grid_width_percent', 35);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (containerRef.current) {
+        const containerRect = containerRef.current.getBoundingClientRect();
+        const newWidth = e.clientX - containerRect.left;
+        const totalWidth = containerRect.width;
+        let newPercent = (newWidth / totalWidth) * 100;
+
+        // Constraints (Min 20%, Max 80%)
+        if (newPercent < 20) newPercent = 20;
+        if (newPercent > 80) newPercent = 80;
+
+        setGridWidthPercent(newPercent);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, setGridWidthPercent]);
+
   // --- Business Logic ---
 
   const handleAddModel = useCallback((id: ModelId) => {
@@ -101,7 +142,7 @@ const App: React.FC = () => {
         <main className="flex-1 flex flex-col overflow-hidden relative bg-slate-100">
 
           {/* Model Viewport (Grid + Main Brain) */}
-          <div className="flex-1 flex overflow-hidden">
+          <div ref={containerRef} className="flex-1 flex overflow-hidden relative">
             {activeModels.length === 0 ? (
               <div className="flex-1 flex items-center justify-center h-full text-slate-400 flex-col gap-4 select-none">
                 <div className="w-20 h-20 rounded-3xl bg-slate-200 animate-pulse flex items-center justify-center">
@@ -114,24 +155,49 @@ const App: React.FC = () => {
               </div>
             ) : (
               <>
-                {/* Grid Area - Conditionally resized */}
-                <div className={`transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${mainBrainInstanceId ? 'w-1/3 min-w-[350px] border-r border-slate-200 shadow-lg z-10' : 'w-full'}`}>
+                {/* Grid Area - Resizable */}
+                <div
+                  className={`transition-none relative z-10 ${mainBrainInstanceId ? 'border-r border-slate-200 shadow-sm' : 'w-full'}`}
+                  style={{
+                    width: mainBrainInstanceId ? `${gridWidthPercent}%` : '100%',
+                    minWidth: mainBrainInstanceId ? '300px' : '100%'
+                  }}
+                >
                   <ModelGrid
                     activeModels={activeModels}
                     mainBrainInstanceId={mainBrainInstanceId}
                     onSetMainBrain={handleSetMainBrain}
                     onCloseInstance={handleCloseSpecificInstance}
                   />
+
+                  {/* Overlay during resizing to prevent iframe capturing mouse events */}
+                  {isResizing && <div className="absolute inset-0 z-50 bg-transparent" />}
                 </div>
 
-                {/* Main Brain Area - Conditionally rendered */}
+                {/* Resizer Handle */}
+                {mainBrainInstanceId && (
+                  <div
+                    className={`w-1.5 hover:w-2 -ml-0.5 z-50 cursor-col-resize flex items-center justify-center hover:bg-indigo-500/50 transition-colors group select-none ${isResizing ? 'bg-indigo-600 w-2' : 'bg-transparent'}`}
+                    onMouseDown={startResizing}
+                  >
+                    {/* Visual Handle Indicator */}
+                    <div className={`h-8 w-1 rounded-full bg-slate-300 group-hover:bg-white transition-colors ${isResizing ? 'bg-white' : ''}`} />
+                  </div>
+                )}
+
+                {/* Main Brain Area - Takes remaining space */}
                 {mainBrainInstanceId && mainBrainModel && (
-                  <MainBrainPanel
-                    modelId={mainBrainModel.modelId}
-                    instanceId={mainBrainInstanceId}
-                    onRemoveMainBrain={handleRemoveMainBrain}
-                    onClose={() => handleCloseSpecificInstance(mainBrainInstanceId)}
-                  />
+                  <div className="flex-1 min-w-[300px] relative">
+                    {/* Overlay during resizing */}
+                    {isResizing && <div className="absolute inset-0 z-50 bg-transparent" />}
+
+                    <MainBrainPanel
+                      modelId={mainBrainModel.modelId}
+                      instanceId={mainBrainInstanceId}
+                      onRemoveMainBrain={handleRemoveMainBrain}
+                      onClose={() => handleCloseSpecificInstance(mainBrainInstanceId)}
+                    />
+                  </div>
                 )}
               </>
             )}
