@@ -9,6 +9,11 @@
     console.log('[ModelDock] Perplexity Proxy Loaded');
 
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request.type === 'PERPLEXITY_PING') {
+            sendResponse({ status: 'pong' });
+            return true;
+        }
+
         if (request.type !== 'PERPLEXITY_PROXY_REQUEST') return;
 
         const { url, options, messageId } = request.payload;
@@ -17,6 +22,26 @@
         sendResponse({ status: 'accepted' });
         return true;
     });
+
+    // Network Sniffer to find correct API endpoint
+    const originalFetch = window.fetch;
+    window.fetch = async function (...args) {
+        const [resource, config] = args;
+        const url = resource instanceof Request ? resource.url : resource;
+
+        if (typeof url === 'string' && (url.includes('ask') || url.includes('research') || url.includes('graphql'))) {
+            console.log('[ModelDock] Sniffed Perplexity API:', url);
+            try {
+                chrome.runtime.sendMessage({
+                    type: 'PERPLEXITY_DEBUG_URL',
+                    payload: { url, method: config?.method || 'GET' }
+                });
+            } catch (e) {
+                // Ignore extension context invalidation errors
+            }
+        }
+        return originalFetch.apply(this, args);
+    };
 
     async function handleProxyRequest(url, options, messageId) {
         try {

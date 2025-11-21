@@ -31,10 +31,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.cookies.onChanged.addListener((changeInfo) => {
   const cookie = changeInfo.cookie;
-  if (!cookie || cookie.partitionKey) return; // Ignore already partitioned cookies
+  if (!cookie) return;
 
   const target = findModelForDomain(cookie.domain);
   if (!target) return;
+
+  const isPartitionedForExtension = Boolean(
+    cookie.partitionKey &&
+    cookie.partitionKey.topLevelSite === EXTENSION_TOP_LEVEL_SITE
+  );
+
+  if (isPartitionedForExtension) {
+    if (changeInfo.removed) {
+      return; // Partition cookie removed from iframe context; nothing to mirror
+    }
+
+    ensurePartitionCookieCompatibility(cookie).catch((error) => {
+      console.warn('[ModelDock] Failed to update partition cookie', error);
+    });
+    return;
+  }
 
   if (changeInfo.removed) {
     removePartitionCookie(cookie).catch((error) => {
@@ -149,6 +165,36 @@ async function mirrorCookieIntoPartition(cookie) {
     sameSite: 'no_restriction',
     storeId: cookie.storeId,
     partitionKey: PARTITION_KEY,
+    partitioned: true
+  };
+
+  if (cookie.expirationDate) {
+    cookieDetails.expirationDate = cookie.expirationDate;
+  }
+
+  await setCookie(cookieDetails);
+  return true;
+}
+
+async function ensurePartitionCookieCompatibility(cookie) {
+  if (!cookie.partitionKey) return false;
+
+  const needsUpdate = cookie.sameSite !== 'no_restriction' || !cookie.secure;
+  if (!needsUpdate) return false;
+
+  const url = buildCookieUrl({ ...cookie, secure: true });
+  if (!url) return false;
+
+  const cookieDetails = {
+    url,
+    name: cookie.name,
+    value: cookie.value,
+    path: cookie.path,
+    httpOnly: cookie.httpOnly,
+    secure: true,
+    sameSite: 'no_restriction',
+    storeId: cookie.storeId,
+    partitionKey: cookie.partitionKey,
     partitioned: true
   };
 

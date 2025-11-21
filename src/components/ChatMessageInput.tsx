@@ -105,7 +105,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         // But assuming we added the permission:
       }
 
-      if (frames.length === 0) {
+      if (frames.length === 0 && !activeModelIds.includes('perplexity')) {
         // Fallback for when webNavigation is not available or fails: 
         // Try sending to top frame and hope for the best? No, models are in iframes.
         // We can try a brute force approach if we knew the frame IDs, but we don't.

@@ -21,6 +21,15 @@ export interface PerplexityState {
 
 type Listener = (state: PerplexityState) => void;
 
+const SUPPORTED_BLOCK_USE_CASES = [
+    'answer_modes', 'media_items', 'knowledge_cards', 'inline_entity_cards',
+    'place_widgets', 'finance_widgets', 'sports_widgets', 'flight_status_widgets',
+    'shopping_widgets', 'jobs_widgets', 'search_result_widgets', 'clarification_responses',
+    'inline_images', 'inline_assets', 'placeholder_cards', 'diff_blocks',
+    'inline_knowledge_cards', 'entity_group_v2', 'refinement_filters',
+    'canvas_mode', 'maps_preview', 'answer_tabs', 'price_comparison_widgets'
+];
+
 class PerplexityService {
     private state: PerplexityState = {
         messages: [],
@@ -31,6 +40,8 @@ class PerplexityService {
 
     private listeners: Set<Listener> = new Set();
     private proxyTabId: number | null = null;
+    private capturedEndpoint: string | null = null;
+    private sseBuffer: string = ''; // Buffer for SSE chunks
 
     constructor() {
         this.initMessageListener();
@@ -46,6 +57,11 @@ class PerplexityService {
                 this.handleDone();
             } else if (message.type === 'PERPLEXITY_PROXY_ERROR') {
                 this.handleError(message.payload.error);
+            } else if (message.type === 'PERPLEXITY_DEBUG_URL') {
+                console.log('[PerplexityService] Captured API Endpoint:', message.payload.url);
+                if (message.payload.url.includes('ask') || message.payload.url.includes('research')) {
+                    this.capturedEndpoint = message.payload.url;
+                }
             }
         });
     }
@@ -65,6 +81,69 @@ class PerplexityService {
         this.notify();
     }
 
+    // --- Quota Management ---
+    private readonly STORAGE_KEY_TIER = 'pplx_user_tier';
+    private readonly STORAGE_KEY_QUOTA = 'pplx_quota_v2'; // v2 for new structure
+
+    public get tier(): 'free' | 'pro' {
+        return (localStorage.getItem(this.STORAGE_KEY_TIER) as 'free' | 'pro') || 'free';
+    }
+
+    public setTier(tier: 'free' | 'pro') {
+        localStorage.setItem(this.STORAGE_KEY_TIER, tier);
+        this.resetQuota(tier);
+        this.notify();
+    }
+
+    public get quota() {
+        const stored = localStorage.getItem(this.STORAGE_KEY_QUOTA);
+        if (!stored) return this.resetQuota(this.tier);
+
+        const data = JSON.parse(stored);
+        const now = Date.now();
+
+        // Check reset conditions
+        if (this.tier === 'free') {
+            // Free: Reset every 4 hours
+            if (now - data.lastReset > 4 * 60 * 60 * 1000) {
+                return this.resetQuota('free');
+            }
+        } else {
+            // Pro: Reset every 24 hours (or at midnight, but 24h rolling is safer for simple logic)
+            if (now - data.lastReset > 24 * 60 * 60 * 1000) {
+                return this.resetQuota('pro');
+            }
+        }
+
+        return data;
+    }
+
+    private resetQuota(tier: 'free' | 'pro') {
+        const limits = {
+            free: 5,
+            pro: 600 // 2025 Standard: 300-600+ depending on specific plan, defaulting to 600 for "Pro"
+        };
+
+        const data = {
+            remaining: limits[tier],
+            total: limits[tier],
+            lastReset: Date.now()
+        };
+
+        localStorage.setItem(this.STORAGE_KEY_QUOTA, JSON.stringify(data));
+        return data;
+    }
+
+    public decrementQuota() {
+        const current = this.quota;
+        if (current.remaining > 0) {
+            current.remaining--;
+            localStorage.setItem(this.STORAGE_KEY_QUOTA, JSON.stringify(current));
+            this.notify();
+        }
+    }
+    // ------------------------
+
     public async sendMessage(text: string, files: PerplexityFile[] = []) {
         // 1. Add User Message
         this.state.messages.push({
@@ -72,14 +151,24 @@ class PerplexityService {
             content: text,
             attachments: files
         });
-        this.state.messages.push({ role: 'assistant', content: '' }); // Placeholder for response
+        this.state.messages.push({ role: 'assistant', content: '' });
         this.state.isStreaming = true;
         this.state.error = null;
+        this.sseBuffer = ''; // Reset buffer
         this.notify();
 
         try {
-            // 2. Ensure Proxy Tab
+            // 2. Ensure Proxy Tab with PING check
             await this.ensureProxyTab();
+
+            // Quota Check for Deep Research
+            if (this.state.deepResearchEnabled) {
+                const q = this.quota;
+                if (q.remaining <= 0) {
+                    throw new Error(`Deep Research quota exceeded for ${this.tier === 'free' ? 'Free' : 'Pro'} tier.`);
+                }
+                this.decrementQuota();
+            }
 
             // 3. Process Files
             let finalQuery = text;
@@ -87,13 +176,10 @@ class PerplexityService {
 
             if (files.length > 0) {
                 for (const file of files) {
-                    // Strategy A: Text Injection (for code, txt, md, csv, etc.)
                     if (this.isTextFile(file.type) || file.name.match(/\.(txt|md|csv|json|js|ts|py|html|css)$/i)) {
                         const content = this.base64ToText(file.data);
                         finalQuery += `\n\n--- Attached File: ${file.name} ---\n${content}\n--- End File ---`;
-                    }
-                    // Strategy B: Upload (for images/PDFs) - Mocked for now as we lack the internal endpoint
-                    else {
+                    } else {
                         const uploaded = await this.uploadFile(file);
                         if (uploaded && uploaded.id) {
                             uploadedFileIds.push(uploaded.id);
@@ -102,25 +188,65 @@ class PerplexityService {
                 }
             }
 
-            // 4. Prepare Payload
-            // Note: This is a simplified payload. Real Perplexity API might need more fields (source, mode, etc.)
-            // Based on "Perplexity Architecture" prompt, we target /rest/sse/perplexity_ask or _research
-            const endpoint = this.state.deepResearchEnabled
+            // 4. Prepare Payload (Matching api.ts structure)
+            const isDeep = this.state.deepResearchEnabled;
+
+            const params: any = {
+                search_focus: 'internet',
+                sources: ['web'],
+                search_recency_filter: null,
+                mode: isDeep ? 'research' : 'copilot', // api.ts line 40
+                model_preference: 'pplx_alpha', // api.ts line 41
+                prompt_source: 'user',
+                query_source: 'home',
+                is_related_query: false,
+                is_sponsored: false,
+                is_incognito: false,
+                local_search_enabled: false,
+                skip_search_enabled: true,
+                is_nav_suggestions_disabled: false,
+                always_search_override: false,
+                override_no_search: false,
+                should_ask_for_mcp_tool_confirmation: true,
+                browser_agent_allow_once_from_toggle: false,
+                supported_block_use_cases: SUPPORTED_BLOCK_USE_CASES,
+                use_schematized_api: true,
+                send_back_text_in_streaming_api: false,
+                version: '2.18',
+                attachments: uploadedFileIds.length > 0 ? uploadedFileIds : [],
+                language: "en-US",
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                frontend_uuid: this.generateUUID(),
+                frontend_context_uuid: this.generateUUID(),
+            };
+
+            if (isDeep) {
+                Object.assign(params, {
+                    search_depth: 'deep',
+                    deep_search: true,
+                    enable_multi_step_reasoning: true,
+                    max_iterations: 3,
+                    followup_questions: 3,
+                });
+            }
+
+            const payload = {
+                query_str: finalQuery,
+                params: params
+            };
+
+            // 5. Determine Endpoint
+            let endpoint = isDeep
                 ? 'https://www.perplexity.ai/rest/sse/perplexity_research'
                 : 'https://www.perplexity.ai/rest/sse/perplexity_ask';
 
-            const payload = {
-                search_depth: this.state.deepResearchEnabled ? 'deep' : 'basic',
-                query: finalQuery,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                backend_uuid: this.generateUUID(),
-                frontend_uuid: this.generateUUID(),
-                frontend_context_uuid: this.generateUUID(),
-                attachments: uploadedFileIds.length > 0 ? uploadedFileIds : undefined,
-                // Add other required fields as per reverse engineering or spec
-            };
+            if (this.capturedEndpoint) {
+                // If we captured an endpoint, prefer it, but respect deep/ask switch if possible
+                // For now, just use captured if available as it's likely the correct one for the current session
+                endpoint = this.capturedEndpoint;
+            }
 
-            // 5. Send to Proxy
+            // 6. Send to Proxy
             if (this.proxyTabId) {
                 chrome.tabs.sendMessage(this.proxyTabId, {
                     type: 'PERPLEXITY_PROXY_REQUEST',
@@ -158,75 +284,76 @@ class PerplexityService {
     }
 
     private async uploadFile(file: PerplexityFile): Promise<PerplexityFile> {
-        // This is a placeholder for the actual upload logic.
-        // Since we don't have the exact upload endpoint, we will try a common pattern
-        // or just pass the file data if the API supports it directly (unlikely for large files).
-
-        // For now, we will simulate an upload and return a mock ID or the file itself if we can't upload.
-        // In a real scenario, we would send a POST to /api/upload via the proxy.
-
-        // TODO: Implement actual upload via proxy
-        /*
-        const response = await this.sendProxyRequest('https://www.perplexity.ai/api/upload', {
-            method: 'POST',
-            body: createFormData(file)
-        });
-        return { ...file, id: response.id };
-        */
-
-        // Mocking ID for now to prevent breakage if we can't upload
         return { ...file, id: 'mock-file-id-' + Date.now() };
     }
 
     private handleChunk(chunk: string) {
-        // Parse SSE Chunk
-        // Chunk format is usually "data: ... \n\n"
-        // We need to accumulate and parse
-        // For simplicity, let's assume we get raw text or JSON chunks
-        // Real implementation needs a robust SSE parser
-
-        // Simple accumulation for now (assuming the proxy sends raw text parts)
-        // In reality, we need to parse the JSON from the SSE event
+        this.sseBuffer += chunk;
+        const lines = this.sseBuffer.split('\n');
+        this.sseBuffer = lines.pop() || ''; // Keep incomplete line
 
         const lastMsg = this.state.messages[this.state.messages.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant') {
-            // Very basic SSE parsing logic
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    try {
-                        const data = JSON.parse(line.slice(6));
-                        // Perplexity usually sends 'text' or 'answer' field
-                        // Or 'text' field in the JSON
-                        if (data.text) {
-                            // Perplexity sends the FULL text each time usually? Or delta?
-                            // Usually it's full text replacement for the current block
-                            // Let's assume full text for the last block
-                            // But we might need to append if it's delta.
-                            // Let's assume it's a delta or full text. 
-                            // Actually, Perplexity SSE often sends the accumulated text.
-                            // Let's try replacing.
-                            // Wait, if it's a JSON object, let's inspect it.
-                            // For this MVP, let's append if it looks like a delta, or replace if it looks like full.
-                            // Safe bet: Check length.
+        if (!lastMsg || lastMsg.role !== 'assistant') return;
 
-                            // Actually, let's just append raw text if we can't parse JSON
-                            // But since we are parsing JSON:
-                            const newText = data.text || data.answer;
-                            if (newText) {
-                                // If newText is longer than current, replace (it's likely full text)
-                                // If it's short, it might be delta.
-                                // Perplexity API usually sends full text so far.
-                                lastMsg.content = JSON.parse(newText); // Sometimes it's double encoded
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (!jsonStr) continue;
+
+                try {
+                    const data = JSON.parse(jsonStr);
+
+                    // Handle different data structures based on api.ts logic
+                    let newText = '';
+
+                    // 1. Check for blocks (markdown_block, text_block, message)
+                    if (data.blocks && Array.isArray(data.blocks)) {
+                        for (const block of data.blocks) {
+                            if (block.markdown_block && block.markdown_block.answer) {
+                                newText = block.markdown_block.answer;
+                            } else if (block.text_block && block.text_block.text) {
+                                newText = block.text_block.text;
+                            } else if (block.message && typeof block.message === 'string') {
+                                newText = block.message;
                             }
                         }
-                    } catch (e) {
-                        // If not JSON, maybe just raw text?
-                        // lastMsg.content += line;
                     }
+
+                    // 2. Check for direct text/answer fields
+                    if (!newText) {
+                        if (data.text && typeof data.text === 'string') {
+                            // Check if it's a JSON string
+                            let isJsonString = false;
+                            try {
+                                const parsed = JSON.parse(data.text);
+                                if (Array.isArray(parsed) || (typeof parsed === 'object' && parsed !== null)) {
+                                    isJsonString = true;
+                                }
+                            } catch { }
+
+                            if (!isJsonString) newText = data.text;
+                        } else if (data.answer && typeof data.answer === 'string') {
+                            newText = data.answer;
+                        }
+                    }
+
+                    // Update message content if we found text
+                    if (newText) {
+                        // Clean up citations format [1](pplx://...) -> [1]
+                        newText = newText.replace(/\[([^\]]+)\]\(pplx:\/\/[^)]+\)/g, '$1');
+                        lastMsg.content = newText;
+                        this.notify();
+                    }
+
+                    // Check for completion
+                    if (data.final_sse_message === true || data.status === 'COMPLETED') {
+                        this.handleDone();
+                    }
+
+                } catch (e) {
+                    console.debug('Failed to parse SSE data:', line, e);
                 }
             }
-            this.notify();
         }
     }
 
@@ -242,24 +369,26 @@ class PerplexityService {
     }
 
     private async ensureProxyTab() {
-        // Check if we already have a valid tab
+        // 1. Check existing ID
         if (this.proxyTabId) {
             try {
                 await chrome.tabs.get(this.proxyTabId);
-                return;
+                if (await this.pingTab(this.proxyTabId)) return;
             } catch (e) {
                 this.proxyTabId = null;
             }
         }
 
-        // Find existing tab
+        // 2. Find existing tab by URL
         const tabs = await chrome.tabs.query({ url: 'https://www.perplexity.ai/*' });
-        if (tabs.length > 0 && tabs[0].id) {
-            this.proxyTabId = tabs[0].id;
-            return;
+        for (const tab of tabs) {
+            if (tab.id && await this.pingTab(tab.id)) {
+                this.proxyTabId = tab.id;
+                return;
+            }
         }
 
-        // Create new pinned tab
+        // 3. Create new tab
         const tab = await chrome.tabs.create({
             url: 'https://www.perplexity.ai',
             pinned: true,
@@ -268,10 +397,23 @@ class PerplexityService {
 
         if (tab.id) {
             this.proxyTabId = tab.id;
-            // Wait for load
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Wait for load and ping loop
+            for (let i = 0; i < 10; i++) {
+                await new Promise(r => setTimeout(r, 1000)); // Wait 1s
+                if (await this.pingTab(tab.id)) return;
+            }
+            throw new Error('Proxy tab created but not responsive');
         } else {
             throw new Error('Failed to create proxy tab');
+        }
+    }
+
+    private async pingTab(tabId: number): Promise<boolean> {
+        try {
+            const response = await chrome.tabs.sendMessage(tabId, { type: 'PERPLEXITY_PING' });
+            return response && response.status === 'pong';
+        } catch (e) {
+            return false;
         }
     }
 
