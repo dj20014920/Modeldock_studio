@@ -10,14 +10,17 @@ interface ChatMessageInputProps {
   mainBrainId: ModelId | null;
   forcedInputText?: string | null;
   onInputHandled?: () => void;
+  onStatusUpdate?: (modelId: ModelId, status: 'idle' | 'sending' | 'success' | 'error') => void;
 }
 
 type ActionStatus = 'idle' | 'copied' | 'sent' | 'error';
 
 export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
   activeModelIds,
+  mainBrainId,
   forcedInputText,
-  onInputHandled
+  onInputHandled,
+  onStatusUpdate
 }) => {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<DispatchMode>('manual');
@@ -68,99 +71,123 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
     setErrorMessage('');
 
     try {
-      // Check for Perplexity (Hybrid Mode)
-      if (activeModelIds.includes('perplexity')) {
-        // We send to Perplexity Service directly
-        // Note: We don't await this because we want parallel execution with other iframes
+      // Perplexity는 별도 서비스로 병렬 전송
+      const isPerplexityActive = activeModelIds.includes('perplexity');
+      if (isPerplexityActive) {
         import('../services/perplexity-service').then(({ perplexityService }) => {
           perplexityService.sendMessage(input);
         });
       }
 
-      // Chrome Extension Logic: Broadcast to all frames in the current tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) {
-        setErrorMessage('No active tab found');
+      const requestId = `md-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const allIframes = Array.from(document.querySelectorAll('iframe'));
+      const visibleIframes = allIframes.filter((iframe) => {
+        const rect = iframe.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+
+      if (visibleIframes.length === 0) {
+        setErrorMessage('활성 iframe을 찾지 못했습니다');
         setLastActionStatus('error');
         return;
       }
 
-      // We send the message to the tab. Since we want to reach iframes, we rely on content scripts.
-      // However, chrome.tabs.sendMessage sends to the top frame by default unless frameId is specified.
-      // To reach all frames, we need to know their IDs or use a broadcast pattern if supported.
-      // Chrome doesn't support "broadcast to all frames" directly in sendMessage without frameId.
-      // But we can use chrome.webNavigation.getAllFrames if we have permission.
+      const activeSelectors = activeModelIds
+        .map((id) => ({ modelId: id, ...INPUT_SELECTORS[id] }))
+        .filter((s) => s.inputSelector);
 
-      // Fallback: We iterate over all frames if possible.
-      let frames: chrome.webNavigation.GetAllFrameResultDetails[] = [];
-      try {
-        const result = await chrome.webNavigation.getAllFrames({ tabId: tab.id });
-        if (result) {
-          frames = result;
-        }
-      } catch (e) {
-        console.warn('webNavigation permission might be missing or error:', e);
-        // If we can't get frames, we can't inject into iframes reliably from here 
-        // without a background script relay or similar. 
-        // But assuming we added the permission:
-      }
-
-      if (frames.length === 0 && !activeModelIds.includes('perplexity')) {
-        // Fallback for when webNavigation is not available or fails: 
-        // Try sending to top frame and hope for the best? No, models are in iframes.
-        // We can try a brute force approach if we knew the frame IDs, but we don't.
-        setErrorMessage('Cannot detect frames');
+      if (activeSelectors.length === 0) {
+        setErrorMessage('유효한 타겟이 없습니다');
         setLastActionStatus('error');
         return;
       }
 
-      let successCount = 0;
+      const payload = { text: input, targets: activeSelectors, requestId };
+      const responses: any[] = [];
+      let completed = false;
 
-      // Prepare payload with all possible selectors. 
-      // The content script will decide which one to use based on its own URL.
-      // We only send selectors for ACTIVE models to minimize risk.
-      const activeSelectors = activeModelIds.map(id => ({
-        modelId: id,
-        ...INPUT_SELECTORS[id]
-      })).filter(s => s.inputSelector); // Ensure valid config
-
-      const payload = {
-        text: input,
-        targets: activeSelectors
+      const updateStatuses = (status: 'sending' | 'success' | 'error' | 'idle') => {
+        const fallbackTarget = mainBrainId ?? activeModelIds[0];
+        if (fallbackTarget) onStatusUpdate?.(fallbackTarget, status);
+        activeModelIds.forEach((id) => onStatusUpdate?.(id, status));
       };
 
-      for (const frame of frames) {
-        // Skip top frame if models are only in iframes (usually frameId 0 is top)
-        if (frame.frameId === 0) continue;
+      updateStatuses('sending');
 
-        try {
-          await chrome.tabs.sendMessage(tab.id, {
-            type: 'INJECT_INPUT',
-            payload
-          }, { frameId: frame.frameId });
-          successCount++;
-        } catch (e) {
-          // It's normal for some frames to not respond (e.g. cross-origin restrictions or no content script)
-          // console.debug('Frame injection skipped/failed', frame.frameId, e);
+      const responseHandler = (event: MessageEvent) => {
+        const data = event.data;
+        if (!data || data.type !== 'MODEL_DOCK_INJECT_RESPONSE') return;
+        const resp = data.payload || {};
+        if (resp.requestId !== requestId) return;
+        responses.push(resp);
+        if (responses.length >= visibleIframes.length && !completed) {
+          completed = true;
+          cleanup();
         }
-      }
+      };
 
-      // Treat Perplexity as a success if it was active
-      if (activeModelIds.includes('perplexity')) {
-        successCount++;
-      }
+      const cleanup = () => {
+        window.removeEventListener('message', responseHandler);
+      };
 
-      if (successCount > 0) {
+      window.addEventListener('message', responseHandler);
+
+      visibleIframes.forEach((iframe) => {
+        try {
+          iframe.contentWindow?.postMessage(
+            { type: 'MODEL_DOCK_INJECT_TEXT', payload },
+            '*'
+          );
+        } catch (err) {
+          console.warn('iframe postMessage 실패', err);
+        }
+      });
+
+      const timeoutResult = await new Promise<{ success: boolean; detail?: string }>((resolve) => {
+        const checkInterval = setInterval(() => {
+          const ok = responses.some((r) => r.success) || isPerplexityActive;
+          if (ok && !completed) {
+            completed = true;
+            cleanup();
+            clearTimeout(timer);
+            clearInterval(checkInterval);
+            resolve({ success: true });
+          } else if (responses.length >= visibleIframes.length && !completed) {
+            completed = true;
+            cleanup();
+            clearTimeout(timer);
+            clearInterval(checkInterval);
+            resolve({ success: ok });
+          }
+        }, 100);
+
+        const timer = setTimeout(() => {
+          if (!completed) {
+            completed = true;
+            cleanup();
+            clearInterval(checkInterval);
+            resolve({ success: false, detail: 'timeout' });
+          }
+        }, 8000);
+      });
+
+      if (timeoutResult.success) {
         setLastActionStatus('sent');
         setInput('');
+        updateStatuses('success');
+        setTimeout(() => updateStatuses('idle'), 1500);
       } else {
-        setErrorMessage('No targets found');
+        setErrorMessage('전송 실패 (응답 없음)');
         setLastActionStatus('error');
+        updateStatuses('error');
+        setTimeout(() => updateStatuses('idle'), 1500);
       }
     } catch (error: any) {
       console.error('Auto-injection failed:', error);
       setErrorMessage('System Error');
       setLastActionStatus('error');
+      const fallbackTarget = mainBrainId ?? activeModelIds[0];
+      if (fallbackTarget) onStatusUpdate?.(fallbackTarget, 'error');
     }
 
     setTimeout(() => {
@@ -230,11 +257,11 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <button
-              onClick={toggleMode}
-              className={clsx(
-                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-all border",
-                mode === 'manual'
-                  ? "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+      onClick={toggleMode}
+      className={clsx(
+        "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-all border",
+        mode === 'manual'
+          ? "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
                   : "bg-indigo-100 text-indigo-600 border-indigo-200 hover:bg-indigo-200"
               )}
             >

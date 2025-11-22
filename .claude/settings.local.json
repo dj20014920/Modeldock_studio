@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__serena__list_dir",
+      "mcp__serena__activate_project",
+      "mcp__firecrawl-mcp__firecrawl_search",
+      "WebSearch",
+      "mcp__desktop-commander__list_directory"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -161,16 +161,16 @@ export const NAV_ITEMS = [
 // Selectors for Auto-Injection
 export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   chatgpt: {
-    inputSelector: '#prompt-textarea, textarea[data-id="root"], textarea[data-testid="prompt-textarea"]',
-    submitSelector: 'button[data-testid="send-button"], button[aria-label="Send prompt"]',
+    inputSelector: 'textarea[data-id="conversation-input"], div[data-testid="prompt-textarea"] textarea, textarea[data-testid="prompt-textarea"], textarea[aria-label*="Message"], #prompt-textarea',
+    submitSelector: 'button[data-testid="send-button"], button[aria-label*="Send message" i], button[aria-label*="Send prompt" i]',
     inputType: 'textarea',
     delayBeforeSubmit: 300
   },
   claude: {
-    inputSelector: 'div[data-testid="message-composer"] [contenteditable="true"], div[contenteditable="true"][aria-label*="Message"], div[contenteditable="true"]',
-    submitSelector: 'button[aria-label*="Send Message"], button[aria-label="Send"], button:has(svg path[d*="M"])',
+    inputSelector: 'div[data-testid="message-composer"] [contenteditable="true"], div[contenteditable="true"][data-placeholder*="Reply" i], div[role="textbox"][contenteditable="true"], div[contenteditable="plaintext-only"], div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"], textarea[aria-label*="Message" i], textarea[placeholder*="Reply" i], textarea',
+    submitSelector: 'button[aria-label*="Send Message" i]:not([aria-label*="Stop" i]), button[aria-label*="Send" i]:not([aria-label*="Stop" i]), button[data-testid*="send" i], button[type="submit"]:has(svg), button:has(svg path[d*="M"])',
     inputType: 'contenteditable',
-    delayBeforeSubmit: 600,
+    delayBeforeSubmit: 800,
     forceEnter: true
   },
   gemini: {
@@ -231,19 +231,20 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     forceEnter: true
   },
   aistudio: {
-    inputSelector: 'textarea, div[contenteditable="true"], .input-area',
-    submitSelector: 'button[aria-label="Run"], button[aria-label="Send"], button[tooltip*="Run prompt"]',
+    inputSelector: 'textarea[aria-label*="Message"], textarea[data-testid*="prompt"], div[role="textbox"][contenteditable="true"], textarea[aria-label*="Describe" i], div[contenteditable="true"][data-placeholder*="Describe" i], textarea, .input-area',
+    submitSelector: 'button[tooltip*="Run prompt" i], button[aria-label="Run"], button[aria-label*="Run" i], button[aria-label="Send message"], button[aria-label="Submit"], button[type="submit"]',
     inputType: 'textarea',
     forceEnter: true,
-    delayBeforeSubmit: 1200,
+    delayBeforeSubmit: 1500,
     submitKey: { key: 'Enter', ctrlKey: true }
   },
   codex: {
-    inputSelector: 'div[data-testid="codex-input"] textarea, div[data-testid="codex-input"] [contenteditable="true"], .monaco-editor, .cm-content',
-    submitSelector: 'button[data-testid="composer-send-button"], button[aria-label*="Generate"], button[aria-label="Send"]',
+    inputSelector: 'div[data-testid="codex-input"] textarea, div[data-testid="codex-input"] [contenteditable="true"], div[role="textbox"][contenteditable="true"], textarea#prompt-textarea, .monaco-editor, .cm-content, div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"]',
+    submitSelector: 'button[data-testid="composer-send-button"], button[aria-label*="Generate" i], button[aria-label*="Run" i], button:has(svg[aria-label*="Run" i]), button:has(svg[aria-label*="Generate" i]), div[role="button"][aria-label*="Run" i], div[role="button"][aria-label*="Generate" i]',
     inputType: 'textarea',
     forceEnter: true,
-    delayBeforeSubmit: 500
+    delayBeforeSubmit: 800,
+    submitKey: { key: 'Enter', metaKey: true }
   },
   claudecode: {
     inputSelector: 'div[contenteditable="true"]',

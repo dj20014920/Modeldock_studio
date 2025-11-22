@@ -41,6 +41,29 @@
     });
   }
 
+  // --- postMessage Bridge (iframe <-> parent) ---
+  window.addEventListener('message', async (event) => {
+    const data = event.data;
+    if (!data || data.type !== 'MODEL_DOCK_INJECT_TEXT') return;
+    const { text, targets, requestId } = data.payload || {};
+    if (!text || !targets) return;
+
+    const result = await handleInjection(text, targets);
+    try {
+      window.parent.postMessage({
+        type: 'MODEL_DOCK_INJECT_RESPONSE',
+        payload: {
+          requestId,
+          success: result.status === 'success',
+          status: result.status,
+          host: window.location.host
+        }
+      }, '*');
+    } catch (err) {
+      console.warn('[ModelDock] Response postMessage failed', err);
+    }
+  });
+
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type !== 'INJECT_INPUT') return;
     const { text, targets } = request.payload;
@@ -65,6 +88,26 @@
       }
     }
     return null;
+  }
+
+  // Shadow DOM 탐색 (모든 요소 찾기) - AI Studio용
+  function queryShadowAll(root, selector) {
+    const results = [];
+    const visit = (node) => {
+      try {
+        const found = node.querySelectorAll(selector);
+        if (found) results.push(...found);
+
+        const all = node.querySelectorAll('*');
+        if (all) {
+          for (const el of all) {
+            if (el.shadowRoot) visit(el.shadowRoot);
+          }
+        }
+      } catch (e) { }
+    };
+    visit(root);
+    return results;
   }
 
   function isElementVisible(el) {
@@ -94,11 +137,24 @@
     let matchedTarget = null;
     let foundInput = null;
 
+    // AI Studio detection (Shadow DOM 깊이 탐색 필요)
+    const isAIStudio = window.location.hostname.includes('aistudio.google.com');
+
     // 1. Find Input
     for (const target of targets) {
       const selectors = target.inputSelector.split(',').map(s => s.trim());
       for (const selector of selectors) {
-        const el = queryShadow(document.body, selector);
+        let el = null;
+
+        if (isAIStudio) {
+          // AI Studio: Shadow DOM 전체 탐색
+          const elements = queryShadowAll(document.body, selector);
+          el = elements.find(e => isElementVisible(e)) || null;
+        } else {
+          // 기존 로직: 첫 번째 매칭만
+          el = queryShadow(document.body, selector);
+        }
+
         if (el && isElementVisible(el)) {
           matchedTarget = target;
           foundInput = el;
@@ -139,21 +195,58 @@
         // 3. Submit
         let submitted = false;
 
-        // Filter sidebar buttons!
+        // Filter sidebar buttons! (강화된 필터링)
         const isSidebarButton = (btn) => {
           const label = (btn.getAttribute('aria-label') || '').toLowerCase();
           const cls = (btn.className || '').toLowerCase();
-          return label.includes('menu') || label.includes('sidebar') || label.includes('nav') ||
-            cls.includes('sidebar') || cls.includes('menu');
+          const testId = (btn.getAttribute('data-testid') || '').toLowerCase();
+          const role = (btn.getAttribute('role') || '').toLowerCase();
+
+          // Menu/Sidebar 관련
+          if (label.includes('menu') || label.includes('sidebar') || label.includes('nav') ||
+            cls.includes('sidebar') || cls.includes('menu') || role === 'navigation') {
+            return true;
+          }
+
+          // Stop/Cancel 버튼 (Claude, GPT 등에서 생성 중지 버튼 방지)
+          if (label.includes('stop') || label.includes('cancel') ||
+            testId.includes('stop') || testId.includes('cancel')) {
+            return true;
+          }
+
+          return false;
         };
 
         if (submitSelector) {
           const selectors = submitSelector.split(',').map(s => s.trim());
-          // Poll for button
+          // Poll for button (강화된 폴링: 3초, 디버깅 로그 추가)
           const startTime = Date.now();
-          while (Date.now() - startTime < 2000 && !submitted) {
+          const maxPollTime = 3000; // AI Studio 등을 위해 3초로 증가
+          let attemptCount = 0;
+
+          while (Date.now() - startTime < maxPollTime && !submitted) {
+            attemptCount++;
             for (const sel of selectors) {
-              const btn = queryShadow(document.body, sel);
+              let btn = null;
+
+              if (isAIStudio) {
+                // AI Studio: Shadow DOM 전체 탐색
+                const buttons = queryShadowAll(document.body, sel);
+                btn = buttons.find(b =>
+                  !b.disabled &&
+                  b.getAttribute('aria-disabled') !== 'true' &&
+                  isElementVisible(b) &&
+                  !isSidebarButton(b)
+                ) || null;
+
+                if (attemptCount === 1 && buttons.length > 0) {
+                  console.log(`[ModelDock] AI Studio: Found ${buttons.length} buttons for selector "${sel}"`);
+                }
+              } else {
+                // 기존 로직: 첫 번째 매칭만
+                btn = queryShadow(document.body, sel);
+              }
+
               if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true' && isElementVisible(btn)) {
                 if (isSidebarButton(btn)) {
                   console.warn('[ModelDock] Ignoring sidebar button:', sel);
@@ -166,24 +259,39 @@
                 btn.click();
                 btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                 submitted = true;
-                console.log('[ModelDock] Submitted via button:', sel);
+                console.log(`[ModelDock] ✓ Submitted via button (attempt ${attemptCount}):`, sel);
                 break;
               }
             }
             if (!submitted) await new Promise(r => setTimeout(r, 100));
           }
+
+          if (!submitted && submitSelector) {
+            console.warn(`[ModelDock] Button polling timeout after ${attemptCount} attempts (${maxPollTime}ms)`);
+          }
         }
 
-        // Fallback: Force Enter / Key
+        // Fallback: Force Enter / Key (Codex, AI Studio 등 submitKey 활용)
         if ((forceEnter || !submitted) && !submitted) {
           console.log('[ModelDock] Attempting Key fallback...');
-          dispatchKey(foundInput, submitKey || { key: 'Enter' });
 
-          // Codex specific: Try Cmd+Enter if simple Enter fails (or just do it anyway for safety)
-          if (modelId === 'codex') {
-            dispatchKey(foundInput, { key: 'Enter', metaKey: true });
-            dispatchKey(foundInput, { key: 'Enter', ctrlKey: true });
+          if (submitKey) {
+            // submitKey가 정의된 경우 (Codex, AI Studio 등)
+            if (submitKey.metaKey && submitKey.ctrlKey) {
+              // 둘 다 설정된 경우: 크로스 플랫폼 지원을 위해 각각 시도
+              console.log('[ModelDock] Trying Cmd+Enter (Mac)...');
+              dispatchKey(foundInput, { key: submitKey.key, metaKey: true });
+              console.log('[ModelDock] Trying Ctrl+Enter (Win/Linux)...');
+              dispatchKey(foundInput, { key: submitKey.key, ctrlKey: true });
+            } else {
+              // 하나만 설정된 경우
+              dispatchKey(foundInput, submitKey);
+            }
+          } else {
+            // 기본: 단순 Enter
+            dispatchKey(foundInput, { key: 'Enter' });
           }
+
           submitted = true;
         }
 
