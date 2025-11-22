@@ -2,7 +2,7 @@
 import React, { useState, KeyboardEvent, useEffect } from 'react';
 import { Send, Copy, Zap, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 import { DispatchMode, ModelId } from '../types';
-import { INPUT_SELECTORS } from '../constants';
+import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
 import { clsx } from 'clsx';
 
 interface ChatMessageInputProps {
@@ -86,8 +86,21 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         return rect.width > 0 && rect.height > 0;
       });
 
-      if (visibleIframes.length === 0) {
-        setErrorMessage('활성 iframe을 찾지 못했습니다');
+      const targetFrames = visibleIframes.filter((iframe) => {
+        const src = iframe.getAttribute('src') || '';
+        try {
+          const host = new URL(src).host;
+          return activeModelIds.some((id) => {
+            const modelHost = new URL(SUPPORTED_MODELS[id].url).host;
+            return host.includes(modelHost);
+          });
+        } catch {
+          return false;
+        }
+      });
+
+      if (targetFrames.length === 0) {
+        setErrorMessage('활성 모델 iframe을 찾지 못했습니다');
         setLastActionStatus('error');
         return;
       }
@@ -132,7 +145,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
 
       window.addEventListener('message', responseHandler);
 
-      visibleIframes.forEach((iframe) => {
+      targetFrames.forEach((iframe) => {
         try {
           iframe.contentWindow?.postMessage(
             { type: 'MODEL_DOCK_INJECT_TEXT', payload },
@@ -152,7 +165,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
             clearTimeout(timer);
             clearInterval(checkInterval);
             resolve({ success: true });
-          } else if (responses.length >= visibleIframes.length && !completed) {
+          } else if (responses.length >= targetFrames.length && !completed) {
             completed = true;
             cleanup();
             clearTimeout(timer);

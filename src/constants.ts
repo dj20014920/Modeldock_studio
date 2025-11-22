@@ -231,15 +231,15 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     forceEnter: true
   },
   aistudio: {
-    inputSelector: 'textarea[aria-label*="Message"], textarea[data-testid*="prompt"], div[role="textbox"][contenteditable="true"], textarea[aria-label*="Describe" i], div[contenteditable="true"][data-placeholder*="Describe" i], textarea, .input-area',
-    submitSelector: 'button[tooltip*="Run prompt" i], button[aria-label="Run"], button[aria-label*="Run" i], button[aria-label="Send message"], button[aria-label="Submit"], button[type="submit"]',
+    inputSelector: 'textarea[aria-label*="Message"], textarea[data-testid*="prompt"], div[role="textbox"][contenteditable="true"], textarea[aria-label*="Describe" i], div[contenteditable="true"][data-placeholder*="Describe" i], textarea[aria-label="Prompt"], textarea, .input-area',
+    submitSelector: 'button[tooltip*="Run prompt" i], button[aria-label="Run"], button[aria-label*="Run" i], button[aria-label="Send message"], button[aria-label="Submit"], button[type="submit"], button[data-testid*="run" i]',
     inputType: 'textarea',
     forceEnter: true,
     delayBeforeSubmit: 1500,
     submitKey: { key: 'Enter', ctrlKey: true }
   },
   codex: {
-    inputSelector: 'div[data-testid="codex-input"] textarea, div[data-testid="codex-input"] [contenteditable="true"], div[role="textbox"][contenteditable="true"], textarea#prompt-textarea, .monaco-editor, .cm-content, div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"]',
+    inputSelector: 'div[data-testid="codex-input"] textarea, div[data-testid="codex-input"] [contenteditable="true"], div[role="textbox"][contenteditable="true"], textarea#prompt-textarea, .monaco-editor, .monaco-editor textarea, .cm-content, div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"]',
     submitSelector: 'button[data-testid="composer-send-button"], button[aria-label*="Generate" i], button[aria-label*="Run" i], button:has(svg[aria-label*="Run" i]), button:has(svg[aria-label*="Generate" i]), div[role="button"][aria-label*="Run" i], div[role="button"][aria-label*="Generate" i]',
     inputType: 'textarea',
     forceEnter: true,
