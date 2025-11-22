@@ -168,9 +168,16 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   },
   claude: {
     inputSelector: 'div[data-testid="message-composer"] [contenteditable="true"], div[contenteditable="true"][data-placeholder*="Reply" i], div[role="textbox"][contenteditable="true"], div[contenteditable="plaintext-only"], div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"], textarea[aria-label*="Message" i], textarea[placeholder*="Reply" i], textarea',
-    submitSelector: 'button[data-testid*="send" i], button[aria-label*="Send message" i]:not([aria-label*="Stop" i]), button[aria-label*="Send" i]:not([aria-label*="Stop" i]), button[type="submit"]',
+    submitSelector: [
+      'button[aria-label*="메시지 보내기"]',
+      'button[data-testid*="send" i]',
+      'button.Button_claude__tTMUm',
+      'button[aria-label*="Send message" i]:not([aria-label*="Stop" i])',
+      'button[aria-label*="Send" i]:not([aria-label*="Stop" i])',
+      'button[type="submit"]'
+    ].join(', '),
     inputType: 'contenteditable',
-    delayBeforeSubmit: 900,
+    delayBeforeSubmit: 1000,
     forceEnter: true
   },
   gemini: {
