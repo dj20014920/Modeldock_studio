@@ -7,6 +7,7 @@ import { PerplexityChat } from './PerplexityChat';
 
 interface ModelCardProps {
   model: ModelConfig;
+  instanceId?: string;
   isMainBrain?: boolean;
   onSetMainBrain?: () => void;
   onRemoveMainBrain?: () => void;
@@ -16,6 +17,7 @@ interface ModelCardProps {
 
 export const ModelCard: React.FC<ModelCardProps> = ({
   model,
+  instanceId,
   isMainBrain = false,
   onSetMainBrain,
   onRemoveMainBrain,
@@ -174,6 +176,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         ) : (
           <ModelFrame
             modelId={model.id}
+            instanceId={instanceId}
             url={model.url}
             title={model.name}
             zoomLevel={zoomLevel}

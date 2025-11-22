@@ -1,12 +1,13 @@
 
 import React, { useState, KeyboardEvent, useEffect } from 'react';
 import { Send, Copy, Zap, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
-import { DispatchMode, ModelId } from '../types';
+import { ActiveModel, DispatchMode, ModelId } from '../types';
 import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
 import { clsx } from 'clsx';
+import { usePersistentState } from '../hooks/usePersistentState';
 
 interface ChatMessageInputProps {
-  activeModelIds: ModelId[];
+  activeModels: ActiveModel[];
   mainBrainId: ModelId | null;
   forcedInputText?: string | null;
   onInputHandled?: () => void;
@@ -16,16 +17,16 @@ interface ChatMessageInputProps {
 type ActionStatus = 'idle' | 'copied' | 'sent' | 'error';
 
 export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
-  activeModelIds,
+  activeModels,
   mainBrainId,
   forcedInputText,
   onInputHandled,
   onStatusUpdate
 }) => {
   const [input, setInput] = useState('');
-  const [mode, setMode] = useState<DispatchMode>('manual');
+  const [mode, setMode] = usePersistentState<DispatchMode>('md_dispatch_mode', 'manual');
   const [showConsent, setShowConsent] = useState(false);
-  const [hasConsented, setHasConsented] = useState(false);
+  const [hasConsented, setHasConsented] = usePersistentState<boolean>('md_auto_consent', false);
   const [lastActionStatus, setLastActionStatus] = useState<ActionStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
 
@@ -72,135 +73,169 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
 
     try {
       // Perplexity는 별도 서비스로 병렬 전송
-      const isPerplexityActive = activeModelIds.includes('perplexity');
+      const isPerplexityActive = activeModels.some(m => m.modelId === 'perplexity');
       if (isPerplexityActive) {
         import('../services/perplexity-service').then(({ perplexityService }) => {
           perplexityService.sendMessage(input);
         });
       }
 
-      const requestId = `md-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const allIframes = Array.from(document.querySelectorAll('iframe'));
+      const requestIdBase = `md-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const allIframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[data-md-frame="true"]'));
       const visibleIframes = allIframes.filter((iframe) => {
         const rect = iframe.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
       });
 
-      const targetFrames = visibleIframes.filter((iframe) => {
-        const src = iframe.getAttribute('src') || '';
-        try {
-          const host = new URL(src).host;
-          return activeModelIds.some((id) => {
-            const modelHost = new URL(SUPPORTED_MODELS[id].url).host;
-            return host.includes(modelHost);
-          });
-        } catch {
-          return false;
-        }
-      });
+      const activeSelectorEntries = activeModels
+        .map((m) => ({
+          instanceId: m.instanceId,
+          modelId: m.modelId,
+          selector: INPUT_SELECTORS[m.modelId]
+        }))
+        .filter((entry) => entry.selector && entry.selector.inputSelector);
 
-      if (targetFrames.length === 0) {
-        setErrorMessage('활성 모델 iframe을 찾지 못했습니다');
-        setLastActionStatus('error');
-        return;
-      }
-
-      const activeSelectors = activeModelIds
-        .map((id) => ({ modelId: id, ...INPUT_SELECTORS[id] }))
-        .filter((s) => s.inputSelector);
-
-      if (activeSelectors.length === 0) {
+      if (activeSelectorEntries.length === 0) {
         setErrorMessage('유효한 타겟이 없습니다');
         setLastActionStatus('error');
         return;
       }
 
-      const payload = { text: input, targets: activeSelectors, requestId };
-      const responses: any[] = [];
-      let completed = false;
-
-      const updateStatuses = (status: 'sending' | 'success' | 'error' | 'idle') => {
-        const fallbackTarget = mainBrainId ?? activeModelIds[0];
-        if (fallbackTarget) onStatusUpdate?.(fallbackTarget, status);
-        activeModelIds.forEach((id) => onStatusUpdate?.(id, status));
+      const updateStatusFor = (modelId: ModelId, status: 'sending' | 'success' | 'error' | 'idle') => {
+        onStatusUpdate?.(modelId, status);
       };
 
-      updateStatuses('sending');
+      let anySuccess = false;
+      const frameCache = new Map<string, HTMLIFrameElement>();
+      const claimedFrames = new Set<string>();
 
-      const responseHandler = (event: MessageEvent) => {
-        const data = event.data;
-        if (!data || data.type !== 'MODEL_DOCK_INJECT_RESPONSE') return;
-        const resp = data.payload || {};
-        if (resp.requestId !== requestId) return;
-        responses.push(resp);
-        if (responses.length >= visibleIframes.length && !completed) {
-          completed = true;
-          cleanup();
+      const findFrameForInstance = (instanceId: string, modelId: ModelId) => {
+        if (frameCache.has(instanceId)) return frameCache.get(instanceId)!;
+        const byInstance = visibleIframes.find(f => f.dataset.instanceId === instanceId);
+        if (byInstance) {
+          frameCache.set(instanceId, byInstance);
+          return byInstance;
         }
+        const byModel = visibleIframes.find(f => f.dataset.modelId === modelId);
+        if (byModel) {
+          frameCache.set(instanceId, byModel);
+          return byModel;
+        }
+        const host = (() => { try { return new URL(SUPPORTED_MODELS[modelId].url).host; } catch { return ''; } })();
+        const byHost = visibleIframes.find((iframe) => {
+          const src = iframe.getAttribute('src') || '';
+          try { return new URL(src).host.includes(host); } catch { return false; }
+        });
+        if (byHost) frameCache.set(instanceId, byHost);
+        return byHost || null;
       };
 
-      const cleanup = () => {
+      for (const { modelId, instanceId, selector } of activeSelectorEntries) {
+        const targetFrame = findFrameForInstance(instanceId, modelId);
+
+        if (!targetFrame) {
+          updateStatusFor(modelId, 'error');
+          continue;
+        }
+
+        if (!selector?.inputSelector) {
+          updateStatusFor(modelId, 'error');
+          continue;
+        }
+
+        const frameKey = `${modelId}-${targetFrame.dataset.instanceId || targetFrame.dataset.modelId || targetFrame.getAttribute('src') || 'unknown'}`;
+        if (claimedFrames.has(frameKey)) {
+          console.warn('[ModelDock] Duplicate frame mapping skipped', frameKey);
+          updateStatusFor(modelId, 'error');
+          continue;
+        }
+        claimedFrames.add(frameKey);
+
+        const payloadBase = {
+          text: input,
+          targets: [{ modelId, ...selector }],
+          requestId: `${requestIdBase}-${instanceId}`,
+          modelId
+        };
+        const responses: any[] = [];
+
+        const responseHandler = (event: MessageEvent) => {
+          const data = event.data;
+          if (!data || data.type !== 'MODEL_DOCK_INJECT_RESPONSE') return;
+          const resp = data.payload || {};
+          if (resp.requestId !== payloadBase.requestId) return;
+          responses.push(resp);
+        };
+
+        const sendToFrame = (payload: any) => {
+          try {
+            targetFrame.contentWindow?.postMessage(payload, '*');
+          } catch (err) {
+            console.warn('iframe postMessage 실패', err);
+          }
+        };
+
+        updateStatusFor(modelId, 'sending');
+        window.addEventListener('message', responseHandler);
+
+      // 1-pass: 주입
+      sendToFrame({ type: 'MODEL_DOCK_INJECT_TEXT', payload: { ...payloadBase, submit: false, skipInject: false } });
+      await new Promise(r => setTimeout(r, 800));
+
+      // 2-pass: 전송 (주입 생략)
+      sendToFrame({ type: 'MODEL_DOCK_INJECT_TEXT', payload: { ...payloadBase, submit: true, forceKey: true, skipInject: true } });
+
+        const success = await new Promise<boolean>((resolve) => {
+          const start = Date.now();
+          const timer = setTimeout(() => {
+            resolve(responses.some(r => r.success));
+          }, 8000);
+          const interval = setInterval(() => {
+            if (responses.some(r => r.success)) {
+              clearInterval(interval);
+              clearTimeout(timer);
+              resolve(true);
+            }
+            if (Date.now() - start > 7500) {
+              clearInterval(interval);
+              clearTimeout(timer);
+              resolve(responses.some(r => r.success));
+            }
+          }, 150);
+        });
+
         window.removeEventListener('message', responseHandler);
-      };
 
-      window.addEventListener('message', responseHandler);
-
-      targetFrames.forEach((iframe) => {
-        try {
-          iframe.contentWindow?.postMessage(
-            { type: 'MODEL_DOCK_INJECT_TEXT', payload },
-            '*'
-          );
-        } catch (err) {
-          console.warn('iframe postMessage 실패', err);
+        if (success || (modelId === 'perplexity' && isPerplexityActive)) {
+          anySuccess = true;
+          updateStatusFor(modelId, 'success');
+          setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
+        } else {
+          updateStatusFor(modelId, 'error');
+          setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
         }
-      });
 
-      const timeoutResult = await new Promise<{ success: boolean; detail?: string }>((resolve) => {
-        const checkInterval = setInterval(() => {
-          const ok = responses.some((r) => r.success) || isPerplexityActive;
-          if (ok && !completed) {
-            completed = true;
-            cleanup();
-            clearTimeout(timer);
-            clearInterval(checkInterval);
-            resolve({ success: true });
-          } else if (responses.length >= targetFrames.length && !completed) {
-            completed = true;
-            cleanup();
-            clearTimeout(timer);
-            clearInterval(checkInterval);
-            resolve({ success: ok });
-          }
-        }, 100);
+        // 모델 간 딜레이(브라우저 부하 완화)
+        await new Promise(r => setTimeout(r, 200));
+      }
 
-        const timer = setTimeout(() => {
-          if (!completed) {
-            completed = true;
-            cleanup();
-            clearInterval(checkInterval);
-            resolve({ success: false, detail: 'timeout' });
-          }
-        }, 8000);
-      });
-
-      if (timeoutResult.success) {
+      if (anySuccess) {
         setLastActionStatus('sent');
         setInput('');
-        updateStatuses('success');
-        setTimeout(() => updateStatuses('idle'), 1500);
       } else {
         setErrorMessage('전송 실패 (응답 없음)');
         setLastActionStatus('error');
-        updateStatuses('error');
-        setTimeout(() => updateStatuses('idle'), 1500);
       }
     } catch (error: any) {
       console.error('Auto-injection failed:', error);
       setErrorMessage('System Error');
       setLastActionStatus('error');
-      const fallbackTarget = mainBrainId ?? activeModelIds[0];
+      const fallbackTarget = mainBrainId ?? activeModels[0]?.modelId;
       if (fallbackTarget) onStatusUpdate?.(fallbackTarget, 'error');
+      setTimeout(() => {
+        const fallback = mainBrainId ?? activeModels[0]?.modelId;
+        if (fallback) onStatusUpdate?.(fallback, 'idle');
+      }, 1500);
     }
 
     setTimeout(() => {

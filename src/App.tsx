@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ModelGrid } from './components/ModelGrid';
 import { Header } from './components/Header';
@@ -9,29 +9,42 @@ import { SettingsModal } from './components/SettingsModal';
 import { ModelId, ActiveModel, SidebarView } from './types';
 import { SUPPORTED_MODELS } from './constants';
 import { X } from 'lucide-react';
+import { usePersistentState } from './hooks/usePersistentState';
 
 export const App: React.FC = () => {
   // --- State ---
-  const [activeModels, setActiveModels] = useState<ActiveModel[]>([]);
-  const [mainBrainInstanceId, setMainBrainInstanceId] = useState<string | null>(null);
-  const [sidebarView, setSidebarView] = useState<SidebarView>('chats');
+  const [activeModels, setActiveModels] = usePersistentState<ActiveModel[]>('md_active_models', []);
+  const [mainBrainInstanceId, setMainBrainInstanceId] = usePersistentState<string | null>('md_main_brain', null);
+  const [sidebarView, setSidebarView] = usePersistentState<SidebarView>('md_sidebar_view', 'chats');
 
   // Modals
-  const [isPromptLibraryOpen, setIsPromptLibraryOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isPromptLibraryOpen, setIsPromptLibraryOpen] = usePersistentState<boolean>('md_prompt_modal_open', false);
+  const [isSettingsOpen, setIsSettingsOpen] = usePersistentState<boolean>('md_settings_modal_open', false);
 
   // Injected Text (from Prompt Library)
-  const [injectedPromptText, setInjectedPromptText] = useState<string | null>(null);
+  const [injectedPromptText, setInjectedPromptText] = usePersistentState<string | null>('md_injected_prompt_text', null);
 
   // --- Resizable Main Brain Logic ---
   const containerRef = useRef<HTMLDivElement>(null);
-  const [gridWidthPercent, setGridWidthPercent] = useState(50); // Default 50%
-  const [isResizing, setIsResizing] = useState(false);
+  const [gridWidthPercent, setGridWidthPercent] = usePersistentState<number>('md_grid_width_percent', 50); // Default 50%
+  const [isResizing, setIsResizing] = React.useState(false);
 
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
   }, []);
+
+  useEffect(() => {
+    // 복원된 mainBrainInstanceId가 존재하지 않으면 정리
+    if (mainBrainInstanceId && !activeModels.some(m => m.instanceId === mainBrainInstanceId)) {
+      setMainBrainInstanceId(null);
+    }
+    // 로딩 시 모든 status를 idle로 초기화 (이전 세션의 sending 상태 남김 방지)
+    if (activeModels.some(m => m.lastStatus && m.lastStatus !== 'idle')) {
+      setActiveModels(prev => prev.map(m => ({ ...m, lastStatus: 'idle' })));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 초기 1회만 실행
 
   useEffect(() => {
     if (!isResizing) return;
@@ -151,6 +164,7 @@ export const App: React.FC = () => {
                   <div className="w-full h-full p-1">
                     <ModelCard
                       model={SUPPORTED_MODELS[mainBrainModel.modelId]}
+                      instanceId={mainBrainModel.instanceId}
                       isMainBrain={true}
                       onSetMainBrain={() => { }}
                       onRemoveMainBrain={() => setMainBrainInstanceId(null)}
@@ -185,7 +199,7 @@ export const App: React.FC = () => {
 
           {/* Global Chat Input */}
           <ChatMessageInput
-            activeModelIds={activeModels.map(m => m.modelId)}
+            activeModels={activeModels}
             mainBrainId={mainBrainModel?.modelId || null}
             forcedInputText={injectedPromptText}
             onInputHandled={() => setInjectedPromptText(null)}

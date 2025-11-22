@@ -104,6 +104,7 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
           >
             <ModelCard
               model={modelConfig}
+              instanceId={activeModel.instanceId}
               onSetMainBrain={() => onSetMainBrain(activeModel.instanceId)}
               onClose={() => onCloseInstance(activeModel.instanceId)}
               status={activeModel.lastStatus}

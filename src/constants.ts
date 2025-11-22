@@ -170,7 +170,7 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     inputSelector: 'div[data-testid="message-composer"] [contenteditable="true"], div[contenteditable="true"][data-placeholder*="Reply" i], div[role="textbox"][contenteditable="true"], div[contenteditable="plaintext-only"], div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"], textarea[aria-label*="Message" i], textarea[placeholder*="Reply" i], textarea',
     submitSelector: 'button[aria-label*="Send Message" i]:not([aria-label*="Stop" i]), button[aria-label*="Send" i]:not([aria-label*="Stop" i]), button[data-testid*="send" i], button[type="submit"]:has(svg), button:has(svg path[d*="M"])',
     inputType: 'contenteditable',
-    delayBeforeSubmit: 800,
+    delayBeforeSubmit: 900,
     forceEnter: true
   },
   gemini: {
@@ -222,7 +222,8 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     inputSelector: 'div[contenteditable="true"], textarea',
     submitSelector: 'button[class*="sendButton"], div[class*="sendButton"]',
     inputType: 'contenteditable',
-    forceEnter: true
+    forceEnter: true,
+    delayBeforeSubmit: 700
   },
   openrouter: {
     inputSelector: 'textarea, input[type="text"]',
@@ -263,10 +264,12 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     submitKey: { key: 'Enter', metaKey: true }
   },
   claudecode: {
-    inputSelector: 'div[contenteditable="true"]',
-    submitSelector: 'button[aria-label="Send"]',
+    inputSelector: 'div[data-testid*="composer"] [contenteditable="true"], div[role="textbox"][contenteditable="true"], div[contenteditable="plaintext-only"], div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"], textarea[aria-label*="Message" i], textarea',
+    submitSelector: 'button[data-testid*="send" i], button[aria-label*="Send" i], button[aria-label*="Run" i], button[type="submit"], button:has(svg[aria-label*="Run" i])',
     inputType: 'contenteditable',
-    forceEnter: true
+    forceEnter: true,
+    delayBeforeSubmit: 900,
+    submitKey: { key: 'Enter', metaKey: true }
   },
   githubcopilot: {
     inputSelector: 'textarea[class*="ChatInput"], textarea, div[contenteditable="true"]',

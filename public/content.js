@@ -45,10 +45,10 @@
   window.addEventListener('message', async (event) => {
     const data = event.data;
     if (!data || data.type !== 'MODEL_DOCK_INJECT_TEXT') return;
-    const { text, targets, requestId } = data.payload || {};
+    const { text, targets, requestId, submit = true, forceKey = false, modelId, skipInject = false } = data.payload || {};
     if (!text || !targets) return;
 
-    const result = await handleInjection(text, targets);
+    const result = await handleInjection(text, targets, { submit, forceKey, modelId, skipInject });
     try {
       window.parent.postMessage({
         type: 'MODEL_DOCK_INJECT_RESPONSE',
@@ -56,7 +56,8 @@
           requestId,
           success: result.status === 'success',
           status: result.status,
-          host: window.location.host
+          host: window.location.host,
+          modelId
         }
       }, '*');
     } catch (err) {
@@ -66,8 +67,8 @@
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type !== 'INJECT_INPUT') return;
-    const { text, targets } = request.payload;
-    handleInjection(text, targets).then((result) => {
+    const { text, targets, submit = true, forceKey = false, modelId, skipInject = false } = request.payload;
+    handleInjection(text, targets, { submit, forceKey, modelId, skipInject }).then((result) => {
       sendResponse(result);
     });
     return true;
@@ -133,7 +134,8 @@
     } catch (e) { }
   }
 
-  async function handleInjection(text, targets) {
+  async function handleInjection(text, targets, options = {}) {
+    const { submit = true, forceKey = false, modelId, skipInject = false } = options;
     let matchedTarget = null;
     let foundInput = null;
 
@@ -183,13 +185,22 @@
       return { status: 'no_target_match', host: window.location.host };
     }
 
-    const { submitSelector, modelId, forceEnter, delayBeforeSubmit, submitKey } = matchedTarget;
+    const { submitSelector, modelId: targetModelId, forceEnter, delayBeforeSubmit, submitKey } = matchedTarget;
+    const effectiveModelId = modelId || targetModelId;
 
     try {
       // 2. Inject Text
-      const injectionSuccess = await robustInject(foundInput, text, modelId);
+      let injectionSuccess = true;
+      if (!skipInject) {
+        injectionSuccess = await robustInject(foundInput, text, effectiveModelId);
+      }
 
       if (injectionSuccess) {
+        // 주입 전용 패스: submit이 false이면 여기서 종료
+        if (submit === false) {
+          return { status: 'success', host: window.location.host, modelId: effectiveModelId };
+        }
+
         await new Promise(r => setTimeout(r, delayBeforeSubmit || 300));
 
         // 3. Submit
@@ -272,7 +283,7 @@
         }
 
         // Fallback: Force Enter / Key (Codex, AI Studio 등 submitKey 활용)
-        if ((forceEnter || !submitted) && !submitted) {
+        if ((forceEnter || !submitted || forceKey) && !submitted) {
           console.log('[ModelDock] Attempting Key fallback...');
 
           if (submitKey) {

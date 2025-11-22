@@ -13,6 +13,8 @@ interface ModelFrameProps {
 export const ModelFrame: React.FC<ModelFrameProps> = ({
   url,
   title,
+  modelId,
+  instanceId,
   zoomLevel = 1,
   refreshKey = 0
 }) => {
@@ -40,6 +42,9 @@ export const ModelFrame: React.FC<ModelFrameProps> = ({
         key={refreshKey}
         src={url}
         title={title}
+        data-md-frame="true"
+        data-model-id={modelId}
+        data-instance-id={instanceId}
         className="absolute top-0 left-0 border-none origin-top-left"
         style={{
           width: `${100 / zoomLevel}%`,
