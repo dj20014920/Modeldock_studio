@@ -4,6 +4,7 @@ import { ActiveModel } from '../types';
 import { SUPPORTED_MODELS } from '../constants';
 import { ModelCard } from './ModelCard';
 import { clsx } from 'clsx';
+import { useTranslation } from 'react-i18next';
 
 interface ModelGridProps {
   activeModels: ActiveModel[];
@@ -18,6 +19,7 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
   onSetMainBrain,
   onCloseInstance
 }) => {
+  const { t } = useTranslation();
   // Filter out the main brain instance from the grid
   const gridModels = activeModels.filter(m => m.instanceId !== mainBrainInstanceId);
   const count = gridModels.length;
@@ -26,7 +28,7 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
     return (
       <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 flex-col gap-3 animate-in fade-in duration-500">
         <div className="w-12 h-12 rounded-xl bg-slate-200/50" />
-        <p className="text-sm font-medium">All active models are in Main Brain view</p>
+        <p className="text-sm font-medium">{t('modelGrid.allInMainBrain')}</p>
       </div>
     );
   }

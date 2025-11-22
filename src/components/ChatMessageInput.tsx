@@ -5,6 +5,7 @@ import { ActiveModel, DispatchMode, ModelId } from '../types';
 import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
 import { clsx } from 'clsx';
 import { usePersistentState } from '../hooks/usePersistentState';
+import { useTranslation } from 'react-i18next';
 
 interface ChatMessageInputProps {
   activeModels: ActiveModel[];
@@ -23,6 +24,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
   onInputHandled,
   onStatusUpdate
 }) => {
+  const { t } = useTranslation();
   const [input, setInput] = useState('');
   const [mode, setMode] = usePersistentState<DispatchMode>('md_dispatch_mode', 'manual');
   const [showConsent, setShowConsent] = useState(false);
@@ -80,7 +82,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         });
       }
 
-      const requestIdBase = `md-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const requestIdBase = `md - ${Date.now()} -${Math.random().toString(16).slice(2)} `;
       const allIframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[data-md-frame="true"]'));
       const visibleIframes = allIframes.filter((iframe) => {
         const rect = iframe.getBoundingClientRect();
@@ -96,7 +98,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         .filter((entry) => entry.selector && entry.selector.inputSelector);
 
       if (activeSelectorEntries.length === 0) {
-        setErrorMessage('유효한 타겟이 없습니다');
+        setErrorMessage(t('chatInput.errorNoTargets'));
         setLastActionStatus('error');
         return;
       }
@@ -240,12 +242,12 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         setLastActionStatus('sent');
         setInput('');
       } else {
-        setErrorMessage('전송 실패 (응답 없음)');
+        setErrorMessage(t('chatInput.errorSystemError'));
         setLastActionStatus('error');
       }
     } catch (error: any) {
       console.error('Auto-injection failed:', error);
-      setErrorMessage('System Error');
+      setErrorMessage(t('chatInput.errorSystemError'));
       setLastActionStatus('error');
       const fallbackTarget = mainBrainId ?? activeModels[0]?.modelId;
       if (fallbackTarget) onStatusUpdate?.(fallbackTarget, 'error');
@@ -291,25 +293,22 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
               <AlertTriangle size={24} />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-amber-900">자동 전송 기능을 활성화하시겠습니까?</h3>
+              <h3 className="font-bold text-amber-900">{t('chatInput.consentTitle')}</h3>
               <p className="text-sm text-amber-800 mt-1">
-                자동 전송은 모든 활성 AI 모델의 입력창에 직접 텍스트를 입력하고 전송 버튼을 누릅니다.
-              </p>
-              <p className="text-sm text-amber-800 mt-2 font-medium">
-                민감한 계정에서는 수동 모드(Manual Mode) 사용을 권장합니다.
+                {t('chatInput.consentMessage')}
               </p>
               <div className="mt-4 flex gap-3">
                 <button
                   onClick={() => setShowConsent(false)}
                   className="px-4 py-2 bg-white border border-amber-200 text-amber-800 rounded hover:bg-amber-100 text-sm font-medium"
                 >
-                  취소
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={() => { setHasConsented(true); setShowConsent(false); setMode('auto'); }}
                   className="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 text-sm font-medium shadow-sm"
                 >
-                  네, 활성화합니다
+                  {t('chatInput.iUnderstand')}
                 </button>
               </div>
             </div>
@@ -322,19 +321,19 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <button
-      onClick={toggleMode}
-      className={clsx(
-        "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-all border",
-        mode === 'manual'
-          ? "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+              onClick={toggleMode}
+              className={clsx(
+                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-all border",
+                mode === 'manual'
+                  ? "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
                   : "bg-indigo-100 text-indigo-600 border-indigo-200 hover:bg-indigo-200"
               )}
             >
               {mode === 'manual' ? <Copy size={12} /> : <Zap size={12} />}
-              {mode} Mode
+              {mode === 'manual' ? t('chatInput.manualMode') : t('chatInput.autoMode')}
             </button>
             <span className="text-xs text-slate-400 hidden sm:inline-block">
-              {mode === 'manual' ? '클립보드에 복사합니다' : '모든 모델에 동시 전송합니다'}
+              {mode === 'manual' ? t('chatInput.copyToClipboard') : t('chatInput.dispatchToAll')}
             </span>
           </div>
 
@@ -346,9 +345,9 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
             lastActionStatus === 'sent' && "text-indigo-600",
             lastActionStatus === 'error' && "text-red-500"
           )}>
-            {lastActionStatus === 'copied' && <><CheckCircle2 size={14} /> 복사 완료!</>}
-            {lastActionStatus === 'sent' && <><CheckCircle2 size={14} /> 전송 완료!</>}
-            {lastActionStatus === 'error' && <><XCircle size={14} /> {errorMessage || '오류 발생'}</>}
+            {lastActionStatus === 'copied' && <><CheckCircle2 size={14} /> {t('common.copied')}</>}
+            {lastActionStatus === 'sent' && <><CheckCircle2 size={14} /> {t('chatInput.sentSuccess')}</>}
+            {lastActionStatus === 'error' && <><XCircle size={14} /> {errorMessage || t('common.error')}</>}
           </div>
         </div>
 
@@ -364,7 +363,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={mode === 'manual' ? "내용을 입력하고 전송 버튼을 누르면 복사됩니다..." : "내용을 입력하면 모든 활성 모델에 자동 전송됩니다..."}
+            placeholder={t('chatInput.placeholder')}
             className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] py-2.5 px-2 text-sm text-slate-800 placeholder:text-slate-400 font-sans"
             rows={1}
             style={{ height: 'auto' }}

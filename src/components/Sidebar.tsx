@@ -6,6 +6,8 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Plus, Minus, MessageSquare, ArrowRight, Crown } from 'lucide-react';
 
+import { useTranslation } from 'react-i18next';
+
 interface SidebarProps {
   activeModels: ActiveModel[];
   currentView: SidebarView;
@@ -29,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onActivateInstance,
   mainBrainInstanceId
 }) => {
+  const { t } = useTranslation();
 
   // Helper to get count of instances per model
   const getModelCount = (id: ModelId) => activeModels.filter(m => m.modelId === id).length;
@@ -41,12 +44,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return (
           <div className="flex flex-col items-center justify-center h-40 text-center px-4">
             <MessageSquare size={24} className="text-slate-300 mb-2" />
-            <p className="text-xs text-slate-400">No active chats.</p>
+            <p className="text-xs text-slate-400">{t('sidebar.noActiveChats')}</p>
             <button
               onClick={() => onViewChange('models')}
               className="mt-2 text-xs text-indigo-600 font-medium hover:underline"
             >
-              Start a new chat
+              {t('sidebar.createNewChat')}
             </button>
           </div>
         );
@@ -197,10 +200,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Dynamic Content Header */}
       <div className="px-7 mb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider flex justify-between items-center">
         <span>
-          {currentView === 'chats' ? 'Active Sessions' : 'Available Models'}
+          {currentView === 'chats' ? t('sidebar.activeSessions') : t('sidebar.availableModels')}
         </span>
         {currentView === 'models' && (
-          <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">Max 3 / model</span>
+          <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">{t('sidebar.maxInstancesHint')}</span>
         )}
       </div>
 
@@ -214,8 +217,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center gap-3 px-2 py-2 cursor-pointer hover:bg-slate-50 rounded-lg transition-colors">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 shadow-inner ring-2 ring-white" />
           <div className="flex flex-col">
-            <div className="text-xs font-bold text-slate-700">Pro User</div>
-            <div className="text-[10px] text-slate-500">ModelDock V1</div>
+            <div className="text-xs font-bold text-slate-700">{t('sidebar.proUser')}</div>
+            <div className="text-[10px] text-slate-500">{t('sidebar.versionLabel')}</div>
           </div>
         </div>
       </div>

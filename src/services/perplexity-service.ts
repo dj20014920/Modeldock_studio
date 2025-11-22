@@ -57,6 +57,7 @@ class PerplexityService {
     private proxyTabId: number | null = null;
     private capturedEndpoint: string | null = null;
     private sseBuffer: string = ''; // Buffer for SSE chunks
+    private loginCheckInProgress: boolean = false;
 
     constructor() {
         this.initMessageListener();
@@ -164,6 +165,23 @@ class PerplexityService {
         }
     }
     // ------------------------
+
+    /**
+     * Prompts user to login to Perplexity (only opens tab once)
+     */
+    public async promptLogin(): Promise<void> {
+        if (this.loginCheckInProgress) return;
+        this.loginCheckInProgress = true;
+
+        try {
+            await this.ensureProxyTab(true); // Force open with active=true
+            // Notify listeners about login prompt
+            this.state.error = 'LOGIN_PROMPT_OPENED';
+            this.notify();
+        } finally {
+            this.loginCheckInProgress = false;
+        }
+    }
 
     public async sendMessage(text: string, files: PerplexityFile[] = []) {
         // 1. Add User Message
@@ -470,39 +488,93 @@ class PerplexityService {
         this.notify();
     }
 
-    private async ensureProxyTab() {
-        // 1. Check existing ID
+    /**
+     * Checks if user is logged in to Perplexity by inspecting cookies
+     */
+    private async isLoggedIn(): Promise<boolean> {
+        try {
+            const cookies = await chrome.cookies.getAll({ domain: '.perplexity.ai' });
+            // Check for common auth cookies (adjust based on actual Perplexity cookies)
+            const hasAuthCookie = cookies.some(c =>
+                c.name.includes('session') ||
+                c.name.includes('auth') ||
+                c.name.includes('token') ||
+                c.name === '__Secure-next-auth.session-token'
+            );
+            return hasAuthCookie && cookies.length > 0;
+        } catch (e) {
+            console.warn('[Perplexity] Failed to check login state:', e);
+            return false;
+        }
+    }
+
+    /**
+     * Smart tab management: Reuse existing tabs, only create when necessary
+     * Only opens pinned tab when login is required
+     */
+    private async ensureProxyTab(forceLoginPrompt = false) {
+        // 1. Check existing cached ID
         if (this.proxyTabId) {
             try {
-                await chrome.tabs.get(this.proxyTabId);
-                if (await this.pingTab(this.proxyTabId)) return;
+                const tab = await chrome.tabs.get(this.proxyTabId);
+                if (tab && await this.pingTab(this.proxyTabId)) {
+                    console.log('[Perplexity] Reusing existing proxy tab:', this.proxyTabId);
+                    return;
+                }
             } catch (e) {
                 this.proxyTabId = null;
             }
         }
 
-        // 2. Find existing tab by URL
+        // 2. Find ANY existing Perplexity tab (not just pinned)
         const tabs = await chrome.tabs.query({ url: 'https://www.perplexity.ai/*' });
-        for (const tab of tabs) {
+
+        // Sort: prioritize pinned tabs, then responsive tabs
+        const sortedTabs = tabs.sort((a, b) => {
+            if (a.pinned && !b.pinned) return -1;
+            if (!a.pinned && b.pinned) return 1;
+            return 0;
+        });
+
+        for (const tab of sortedTabs) {
             if (tab.id && await this.pingTab(tab.id)) {
                 this.proxyTabId = tab.id;
+                console.log('[Perplexity] Found existing responsive tab:', this.proxyTabId);
+
+                // Pin it if not already pinned (to ensure consistency)
+                if (!tab.pinned) {
+                    await chrome.tabs.update(tab.id, { pinned: true });
+                }
                 return;
             }
         }
 
-        // 3. Create new tab
+        // 3. No responsive tab found - check login state before creating new one
+        const loggedIn = await this.isLoggedIn();
+
+        if (!loggedIn && !forceLoginPrompt) {
+            // User not logged in - throw error with login guidance
+            throw new Error('PERPLEXITY_LOGIN_REQUIRED');
+        }
+
+        // 4. Create new pinned tab (only if logged in OR user explicitly wants to login)
+        console.log('[Perplexity] Creating new pinned tab...');
         const tab = await chrome.tabs.create({
             url: 'https://www.perplexity.ai',
             pinned: true,
-            active: false
+            active: forceLoginPrompt // Make active if user needs to login
         });
 
         if (tab.id) {
             this.proxyTabId = tab.id;
+
             // Wait for load and ping loop
             for (let i = 0; i < 10; i++) {
-                await new Promise(r => setTimeout(r, 1000)); // Wait 1s
-                if (await this.pingTab(tab.id)) return;
+                await new Promise(r => setTimeout(r, 1000));
+                if (await this.pingTab(tab.id)) {
+                    console.log('[Perplexity] New tab is now responsive');
+                    return;
+                }
             }
             throw new Error('Proxy tab created but not responsive');
         } else {

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2 } from 'lucide-react';
 import { ModelConfig } from '../types';
 import { clsx } from 'clsx';
@@ -24,6 +25,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   onClose,
   status = 'idle'
 }) => {
+  const { t } = useTranslation();
   // State for Frame Controls
   const [zoomLevel, setZoomLevel] = useState(0.75);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -51,10 +53,10 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   };
 
   const sessionSyncTooltip = (() => {
-    if (sessionSyncState === 'loading') return 'Syncing session...';
-    if (sessionSyncState === 'success') return 'Session synced!';
-    if (sessionSyncState === 'error') return 'Sync failed';
-    return 'Sync Session';
+    if (sessionSyncState === 'loading') return t('modelCard.syncing');
+    if (sessionSyncState === 'success') return t('modelCard.synced');
+    if (sessionSyncState === 'error') return t('modelCard.syncFailed');
+    return t('modelCard.syncSession');
   })();
 
   const handleOpenInNewTab = () => {
@@ -92,7 +94,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
           </span>
           {isMainBrain && (
             <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-600 text-[9px] font-bold rounded uppercase tracking-wide">
-              Main Brain
+              {t('modelCard.mainBrain')}
             </span>
           )}
         </div>
@@ -112,7 +114,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             </button>
           </div>
 
-          <button onClick={handleRefresh} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors" title="Refresh">
+          <button onClick={handleRefresh} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors" title={t('modelCard.refresh')}>
             <RotateCw size={13} />
           </button>
 
@@ -120,7 +122,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
           <button
             onClick={handleOpenInNewTab}
             className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-            title="Open in New Tab"
+            title={t('modelCard.openInNewTab')}
           >
             <ExternalLink size={13} />
           </button>
@@ -149,7 +151,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             <button
               onClick={onRemoveMainBrain}
               className="p-1.5 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-md transition-colors"
-              title="Remove Main Brain"
+              title={t('modelCard.removeMainBrain')}
             >
               <Minimize2 size={13} />
             </button>
@@ -157,13 +159,13 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             <button
               onClick={onSetMainBrain}
               className="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-md transition-colors"
-              title="Set as Main Brain"
+              title={t('modelCard.setAsMainBrain')}
             >
               <Maximize2 size={13} />
             </button>
           )}
 
-          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-md transition-colors ml-0.5" title="Close">
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-md transition-colors ml-0.5" title={t('common.close')}>
             <X size={14} />
           </button>
         </div>

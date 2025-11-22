@@ -59,11 +59,27 @@ export const PerplexityChat: React.FC = () => {
         setFiles(prev => prev.filter((_, i) => i !== index));
     };
 
-    const handleSend = () => {
+    const handleSend = async () => {
         if ((!input.trim() && files.length === 0) || state.isStreaming) return;
-        perplexityService.sendMessage(input, files);
-        setInput('');
-        setFiles([]);
+
+        try {
+            await perplexityService.sendMessage(input, files);
+            setInput('');
+            setFiles([]);
+        } catch (error: any) {
+            // Handle login required error
+            if (error.message === 'PERPLEXITY_LOGIN_REQUIRED') {
+                // Show login prompt toast instead of inline error
+                const shouldLogin = confirm(
+                    t('perplexity.login.message') + '\n\n' +
+                    t('perplexity.login.featureLimited')
+                );
+
+                if (shouldLogin) {
+                    perplexityService.promptLogin();
+                }
+            }
+        }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -102,30 +118,30 @@ export const PerplexityChat: React.FC = () => {
                             tier === 'pro' ? "bg-amber-400" : "bg-slate-400"
                         )} />
                         <span className="text-xs font-medium text-slate-600">
-                            {tier === 'pro' ? 'Pro' : 'Free'}
+                            {tier === 'pro' ? t('perplexity.tier.pro') : t('perplexity.tier.free')}
                         </span>
                         <span className="text-xs text-slate-400 border-l border-slate-200 pl-2 ml-1">
-                            {quota.remaining} left
+                            {quota.remaining} {t('perplexity.quota.left')}
                         </span>
                     </button>
 
                     {showTierMenu && (
                         <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100">
                             <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 text-xs text-slate-500 font-medium">
-                                Select Subscription Tier
+                                {t('perplexity.quota.selectTier')}
                             </div>
                             <button
                                 onClick={() => handleTierChange('free')}
                                 className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center justify-between group"
                             >
-                                <span>Free Plan</span>
+                                <span>{t('perplexity.quota.freePlan')}</span>
                                 {tier === 'free' && <div className="w-1.5 h-1.5 rounded-full bg-teal-500" />}
                             </button>
                             <button
                                 onClick={() => handleTierChange('pro')}
                                 className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center justify-between group"
                             >
-                                <span>Pro Plan</span>
+                                <span>{t('perplexity.quota.proPlan')}</span>
                                 {tier === 'pro' && <div className="w-1.5 h-1.5 rounded-full bg-teal-500" />}
                             </button>
                         </div>
@@ -140,9 +156,9 @@ export const PerplexityChat: React.FC = () => {
                         <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mb-6 shadow-sm rotate-3 transition-transform hover:rotate-0">
                             <BrainCircuit size={32} className="text-slate-400" />
                         </div>
-                        <h3 className="text-lg font-semibold text-slate-700 mb-2">Where knowledge begins</h3>
+                        <h3 className="text-lg font-semibold text-slate-700 mb-2">{t('perplexity.chat.emptyTitle')}</h3>
                         <p className="text-sm text-slate-500 max-w-xs text-center leading-relaxed">
-                            Ask anything. Perplexity searches the internet to give you an answer with citations.
+                            {t('perplexity.chat.emptyDescription')}
                         </p>
                     </div>
                 ) : (
@@ -180,7 +196,7 @@ export const PerplexityChat: React.FC = () => {
                                     )}
 
                                     <div className="whitespace-pre-wrap break-words markdown-body">
-                                        {msg.content || (state.isStreaming && idx === state.messages.length - 1 ? <span className="animate-pulse">Thinking...</span> : '')}
+                                        {msg.content || (state.isStreaming && idx === state.messages.length - 1 ? <span className="animate-pulse">{t('perplexity.chat.thinking')}</span> : '')}
                                     </div>
                                 </div>
 
@@ -199,19 +215,34 @@ export const PerplexityChat: React.FC = () => {
                     ))
                 )}
 
+
                 {state.error && (
-                    <div className="flex items-center gap-3 p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-100 mx-4 animate-in fade-in slide-in-from-bottom-2 shadow-sm">
-                        <AlertCircle size={18} className="shrink-0" />
-                        <span>
-                            {(() => {
-                                if (state.error?.includes('404')) return t('Perplexity.Error.404');
-                                if (state.error?.includes('403')) return t('Perplexity.Error.403');
-                                if (state.error?.includes('429')) return t('Perplexity.Error.429');
-                                if (state.error?.includes('500')) return t('Perplexity.Error.500');
-                                if (state.error?.includes('quota exceeded')) return t('Perplexity.Error.QuotaExceeded', { tier: t(`Perplexity.Tier.${tier === 'free' ? 'Free' : 'Pro'}`) });
-                                return t('Perplexity.Error.Generic', { message: state.error });
-                            })()}
-                        </span>
+                    <div className={clsx(
+                        "flex items-center gap-3 p-4 text-sm rounded-xl border mx-4 animate-in fade-in slide-in-from-bottom-2 shadow-sm",
+                        state.error === 'LOGIN_PROMPT_OPENED'
+                            ? "bg-teal-50 text-teal-700 border-teal-100"
+                            : "bg-red-50 text-red-700 border-red-100"
+                    )}>
+                        {state.error === 'LOGIN_PROMPT_OPENED' ? (
+                            <>
+                                <AlertCircle size={18} className="shrink-0 text-teal-600" />
+                                <span>{t('perplexity.login.tabOpened')}</span>
+                            </>
+                        ) : (
+                            <>
+                                <AlertCircle size={18} className="shrink-0" />
+                                <span>
+                                    {(() => {
+                                        if (state.error?.includes('404')) return t('perplexity.error.404');
+                                        if (state.error?.includes('403')) return t('perplexity.error.403');
+                                        if (state.error?.includes('429')) return t('perplexity.error.429');
+                                        if (state.error?.includes('500')) return t('perplexity.error.500');
+                                        if (state.error?.includes('quota exceeded')) return t('perplexity.error.quotaExceeded', { tier: t(`perplexity.tier.${tier}`) });
+                                        return t('perplexity.error.generic', { message: state.error });
+                                    })()}
+                                </span>
+                            </>
+                        )}
                     </div>
                 )}
 
@@ -219,7 +250,7 @@ export const PerplexityChat: React.FC = () => {
                     <div className="flex justify-center py-4">
                         <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm border border-slate-100 text-xs font-medium text-slate-500">
                             <Loader2 size={14} className="animate-spin text-teal-500" />
-                            <span>Perplexity is thinking...</span>
+                            <span>{t('perplexity.chat.thinking')}</span>
                         </div>
                     </div>
                 )}
@@ -248,7 +279,7 @@ export const PerplexityChat: React.FC = () => {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder={state.deepResearchEnabled ? "Ask a deep research question..." : "Ask anything..."}
+                        placeholder={state.deepResearchEnabled ? t('perplexity.chat.deepResearchPlaceholder') : t('perplexity.chat.placeholder')}
                         className="w-full bg-transparent border-none focus:ring-0 resize-none min-h-[48px] max-h-32 py-2 px-2 text-sm text-slate-800 placeholder:text-slate-400 leading-relaxed"
                         rows={1}
                         style={{ height: 'auto' }}
@@ -272,7 +303,7 @@ export const PerplexityChat: React.FC = () => {
                                 )}
                             >
                                 <BrainCircuit size={14} className={state.deepResearchEnabled ? "text-teal-600" : "text-slate-400"} />
-                                <span>{state.deepResearchEnabled ? 'Pro Search' : 'Quick Search'}</span>
+                                <span>{state.deepResearchEnabled ? t('perplexity.chat.proSearch') : t('perplexity.chat.quickSearch')}</span>
                             </button>
 
                             <button
@@ -302,8 +333,8 @@ export const PerplexityChat: React.FC = () => {
                 <div className="flex justify-center mt-3">
                     <span className="text-[10px] text-slate-400 font-medium">
                         {state.deepResearchEnabled
-                            ? `Pro Search uses advanced models. ${quota.remaining} queries remaining.`
-                            : "Quick Search is unlimited and fast."}
+                            ? t('perplexity.chat.proSearchInfo', { remaining: quota.remaining })
+                            : t('perplexity.chat.quickSearchInfo')}
                     </span>
                 </div>
             </div>

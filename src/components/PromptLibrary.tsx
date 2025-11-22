@@ -23,7 +23,10 @@ const CategoryIcons: Record<PromptCategory, React.ElementType> = {
 
 const CATEGORY_OPTIONS: PromptCategory[] = ['General', 'Coding', 'Writing', 'Analysis', 'Creative', 'Business', 'Academic'];
 
+import { useTranslation } from 'react-i18next';
+
 export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, onSelectPrompt }) => {
+  const { t, i18n } = useTranslation();
   const [view, setView] = useState<'list' | 'create'>('list');
   const [activeCategory, setActiveCategory] = useState<PromptCategory | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,8 +63,8 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
   // ... (existing state)
 
   const getSystemLanguage = () => {
-    if (typeof navigator === 'undefined') return 'English';
-    const lang = navigator.language.split('-')[0];
+    const currentLang = i18n.language || (typeof navigator !== 'undefined' ? navigator.language : 'en');
+    const langCode = currentLang.split('-')[0];
     const langMap: Record<string, string> = {
       'ko': 'Korean',
       'en': 'English',
@@ -72,9 +75,12 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
       'de': 'German',
       'ru': 'Russian',
       'it': 'Italian',
-      'pt': 'Portuguese'
+      'pt': 'Portuguese',
+      'id': 'Indonesian',
+      'th': 'Thai',
+      'vi': 'Vietnamese'
     };
-    return langMap[lang] || 'English';
+    return langMap[langCode] || 'English';
   };
 
   const processContent = (content: string) => {
@@ -92,7 +98,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
 
   const handleDeleteUserPrompt = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (confirm('정말로 이 프롬프트를 삭제하시겠습니까?')) {
+    if (confirm(t('promptLibrary.deleteConfirm'))) {
       const currentSaved = JSON.parse(localStorage.getItem('user_prompts') || '[]');
       const updated = currentSaved.filter((p: PromptData) => p.id !== id);
       localStorage.setItem('user_prompts', JSON.stringify(updated));
@@ -106,7 +112,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
     const newPrompt: PromptData = {
       id: `user-${Date.now()}`,
       title: newTitle,
-      description: newDesc || '설명 없음',
+      description: newDesc || t('common.noDescription'),
       content: newContent,
       category: newCategory,
       isSystem: false
@@ -143,11 +149,11 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
               <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm">
                 <Sparkles size={18} />
               </div>
-              <span>Prompt Library</span>
+              <span>{t('promptLibrary.title')}</span>
             </div>
             <div className="text-[10px] text-slate-400 font-medium pl-1 flex items-center gap-1">
               <Zap size={10} className="text-amber-500" />
-              Output: {getSystemLanguage()}
+              {t('promptLibrary.outputLanguage')}: {getSystemLanguage()}
             </div>
           </div>
 
@@ -162,7 +168,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                   )}
                 >
                   <LayoutGrid size={16} />
-                  전체 보기
+                  {t('promptLibrary.allCategories')}
                 </button>
 
                 {Object.entries(CategoryIcons).map(([cat, Icon]) => (
@@ -175,14 +181,14 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                     )}
                   >
                     <Icon size={16} />
-                    {cat}
+                    {t(`categories.${cat.toLowerCase()}`)}
                   </button>
                 ))}
               </>
             ) : (
               <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-100 text-xs text-indigo-800 leading-relaxed">
-                <h4 className="font-bold mb-1 flex items-center gap-1"><Info size={12} /> 작성 팁</h4>
-                <p>LLM은 영어 지시를 더 정확하게 이해합니다. 프롬프트 본문은 영어로 작성하고, UI 제목은 한국어로 적는 것을 추천합니다.</p>
+                <h4 className="font-bold mb-1 flex items-center gap-1"><Info size={12} /> {t('promptLibrary.tips.title')}</h4>
+                <p>{t('promptLibrary.tips.content')}</p>
               </div>
             )}
           </div>
@@ -194,7 +200,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                 onClick={() => setView('create')}
               >
                 <Plus size={16} />
-                프롬프트 추가
+                {t('promptLibrary.addPrompt')}
               </button>
             ) : (
               <button
@@ -205,7 +211,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                 }}
               >
                 <ArrowLeft size={16} />
-                목록으로
+                {t('promptLibrary.backToList')}
               </button>
             )}
           </div>
@@ -222,14 +228,14 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16} />
                   <input
                     type="text"
-                    placeholder="프롬프트 검색 (제목, 설명, 내용)..."
+                    placeholder={t('promptLibrary.searchPlaceholder')}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
                   />
                 </div>
                 <div className="ml-auto text-xs text-slate-400 font-medium bg-slate-50 px-2 py-1 rounded">
-                  {filteredPrompts.length}개의 프롬프트
+                  {t('promptLibrary.promptsCount', { count: filteredPrompts.length })}
                 </div>
                 <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-2 rounded-full hover:bg-slate-100 transition-colors">
                   <X size={20} />
@@ -254,11 +260,11 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                             "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
                             prompt.isSystem ? "bg-slate-100 text-slate-600" : "bg-indigo-50 text-indigo-600"
                           )}>
-                            {prompt.category}
+                            {t(`categories.${prompt.category.toLowerCase()}`)}
                           </span>
                           {prompt.isSystem && (
-                            <span className="text-[10px] text-slate-400 flex items-center gap-0.5" title="기본 제공 프롬프트">
-                              <Sparkles size={10} /> System
+                            <span className="text-[10px] text-slate-400 flex items-center gap-0.5" title="System Prompt">
+                              <Sparkles size={10} /> {t('promptLibrary.systemBadge')}
                             </span>
                           )}
                         </div>
@@ -267,7 +273,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                           <button
                             onClick={(e) => handleCopy(e, prompt.content, prompt.id)}
                             className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
-                            title="영어 원문 복사"
+                            title={t('promptLibrary.copyOriginal')}
                           >
                             {copiedId === prompt.id ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
                           </button>
@@ -275,7 +281,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                             <button
                               onClick={(e) => handleDeleteUserPrompt(e, prompt.id)}
                               className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                              title="삭제"
+                              title={t('common.delete')}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -283,13 +289,17 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                         </div>
                       </div>
 
-                      <h3 className="font-bold text-slate-800 mb-1.5 text-lg leading-tight">{prompt.title}</h3>
-                      <p className="text-sm text-slate-500 mb-4 leading-relaxed line-clamp-2">{prompt.description}</p>
+                      <h3 className="font-bold text-slate-800 mb-1.5 text-lg leading-tight">
+                        {prompt.isSystem ? t(`prompts.${prompt.id}.title`, prompt.title) : prompt.title}
+                      </h3>
+                      <p className="text-sm text-slate-500 mb-4 leading-relaxed line-clamp-2">
+                        {prompt.isSystem ? t(`prompts.${prompt.id}.description`, prompt.description) : prompt.description}
+                      </p>
 
                       <div className="mt-auto space-y-2">
                         <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                          <span>Optimized English Prompt</span>
-                          <span className="flex items-center gap-1 text-indigo-500"><Zap size={10} /> Korean Response</span>
+                          <span>{t('promptLibrary.optimizedPrompt')}</span>
+                          <span className="flex items-center gap-1 text-indigo-500"><Zap size={10} /> {t('promptLibrary.responseLanguage')}</span>
                         </div>
                         <div className="bg-slate-50 rounded-lg p-2.5 border border-slate-100 group-hover:border-indigo-100 transition-colors">
                           <code className="text-xs text-slate-500 font-mono block truncate opacity-70">
@@ -305,7 +315,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                     <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
                       <Search size={24} className="opacity-50" />
                     </div>
-                    <p>검색 결과가 없습니다.</p>
+                    <p>{t('promptLibrary.noResults')}</p>
                   </div>
                 )}
               </div>
@@ -314,7 +324,7 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
             <>
               {/* Create View Header */}
               <div className="h-16 border-b border-slate-100 flex items-center justify-between px-6 shrink-0 bg-white">
-                <h2 className="text-lg font-bold text-slate-800">새 프롬프트 추가</h2>
+                <h2 className="text-lg font-bold text-slate-800">{t('promptLibrary.createNewPrompt')}</h2>
                 <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-2 rounded-full hover:bg-slate-100 transition-colors">
                   <X size={20} />
                 </button>
@@ -325,34 +335,34 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                 <div className="max-w-2xl mx-auto space-y-6">
 
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700 block">제목 (한국어 권장)</label>
+                    <label className="text-sm font-bold text-slate-700 block">{t('promptLibrary.form.titleLabel')}</label>
                     <input
                       type="text"
                       value={newTitle}
                       onChange={(e) => setNewTitle(e.target.value)}
-                      placeholder="예: 전문가 코드 리팩토링"
+                      placeholder={t('promptLibrary.form.titlePlaceholder')}
                       className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-bold text-slate-700 block">카테고리</label>
+                      <label className="text-sm font-bold text-slate-700 block">{t('promptLibrary.form.categoryLabel')}</label>
                       <select
                         value={newCategory}
                         onChange={(e) => setNewCategory(e.target.value as PromptCategory)}
                         className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
                       >
-                        {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                        {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{t(`categories.${c.toLowerCase()}`)}</option>)}
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-bold text-slate-700 block">설명 (선택)</label>
+                      <label className="text-sm font-bold text-slate-700 block">{t('promptLibrary.form.descriptionLabel')}</label>
                       <input
                         type="text"
                         value={newDesc}
                         onChange={(e) => setNewDesc(e.target.value)}
-                        placeholder="이 프롬프트의 용도를 간단히 설명하세요."
+                        placeholder={t('promptLibrary.form.descriptionPlaceholder')}
                         className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
                       />
                     </div>
@@ -360,18 +370,18 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
 
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <label className="text-sm font-bold text-slate-700 block">프롬프트 내용 (영어 권장)</label>
+                      <label className="text-sm font-bold text-slate-700 block">{t('promptLibrary.form.contentLabel')}</label>
                       <button
-                        onClick={() => setNewContent(prev => prev + "\n\nPlease respond in Korean.")}
+                        onClick={() => setNewContent(prev => prev + "\n\nPlease respond in " + getSystemLanguage() + ".")}
                         className="text-xs text-indigo-600 font-medium hover:underline"
                       >
-                        + 한국어 응답 요청 추가
+                        {t('promptLibrary.form.addLanguageRequest')}
                       </button>
                     </div>
                     <textarea
                       value={newContent}
                       onChange={(e) => setNewContent(e.target.value)}
-                      placeholder="You are an expert..."
+                      placeholder={t('promptLibrary.form.contentPlaceholder')}
                       rows={8}
                       className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-mono text-sm"
                     />
@@ -389,13 +399,13 @@ export const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, o
                       )}
                     >
                       <Save size={18} />
-                      저장하기
+                      {t('promptLibrary.form.saveButton')}
                     </button>
                     <button
                       onClick={() => { setView('list'); resetForm(); }}
                       className="px-6 py-3 rounded-lg font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-all"
                     >
-                      취소
+                      {t('promptLibrary.form.cancelButton')}
                     </button>
                   </div>
 
