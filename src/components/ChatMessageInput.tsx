@@ -107,7 +107,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
 
       let anySuccess = false;
       const frameCache = new Map<string, HTMLIFrameElement>();
-      const claimedFrames = new Set<string>();
+      const claimedFrames = new Set<HTMLIFrameElement>();
 
       const findFrameForInstance = (instanceId: string, modelId: ModelId) => {
         if (frameCache.has(instanceId)) return frameCache.get(instanceId)!;
@@ -131,9 +131,28 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       };
 
       for (const { modelId, instanceId, selector } of activeSelectorEntries) {
-        const targetFrame = findFrameForInstance(instanceId, modelId);
+        const primaryFrame = findFrameForInstance(instanceId, modelId);
+        const fallbackAllowed = modelId === 'codex' || modelId === 'claudecode' || modelId === 'claude';
+        const framesForModel: HTMLIFrameElement[] = [];
 
-        if (!targetFrame) {
+        if (primaryFrame) {
+          framesForModel.push(primaryFrame);
+        } else if (fallbackAllowed) {
+          const host = (() => { try { return new URL(SUPPORTED_MODELS[modelId].url).host; } catch { return ''; } })();
+          const hostMatches = visibleIframes.filter((iframe) => {
+            const src = iframe.getAttribute('src') || '';
+            try { return new URL(src).host.includes(host); } catch { return false; }
+          }).filter(f => !claimedFrames.has(f));
+
+          if (hostMatches.length > 0) {
+            framesForModel.push(hostMatches[0]);
+          } else {
+            const anyVisible = visibleIframes.find(f => !claimedFrames.has(f));
+            if (anyVisible) framesForModel.push(anyVisible);
+          }
+        }
+
+        if (framesForModel.length === 0) {
           updateStatusFor(modelId, 'error');
           continue;
         }
@@ -143,76 +162,74 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
           continue;
         }
 
-        const frameKey = `${modelId}-${targetFrame.dataset.instanceId || targetFrame.dataset.modelId || targetFrame.getAttribute('src') || 'unknown'}`;
-        if (claimedFrames.has(frameKey)) {
-          console.warn('[ModelDock] Duplicate frame mapping skipped', frameKey);
-          updateStatusFor(modelId, 'error');
-          continue;
-        }
-        claimedFrames.add(frameKey);
+        for (const targetFrame of framesForModel) {
+          if (claimedFrames.has(targetFrame)) continue;
+          claimedFrames.add(targetFrame);
 
-        const payloadBase = {
-          text: input,
-          targets: [{ modelId, ...selector }],
-          requestId: `${requestIdBase}-${instanceId}`,
-          modelId
-        };
-        const responses: any[] = [];
+          const payloadBase = {
+            text: input,
+            targets: [{ modelId, ...selector }],
+            requestId: `${requestIdBase}-${instanceId}-${claimedFrames.size}`,
+            modelId
+          };
+          const responses: any[] = [];
 
-        const responseHandler = (event: MessageEvent) => {
-          const data = event.data;
-          if (!data || data.type !== 'MODEL_DOCK_INJECT_RESPONSE') return;
-          const resp = data.payload || {};
-          if (resp.requestId !== payloadBase.requestId) return;
-          responses.push(resp);
-        };
+          const responseHandler = (event: MessageEvent) => {
+            const data = event.data;
+            if (!data || data.type !== 'MODEL_DOCK_INJECT_RESPONSE') return;
+            const resp = data.payload || {};
+            if (resp.requestId !== payloadBase.requestId) return;
+            responses.push(resp);
+          };
 
-        const sendToFrame = (payload: any) => {
-          try {
-            targetFrame.contentWindow?.postMessage(payload, '*');
-          } catch (err) {
-            console.warn('iframe postMessage 실패', err);
-          }
-        };
-
-        updateStatusFor(modelId, 'sending');
-        window.addEventListener('message', responseHandler);
-
-      // 1-pass: 주입
-      sendToFrame({ type: 'MODEL_DOCK_INJECT_TEXT', payload: { ...payloadBase, submit: false, skipInject: false } });
-      await new Promise(r => setTimeout(r, 800));
-
-      // 2-pass: 전송 (주입 생략)
-      sendToFrame({ type: 'MODEL_DOCK_INJECT_TEXT', payload: { ...payloadBase, submit: true, forceKey: true, skipInject: true } });
-
-        const success = await new Promise<boolean>((resolve) => {
-          const start = Date.now();
-          const timer = setTimeout(() => {
-            resolve(responses.some(r => r.success));
-          }, 8000);
-          const interval = setInterval(() => {
-            if (responses.some(r => r.success)) {
-              clearInterval(interval);
-              clearTimeout(timer);
-              resolve(true);
+          const sendToFrame = (payload: any) => {
+            try {
+              targetFrame.contentWindow?.postMessage(payload, '*');
+            } catch (err) {
+              console.warn('iframe postMessage 실패', err);
             }
-            if (Date.now() - start > 7500) {
-              clearInterval(interval);
-              clearTimeout(timer);
+          };
+
+          updateStatusFor(modelId, 'sending');
+          window.addEventListener('message', responseHandler);
+
+          // 1-pass: 주입
+          sendToFrame({ type: 'MODEL_DOCK_INJECT_TEXT', payload: { ...payloadBase, submit: false, skipInject: false } });
+          await new Promise(r => setTimeout(r, 800));
+
+          // 2-pass: 전송 (주입 생략)
+          sendToFrame({ type: 'MODEL_DOCK_INJECT_TEXT', payload: { ...payloadBase, submit: true, forceKey: true, skipInject: true } });
+
+          const success = await new Promise<boolean>((resolve) => {
+            const start = Date.now();
+            const timer = setTimeout(() => {
               resolve(responses.some(r => r.success));
-            }
-          }, 150);
-        });
+            }, 8000);
+            const interval = setInterval(() => {
+              if (responses.some(r => r.success)) {
+                clearInterval(interval);
+                clearTimeout(timer);
+                resolve(true);
+              }
+              if (Date.now() - start > 7500) {
+                clearInterval(interval);
+                clearTimeout(timer);
+                resolve(responses.some(r => r.success));
+              }
+            }, 150);
+          });
 
-        window.removeEventListener('message', responseHandler);
+          window.removeEventListener('message', responseHandler);
 
-        if (success || (modelId === 'perplexity' && isPerplexityActive)) {
-          anySuccess = true;
-          updateStatusFor(modelId, 'success');
-          setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
-        } else {
-          updateStatusFor(modelId, 'error');
-          setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
+          if (success || (modelId === 'perplexity' && isPerplexityActive)) {
+            anySuccess = true;
+            updateStatusFor(modelId, 'success');
+            setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
+            break;
+          } else {
+            updateStatusFor(modelId, 'error');
+            setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
+          }
         }
 
         // 모델 간 딜레이(브라우저 부하 완화)

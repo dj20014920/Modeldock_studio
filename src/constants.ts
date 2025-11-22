@@ -168,7 +168,7 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   },
   claude: {
     inputSelector: 'div[data-testid="message-composer"] [contenteditable="true"], div[contenteditable="true"][data-placeholder*="Reply" i], div[role="textbox"][contenteditable="true"], div[contenteditable="plaintext-only"], div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"], textarea[aria-label*="Message" i], textarea[placeholder*="Reply" i], textarea',
-    submitSelector: 'button[aria-label*="Send Message" i]:not([aria-label*="Stop" i]), button[aria-label*="Send" i]:not([aria-label*="Stop" i]), button[data-testid*="send" i], button[type="submit"]:has(svg), button:has(svg path[d*="M"])',
+    submitSelector: 'button[data-testid*="send" i], button[aria-label*="Send message" i]:not([aria-label*="Stop" i]), button[aria-label*="Send" i]:not([aria-label*="Stop" i]), button[type="submit"]',
     inputType: 'contenteditable',
     delayBeforeSubmit: 900,
     forceEnter: true
