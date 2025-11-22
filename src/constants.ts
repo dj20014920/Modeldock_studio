@@ -232,11 +232,27 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   },
   aistudio: {
     inputSelector: 'textarea[aria-label*="Message"], textarea[data-testid*="prompt"], div[role="textbox"][contenteditable="true"], textarea[aria-label*="Describe" i], div[contenteditable="true"][data-placeholder*="Describe" i], textarea[aria-label="Prompt"], textarea, .input-area',
-    submitSelector: 'button[tooltip*="Run prompt" i], button[aria-label="Run"], button[aria-label*="Run" i], button[aria-label="Send message"], button[aria-label="Submit"], button[type="submit"], button[data-testid*="run" i]',
+    submitSelector: [
+      'button.ms-button-primary[aria-label*="build" i]:not([aria-disabled="true"])',
+      'button[aria-label="Build"]:not([aria-disabled="true"])',
+      'button.ms-button:has(span.ms-button-icon-symbol):not([aria-disabled="true"])',
+      'button.mat-mdc-tooltip-trigger.ms-button-primary:not([aria-disabled="true"])',
+      'button[tooltip*="Run prompt" i]',
+      'button[aria-label="Run"]',
+      'button[aria-label*="Run" i]',
+      'button[aria-label="Send message"]',
+      'button[aria-label="Submit"]',
+      'button[type="submit"]',
+      'button[data-testid*="run" i]',
+      'button.ms-button-primary',
+      'button.ms-button',
+      'button[aria-label*="Build" i]',
+      'button[aria-label="Build"]',
+    ].join(', '),
     inputType: 'textarea',
     forceEnter: true,
-    delayBeforeSubmit: 1500,
-    submitKey: { key: 'Enter', ctrlKey: true }
+    delayBeforeSubmit: 1800,
+    submitKey: { key: 'Enter', ctrlKey: true, metaKey: true }
   },
   codex: {
     inputSelector: 'div[data-testid="codex-input"] textarea, div[data-testid="codex-input"] [contenteditable="true"], div[role="textbox"][contenteditable="true"], textarea#prompt-textarea, .monaco-editor, .monaco-editor textarea, .cm-content, div.ProseMirror[contenteditable="true"], div.tiptap.ProseMirror[contenteditable="true"]',
