@@ -1,35 +1,31 @@
-
-import React, { useState, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ModelGrid } from './components/ModelGrid';
-import { MainBrainPanel } from './components/MainBrainPanel';
 import { Header } from './components/Header';
 import { ChatMessageInput } from './components/ChatMessageInput';
 import { PromptLibrary } from './components/PromptLibrary';
+import { ModelCard } from './components/ModelCard';
 import { SettingsModal } from './components/SettingsModal';
 import { ModelId, ActiveModel, SidebarView } from './types';
 import { SUPPORTED_MODELS } from './constants';
-import { usePersistentState } from './hooks/usePersistentState';
+import { X } from 'lucide-react';
 
-const App: React.FC = () => {
-  // --- Persistence Layer (Refactored) ---
-  // Automatically handles loading, saving, and error recovery
-  const [activeModels, setActiveModels] = usePersistentState<ActiveModel[]>('saved_workspace', [
-    { modelId: 'gemini', instanceId: `gemini-${Date.now()}-1` },
-    { modelId: 'claude', instanceId: `claude-${Date.now()}-2` }
-  ]);
+export const App: React.FC = () => {
+  // --- State ---
+  const [activeModels, setActiveModels] = useState<ActiveModel[]>([]);
+  const [mainBrainInstanceId, setMainBrainInstanceId] = useState<string | null>(null);
+  const [sidebarView, setSidebarView] = useState<SidebarView>('chats');
 
-  const [mainBrainInstanceId, setMainBrainInstanceId] = usePersistentState<string | null>('saved_main_brain', null);
-  const [sidebarView, setSidebarView] = usePersistentState<SidebarView>('saved_view', 'models');
-
-  // --- UI State (Transient) ---
+  // Modals
   const [isPromptLibraryOpen, setIsPromptLibraryOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Injected Text (from Prompt Library)
   const [injectedPromptText, setInjectedPromptText] = useState<string | null>(null);
 
-  // --- Resizable Layout State ---
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const [gridWidthPercent, setGridWidthPercent] = usePersistentState<number>('grid_width_percent', 35);
+  // --- Resizable Main Brain Logic ---
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [gridWidthPercent, setGridWidthPercent] = useState(50); // Default 50%
   const [isResizing, setIsResizing] = useState(false);
 
   const startResizing = useCallback((e: React.MouseEvent) => {
@@ -37,7 +33,7 @@ const App: React.FC = () => {
     setIsResizing(true);
   }, []);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!isResizing) return;
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -50,15 +46,12 @@ const App: React.FC = () => {
         const minMainBrainWidth = 400;
         const maxGridWidth = totalWidth - minMainBrainWidth;
 
-        let newPercent = (newWidth / totalWidth) * 100;
-        const maxPercent = (maxGridWidth / totalWidth) * 100;
+        // Calculate min width (e.g., 20% or 300px)
+        const minGridWidth = 300;
 
-        // Constraints
-        // Min: 20% or 300px (whichever is larger effectively, but 20% is a safe floor)
-        // Max: Calculated based on Main Brain min width
-        if (newPercent < 20) newPercent = 20;
-        if (newPercent > maxPercent) newPercent = maxPercent;
+        let constrainedWidth = Math.max(minGridWidth, Math.min(newWidth, maxGridWidth));
 
+        const newPercent = (constrainedWidth / totalWidth) * 100;
         setGridWidthPercent(newPercent);
       }
     };
@@ -74,202 +67,160 @@ const App: React.FC = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing, setGridWidthPercent]);
+  }, [isResizing]);
 
-  // --- Business Logic ---
+  // --- Handlers ---
+  const handleAddModel = (modelId: ModelId) => {
+    const newInstanceId = `${modelId}-${Date.now()}`;
+    setActiveModels(prev => [...prev, { modelId, instanceId: newInstanceId, lastStatus: 'idle' }]);
+  };
 
-  const handleAddModel = useCallback((id: ModelId) => {
+  const handleRemoveModel = (modelId: ModelId) => {
     setActiveModels(prev => {
-      const currentCount = prev.filter(m => m.modelId === id).length;
-      if (currentCount >= 3) return prev; // Max limit per model
-
-      const newInstance: ActiveModel = {
-        modelId: id,
-        instanceId: `${id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      };
-
-
-
-      return [...prev, newInstance];
-    });
-  }, [setActiveModels, setSidebarView]);
-
-  const handleRemoveLastInstance = useCallback((id: ModelId) => {
-    setActiveModels(prev => {
-      const targets = prev.filter(m => m.modelId === id);
-      if (targets.length === 0) return prev;
-
-      const lastInstance = targets[targets.length - 1];
-
-      // If we are removing the Main Brain, reset that state
-      if (mainBrainInstanceId === lastInstance.instanceId) {
+      const modelsToRemove = prev.filter(m => m.modelId === modelId);
+      // If main brain is one of them, clear it
+      if (modelsToRemove.some(m => m.instanceId === mainBrainInstanceId)) {
         setMainBrainInstanceId(null);
       }
-
-      return prev.filter(m => m.instanceId !== lastInstance.instanceId);
+      return prev.filter(m => m.modelId !== modelId);
     });
-  }, [mainBrainInstanceId, setActiveModels, setMainBrainInstanceId]);
+  };
 
-  const handleCloseSpecificInstance = useCallback((instanceId: string) => {
+  const handleCloseSpecificInstance = (instanceId: string) => {
     if (mainBrainInstanceId === instanceId) {
       setMainBrainInstanceId(null);
     }
     setActiveModels(prev => prev.filter(m => m.instanceId !== instanceId));
-  }, [mainBrainInstanceId, setMainBrainInstanceId, setActiveModels]);
-
-  const handleSetMainBrain = (instanceId: string) => {
-    setMainBrainInstanceId(instanceId);
   };
 
-  const handleRemoveMainBrain = () => {
-    setMainBrainInstanceId(null);
+  const handleStatusUpdate = (modelId: ModelId, status: 'idle' | 'sending' | 'success' | 'error') => {
+    setActiveModels(prev => prev.map(m =>
+      m.modelId === modelId ? { ...m, lastStatus: status } : m
+    ));
   };
 
-  React.useEffect(() => {
-    const hasChromeRuntime = typeof chrome !== 'undefined' && !!chrome.runtime?.id;
-    if (!hasChromeRuntime) return;
+  const handlePromptSelect = (content: string) => {
+    setInjectedPromptText(content);
+  };
 
-    const syncableModels = Object.values(SUPPORTED_MODELS).filter((model) => model.sessionSync?.method === 'cookiePartition');
-    if (!syncableModels.length) return;
-
-    const safeSendMessage = (message: unknown) => {
-      chrome.runtime.sendMessage(message, () => {
-        if (chrome.runtime.lastError) {
-          console.warn('[ModelDock] Session sync message failed', chrome.runtime.lastError.message);
-        }
-      });
-    };
-
-    safeSendMessage({
-      type: 'REGISTER_SESSION_SYNC_MODELS',
-      payload: syncableModels.map((model) => ({
-        modelId: model.id,
-        domains: model.sessionSync?.domains || []
-      }))
-    });
-
-    syncableModels.forEach((model) => {
-      safeSendMessage({
-        type: 'SYNC_MODEL_SESSION',
-        payload: { modelId: model.id }
-      });
-    });
-  }, []);
-
-  // Computed properties
-  const activeModelTypes = Array.from(new Set(activeModels.map(m => m.modelId)));
+  // --- Derived State ---
   const mainBrainModel = activeModels.find(m => m.instanceId === mainBrainInstanceId);
 
   return (
-    <div className="flex flex-col h-screen w-full bg-white text-slate-800 font-sans overflow-hidden selection:bg-indigo-100">
+    <div className="w-full h-screen bg-slate-50 flex flex-col overflow-hidden">
       <Header />
 
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Sidebar Navigation */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar */}
         <Sidebar
-          activeModels={activeModels}
           currentView={sidebarView}
           onViewChange={setSidebarView}
+          activeModels={activeModels}
+          onAddModel={handleAddModel}
+          onRemoveLastInstance={handleRemoveModel}
           onTriggerPrompt={() => setIsPromptLibraryOpen(true)}
           onTriggerSettings={() => setIsSettingsOpen(true)}
-          onAddModel={handleAddModel}
-          onRemoveLastInstance={handleRemoveLastInstance}
-          onActivateInstance={handleSetMainBrain}
+          onActivateInstance={setMainBrainInstanceId}
           mainBrainInstanceId={mainBrainInstanceId}
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 flex flex-col overflow-hidden relative bg-slate-100">
+        <main className="flex-1 flex flex-col min-w-0 bg-slate-100 relative">
 
-          {/* Model Viewport (Grid + Main Brain) */}
-          <div ref={containerRef} className="flex-1 flex overflow-hidden relative">
-            {activeModels.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center h-full text-slate-400 flex-col gap-4 select-none">
-                <div className="w-20 h-20 rounded-3xl bg-slate-200 animate-pulse flex items-center justify-center">
-                  <span className="text-4xl">🤖</span>
-                </div>
-                <div className="text-center">
-                  <h3 className="text-lg font-semibold text-slate-600">No Active Models</h3>
-                  <p className="text-sm mt-1">Select a model from the sidebar to launch your workspace.</p>
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* Grid Area - Resizable */}
+          {/* Model Grid / Main Brain Area */}
+          <div ref={containerRef} className="flex-1 overflow-hidden relative">
+            {/* Main Brain Layout */}
+            {mainBrainInstanceId && mainBrainModel ? (
+              <div className="w-full h-full flex">
+                {/* Resizable Main Brain Panel */}
                 <div
-                  className={`transition-none relative z-10 ${mainBrainInstanceId ? 'border-r border-slate-200 shadow-sm' : 'w-full'}`}
-                  style={{
-                    width: mainBrainInstanceId ? `${gridWidthPercent}%` : '100%',
-                    minWidth: mainBrainInstanceId ? '300px' : '100%'
-                  }}
+                  className="relative h-full flex-shrink-0 transition-all duration-75 ease-out"
+                  style={{ width: `${gridWidthPercent}%` }}
                 >
+                  {/* Drag Handle */}
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize z-50 hover:bg-indigo-400/50 active:bg-indigo-500 transition-colors group flex items-center justify-center"
+                    onMouseDown={startResizing}
+                  >
+                    <div className="w-0.5 h-8 bg-slate-300 rounded-full group-hover:bg-white/80" />
+                  </div>
+
+                  {/* Overlay during resizing */}
+                  {isResizing && <div className="absolute inset-0 z-50 bg-transparent" />}
+
+                  <div className="w-full h-full p-1">
+                    <ModelCard
+                      model={SUPPORTED_MODELS[mainBrainModel.modelId]}
+                      isMainBrain={true}
+                      onSetMainBrain={() => { }}
+                      onRemoveMainBrain={() => setMainBrainInstanceId(null)}
+                      onClose={() => handleCloseSpecificInstance(mainBrainModel.instanceId)}
+                      status={mainBrainModel.lastStatus}
+                    />
+                  </div>
+                </div>
+
+                {/* Remaining Grid (Right Side) */}
+                <div className="flex-1 h-full min-w-0 bg-slate-200/50 border-l border-slate-200">
                   <ModelGrid
                     activeModels={activeModels}
                     mainBrainInstanceId={mainBrainInstanceId}
-                    onSetMainBrain={handleSetMainBrain}
+                    onSetMainBrain={setMainBrainInstanceId}
                     onCloseInstance={handleCloseSpecificInstance}
                   />
-
-                  {/* Overlay during resizing to prevent iframe capturing mouse events */}
-                  {isResizing && <div className="absolute inset-0 z-50 bg-transparent" />}
                 </div>
-
-                {/* Resizer Handle */}
-                {mainBrainInstanceId && (
-                  <div
-                    className={`w-1.5 hover:w-2 -ml-0.5 z-50 cursor-col-resize flex items-center justify-center hover:bg-indigo-500/50 transition-colors group select-none ${isResizing ? 'bg-indigo-600 w-2' : 'bg-transparent'}`}
-                    onMouseDown={startResizing}
-                  >
-                    {/* Visual Handle Indicator */}
-                    <div className={`h-8 w-1 rounded-full bg-slate-300 group-hover:bg-white transition-colors ${isResizing ? 'bg-white' : ''}`} />
-                  </div>
-                )}
-
-                {/* Main Brain Area - Takes remaining space */}
-                {mainBrainInstanceId && mainBrainModel && (
-                  <div className="flex-1 min-w-[300px] relative">
-                    {/* Overlay during resizing */}
-                    {isResizing && <div className="absolute inset-0 z-50 bg-transparent" />}
-
-                    <MainBrainPanel
-                      modelId={mainBrainModel.modelId}
-                      instanceId={mainBrainInstanceId}
-                      onRemoveMainBrain={handleRemoveMainBrain}
-                      onClose={() => handleCloseSpecificInstance(mainBrainInstanceId)}
-                    />
-                  </div>
-                )}
-              </>
+              </div>
+            ) : (
+              /* Standard Grid Layout */
+              <div className="w-full h-full p-2">
+                <ModelGrid
+                  activeModels={activeModels}
+                  mainBrainInstanceId={null}
+                  onSetMainBrain={setMainBrainInstanceId}
+                  onCloseInstance={handleCloseSpecificInstance}
+                />
+              </div>
             )}
           </div>
 
-          {/* Global Chat Input Footer */}
-          {activeModels.length > 0 && (
-            <ChatMessageInput
-              activeModelIds={activeModelTypes}
-              mainBrainId={mainBrainModel?.modelId || null}
-              forcedInputText={injectedPromptText}
-              onInputHandled={() => setInjectedPromptText(null)}
-            />
-          )}
-
+          {/* Global Chat Input */}
+          <ChatMessageInput
+            activeModelIds={activeModels.map(m => m.modelId)}
+            mainBrainId={mainBrainModel?.modelId || null}
+            forcedInputText={injectedPromptText}
+            onInputHandled={() => setInjectedPromptText(null)}
+            onStatusUpdate={handleStatusUpdate}
+          />
         </main>
-
-        {/* Modals Layer (Portals conceptually) */}
-        <PromptLibrary
-          isOpen={isPromptLibraryOpen}
-          onClose={() => setIsPromptLibraryOpen(false)}
-          onSelectPrompt={(content) => setInjectedPromptText(content)}
-        />
-
-        <SettingsModal
-          isOpen={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-        />
-
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
+
+      {/* Prompt Library Modal (if needed as modal) */}
+      {isPromptLibraryOpen && (
+        <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-xl w-3/4 h-3/4 relative flex flex-col">
+            <button
+              onClick={() => setIsPromptLibraryOpen(false)}
+              className="absolute top-4 right-4 p-2 hover:bg-slate-100 rounded-full"
+            >
+              <X size={20} />
+            </button>
+            <PromptLibrary
+              isOpen={true}
+              onClose={() => setIsPromptLibraryOpen(false)}
+              onSelectPrompt={(content) => {
+                handlePromptSelect(content);
+                setIsPromptLibraryOpen(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
-
-export default App;

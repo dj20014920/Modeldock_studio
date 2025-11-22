@@ -37,6 +37,7 @@ export interface ModelConfig {
 export interface ActiveModel {
   modelId: ModelId;
   instanceId: string; // Unique ID (e.g., 'gemini-1715234...')
+  lastStatus?: 'idle' | 'sending' | 'success' | 'error';
 }
 
 export interface SidebarItemProps {

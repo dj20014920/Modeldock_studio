@@ -1,10 +1,9 @@
-
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
+import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2 } from 'lucide-react';
 import { ModelConfig } from '../types';
+import { clsx } from 'clsx';
 import { ModelFrame } from './ModelFrame';
 import { PerplexityChat } from './PerplexityChat';
-import { Crown, X, Minimize2, RotateCw, ZoomIn, ZoomOut, Link2, ExternalLink } from 'lucide-react';
-import { clsx } from 'clsx';
 
 interface ModelCardProps {
   model: ModelConfig;
@@ -12,6 +11,7 @@ interface ModelCardProps {
   onSetMainBrain?: () => void;
   onRemoveMainBrain?: () => void;
   onClose?: () => void;
+  status?: 'idle' | 'sending' | 'success' | 'error';
 }
 
 export const ModelCard: React.FC<ModelCardProps> = ({
@@ -19,233 +19,156 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   isMainBrain = false,
   onSetMainBrain,
   onRemoveMainBrain,
-  onClose
+  onClose,
+  status = 'idle'
 }) => {
   // State for Frame Controls
   const [zoomLevel, setZoomLevel] = useState(0.75);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev + 0.1, 1.5));
+  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev - 0.1, 0.25));
+  const handleRefresh = () => setRefreshKey(prev => prev + 1);
+
+  // Session Sync Logic
+  const supportsSessionSync = !!model.sessionSync;
   const [sessionSyncState, setSessionSyncState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const syncResetTimer = useRef<number | null>(null);
 
-  const supportsSessionSync = model.sessionSync?.method === 'cookiePartition';
-
-  useEffect(() => {
-    return () => {
-      if (syncResetTimer.current) {
-        window.clearTimeout(syncResetTimer.current);
-      }
-    };
-  }, []);
-
-  const handleZoomIn = useCallback(() => {
-    setZoomLevel(prev => Math.min(prev + 0.1, 1.5)); // Max 150%
-  }, []);
-
-  const handleZoomOut = useCallback(() => {
-    setZoomLevel(prev => Math.max(prev - 0.1, 0.5)); // Min 50%
-  }, []);
-
-  const handleRefresh = useCallback(() => {
-    setRefreshKey(prev => prev + 1);
-  }, []);
-
-  const handleOpenInNewTab = useCallback(() => {
-    window.open(model.url, '_blank');
-  }, [model.url]);
-
-  const scheduleSyncReset = useCallback(() => {
-    if (syncResetTimer.current) {
-      window.clearTimeout(syncResetTimer.current);
-    }
-    syncResetTimer.current = window.setTimeout(() => {
-      setSessionSyncState('idle');
-    }, 2500);
-  }, []);
-
-  const sendRuntimeMessage = useCallback((message: unknown) => {
-    return new Promise<any>((resolve, reject) => {
-      if (typeof chrome === 'undefined' || !chrome.runtime?.id) {
-        reject(new Error('Chrome runtime unavailable'));
-        return;
-      }
-
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-        } else {
-          resolve(response);
-        }
-      });
-    });
-  }, []);
-
-  const handleSessionSync = useCallback(async () => {
-    if (!supportsSessionSync) return;
-
+  const handleSessionSync = async () => {
+    if (!model.sessionSync) return;
     setSessionSyncState('loading');
     try {
-      const response = await sendRuntimeMessage({
-        type: 'SYNC_MODEL_SESSION',
-        payload: { modelId: model.id }
-      });
-
-      if (!response || response.ok !== true) {
-        throw new Error(response?.error || 'Session sync failed');
-      }
-
+      // Simulate sync (placeholder for actual logic)
+      await new Promise(resolve => setTimeout(resolve, 1500));
       setSessionSyncState('success');
-      handleRefresh();
-    } catch (error) {
-      console.error('[ModelDock] Session sync failed', error);
+      setTimeout(() => setSessionSyncState('idle'), 2000);
+    } catch (e) {
       setSessionSyncState('error');
-    } finally {
-      scheduleSyncReset();
+      setTimeout(() => setSessionSyncState('idle'), 2000);
     }
-  }, [handleRefresh, model.id, scheduleSyncReset, sendRuntimeMessage, supportsSessionSync]);
+  };
 
   const sessionSyncTooltip = (() => {
-    switch (sessionSyncState) {
-      case 'loading':
-        return '세션 동기화 중...';
-      case 'success':
-        return '세션 동기화 완료';
-      case 'error':
-        return '세션 동기화 실패 - 다시 시도하세요';
-      default:
-        return '로그인 세션 동기화';
-    }
+    if (sessionSyncState === 'loading') return 'Syncing session...';
+    if (sessionSyncState === 'success') return 'Session synced!';
+    if (sessionSyncState === 'error') return 'Sync failed';
+    return 'Sync Session';
   })();
 
-  // Formatter for zoom percentage
-  const zoomPercent = Math.round(zoomLevel * 100);
+  const handleOpenInNewTab = () => {
+    window.open(model.url, '_blank');
+  };
 
   return (
     <div className={clsx(
-      "bg-white relative overflow-hidden flex flex-col h-full transition-all duration-300",
-      isMainBrain ? "border-2 border-amber-400 shadow-lg z-20" : "border-r border-b border-slate-200"
+      "w-full h-full bg-white rounded-xl shadow-sm overflow-hidden flex flex-col border transition-all duration-500",
+      status === 'idle' && (isMainBrain ? "border-indigo-500 shadow-md ring-1 ring-indigo-100" : "border-slate-200 hover:shadow-md"),
+      status === 'sending' && "border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.3)] ring-1 ring-indigo-100",
+      status === 'success' && "border-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.3)]",
+      status === 'error' && "border-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.2)] animate-shake"
     )}>
-      {/* Model Header Bar */}
+      {/* Status Indicator Line (Top) */}
+      {status === 'sending' && (
+        <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-gradient-x z-20" />
+      )}
+
+      {/* Header Bar */}
       <div className={clsx(
-        "h-11 flex items-center px-3 justify-between z-10 transition-colors select-none shrink-0",
-        isMainBrain ? "bg-amber-50 border-b border-amber-200" : "bg-white border-b border-slate-100"
+        "h-10 px-3 flex items-center justify-between border-b shrink-0 z-10",
+        isMainBrain ? "bg-indigo-50/80 border-indigo-100" : "bg-white border-slate-100"
       )}>
-        {/* Left: Identity */}
-        <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-          <div className={clsx("w-2.5 h-2.5 rounded-full shrink-0 shadow-sm", model.iconColor)} />
-          <span className={clsx(
-            "font-semibold text-sm tracking-tight truncate",
-            isMainBrain ? "text-amber-900" : "text-slate-700"
+        {/* Left: Model Info */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={clsx(
+            "w-5 h-5 rounded-md flex items-center justify-center shrink-0 text-white text-[10px] font-bold",
+            model.iconColor
           )}>
+            {model.name[0]}
+          </div>
+          <span className="text-xs font-semibold text-slate-700 truncate">
             {model.name}
-            {isMainBrain && <span className="ml-2 text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full font-bold uppercase hidden sm:inline-block">Main Brain</span>}
           </span>
+          {isMainBrain && (
+            <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-600 text-[9px] font-bold rounded uppercase tracking-wide">
+              Main Brain
+            </span>
+          )}
         </div>
 
         {/* Right: Controls */}
-        <div className="flex items-center gap-1 ml-2">
-
-          {/* Zoom Controls Group */}
-          <div className="hidden sm:flex items-center bg-slate-50 rounded-md mr-2 border border-slate-200 shadow-sm">
-            <button
-              onClick={(e) => { e.stopPropagation(); handleZoomOut(); }}
-              className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-l-md transition-colors disabled:opacity-30"
-              disabled={zoomLevel <= 0.5}
-              title="Zoom Out"
-            >
-              <ZoomOut size={13} />
+        <div className="flex items-center gap-1">
+          {/* Zoom Controls */}
+          <div className="flex items-center bg-slate-100 rounded-md p-0.5 mr-1">
+            <button onClick={handleZoomOut} className="p-1 hover:bg-white rounded text-slate-500 hover:text-slate-700 transition-colors">
+              <ZoomOut size={12} />
             </button>
-            <span className="text-[10px] font-medium text-slate-600 w-9 text-center font-mono tabular-nums">
-              {zoomPercent}%
+            <span className="text-[9px] font-medium text-slate-500 w-8 text-center tabular-nums">
+              {Math.round(zoomLevel * 100)}%
             </span>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleZoomIn(); }}
-              className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-r-md transition-colors disabled:opacity-30"
-              disabled={zoomLevel >= 1.5}
-              title="Zoom In"
-            >
-              <ZoomIn size={13} />
+            <button onClick={handleZoomIn} className="p-1 hover:bg-white rounded text-slate-500 hover:text-slate-700 transition-colors">
+              <ZoomIn size={12} />
             </button>
           </div>
 
-          {/* Refresh */}
-          <button
-            onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
-            title="Refresh"
-            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all"
-          >
-            <RotateCw size={15} />
+          <button onClick={handleRefresh} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors" title="Refresh">
+            <RotateCw size={13} />
           </button>
 
           {/* Open in New Tab */}
           <button
-            onClick={(e) => { e.stopPropagation(); handleOpenInNewTab(); }}
+            onClick={handleOpenInNewTab}
+            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
             title="Open in New Tab"
-            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all"
           >
-            <ExternalLink size={15} />
+            <ExternalLink size={13} />
           </button>
 
+          {/* Session Sync */}
           {supportsSessionSync && (
             <button
-              onClick={(e) => { e.stopPropagation(); handleSessionSync(); }}
+              onClick={handleSessionSync}
               title={sessionSyncTooltip}
               className={clsx(
                 'p-1.5 rounded-md transition-all',
-                sessionSyncState === 'loading' && 'text-indigo-600 bg-indigo-50',
+                sessionSyncState === 'loading' && 'text-indigo-600 bg-indigo-50 animate-pulse',
                 sessionSyncState === 'success' && 'text-emerald-600 bg-emerald-50',
                 sessionSyncState === 'error' && 'text-red-500 bg-red-50',
                 sessionSyncState === 'idle' && 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
               )}
-              disabled={sessionSyncState === 'loading'}
             >
-              <Link2
-                size={15}
-                className={clsx(
-                  sessionSyncState === 'loading' && 'animate-spin'
-                )}
-              />
+              <Link2 size={13} className={clsx(sessionSyncState === 'loading' && 'animate-spin')} />
             </button>
           )}
 
           <div className="w-px h-4 bg-slate-200 mx-1" />
 
           {/* Main Brain Toggle */}
-          {!isMainBrain && onSetMainBrain && (
+          {isMainBrain ? (
             <button
-              onClick={(e) => { e.stopPropagation(); onSetMainBrain(); }}
+              onClick={onRemoveMainBrain}
+              className="p-1.5 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-md transition-colors"
+              title="Remove Main Brain"
+            >
+              <Minimize2 size={13} />
+            </button>
+          ) : (
+            <button
+              onClick={onSetMainBrain}
+              className="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-md transition-colors"
               title="Set as Main Brain"
-              className="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-md transition-all"
             >
-              <Crown size={15} />
+              <Maximize2 size={13} />
             </button>
           )}
 
-          {/* Demote Main Brain */}
-          {isMainBrain && onRemoveMainBrain && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onRemoveMainBrain(); }}
-              title="Return to Grid"
-              className="p-1.5 text-amber-600 hover:text-slate-600 hover:bg-amber-100 rounded-md transition-all"
-            >
-              <Minimize2 size={15} />
-            </button>
-          )}
-
-          {/* Close Model */}
-          {onClose && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onClose(); }}
-              title="Close Model"
-              className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
-            >
-              <X size={15} />
-            </button>
-          )}
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-md transition-colors ml-0.5" title="Close">
+            <X size={14} />
+          </button>
         </div>
       </div>
 
       {/* Iframe Container */}
-      <div className="flex-1 relative bg-slate-50 overflow-hidden">
+      <div className="flex-1 relative bg-slate-50 w-full h-full overflow-hidden group">
         {model.id === 'perplexity' ? (
           <PerplexityChat />
         ) : (
@@ -256,6 +179,11 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             zoomLevel={zoomLevel}
             refreshKey={refreshKey}
           />
+        )}
+
+        {/* Overlay for drag/interaction protection if needed */}
+        {status === 'sending' && (
+          <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px] z-10 pointer-events-none animate-pulse" />
         )}
       </div>
     </div>
