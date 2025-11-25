@@ -121,9 +121,15 @@ export class ChainOrchestrator {
                 const data = event.data;
                 if (!data) return;
 
+                // Handle heartbeat (Reset timeout)
+                if (data.type === 'MODEL_DOCK_HEARTBEAT' && data.payload?.requestId === requestId) {
+                    lastActivityTime = Date.now();
+                }
+
                 // Handle chunks
                 if (data.type === 'MODEL_DOCK_RESPONSE_CHUNK' && data.payload?.requestId === requestId) {
                     responseText = data.payload.text;
+                    lastActivityTime = Date.now();
                     callbacks.onModelUpdate(model.modelId, responseText);
                 }
 
@@ -139,6 +145,7 @@ export class ChainOrchestrator {
             const cleanup = () => {
                 window.removeEventListener('message', listener);
                 this.activeListeners.delete(requestId);
+                clearInterval(statusInterval);
             };
 
             window.addEventListener('message', listener);
@@ -163,14 +170,23 @@ export class ChainOrchestrator {
                 requestId
             }, '*');
 
-            // Timeout safety (120s)
-            setTimeout(() => {
-                if (this.activeListeners.has(requestId)) {
-                    console.warn(`[BrainFlow] Timeout for ${model.modelId}`);
-                    cleanup();
-                    reject(new Error(`Timeout waiting for response from ${model.modelId}`));
+            // 3. Infinite Wait with Heartbeat Check
+            let lastActivityTime = Date.now();
+            const statusInterval = setInterval(() => {
+                const elapsed = Date.now() - lastActivityTime;
+
+                // Log status every 10 seconds
+                if ((Date.now() % 10000) < 1000) {
+                    console.log(`[BrainFlow] Waiting for ${model.modelId}... (Last activity: ${Math.round(elapsed / 1000)}s ago)`);
                 }
-            }, 120000);
+
+                // Crash detection: If absolutely no signal (chunk or heartbeat) for 45 seconds, assume dead
+                if (elapsed > 45000) {
+                    console.warn(`[BrainFlow] No signal from ${model.modelId} for 45s. Assuming crash or network error.`);
+                    cleanup();
+                    reject(new Error(`Timeout: No signal from ${model.modelId} for 45s`));
+                }
+            }, 1000);
         });
     }
 

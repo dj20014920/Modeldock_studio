@@ -396,38 +396,124 @@
 
   // --- Response Monitoring (Added for Brain Flow) ---
   const RESPONSE_CONFIGS = [
+    // Major Platforms
     {
       hosts: ['chatgpt.com', 'chat.openai.com'],
       responseSelectors: ['div[data-message-author-role="assistant"]:last-of-type', 'div[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"]):last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop generating"]']
+      stopSelectors: ['button[aria-label*="Stop"]', 'button[data-testid="stop-button"]']
     },
     {
       hosts: ['claude.ai'],
-      responseSelectors: ['div[data-testid*="message-content"]:last-of-type', 'div.font-claude-message:last-of-type'],
-      stopSelectors: ['button:has(svg[data-icon="stop"])', 'button[aria-label*="Stop"]']
+      responseSelectors: ['div[data-testid*="message-content"]:last-of-type', 'div.font-claude-message:last-of-type', '.claude-response:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[data-icon="stop"])']
     },
     {
-      hosts: ['gemini.google.com'],
-      responseSelectors: ['model-response:last-of-type', 'message-content[data-author="model"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      hosts: ['gemini.google.com', 'aistudio.google.com'],
+      responseSelectors: ['model-response:last-of-type', 'message-content[data-author="model"]:last-of-type', 'div[data-test-id="model-response"]:last-of-type', '.ms-text-chunk:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]', 'div[role="button"][aria-label*="Stop"]', '.stop-button', 'button[aria-label*="Cancel"]']
     },
     {
       hosts: ['perplexity.ai', 'www.perplexity.ai'],
       responseSelectors: ['div.prose:last-of-type', 'div[dir="auto"]:last-of-type'],
-      stopSelectors: ['button:has(svg[data-icon="pause"])'] // Perplexity often doesn't have a clear stop button, relies on stream end
+      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[data-icon="pause"])', 'button:has(svg[data-icon="stop"])']
     },
     {
       hosts: ['grok.com'],
       responseSelectors: ['div.prose:last-of-type', 'div[class*="message-content"]:last-of-type'],
       stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['chat.qwen.ai'],
+      responseSelectors: ['div.message-content:last-of-type', 'div[class*="markdown"]:last-of-type'],
+      stopSelectors: ['button[class*="stop-btn"]', 'button:has(svg[class*="stop"])']
+    },
+    {
+      hosts: ['chat.mistral.ai'],
+      responseSelectors: ['div.prose:last-of-type', 'div[class*="message-content"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[class*="stop"])']
+    },
+    {
+      hosts: ['chat.deepseek.com'],
+      responseSelectors: ['div.ds-markdown:last-of-type', 'div[class*="message-content"]:last-of-type'],
+      stopSelectors: ['div[role="button"]:has(svg)', 'div[class*="stop"]']
+    },
+    // Coding & Dev Platforms
+    {
+      hosts: ['github.com/copilot'],
+      responseSelectors: ['div[class*="markdown-body"]:last-of-type', 'div[class*="conversation-message"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['replit.com'],
+      responseSelectors: ['div[class*="markdown"]:last-of-type', 'div[class*="message-body"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['v0.dev'],
+      responseSelectors: ['div[data-testid="message"]:last-of-type', 'div.prose:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['lovable.dev'],
+      responseSelectors: ['div[class*="message"]:last-of-type', 'div.prose:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    // Other Platforms
+    {
+      hosts: ['lmarena.ai'],
+      responseSelectors: ['div[class*="message"]:last-of-type', 'div.prose:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['kimi.moonshot.cn'],
+      responseSelectors: ['div[class*="markdown"]:last-of-type', 'div[class*="message"]:last-of-type'],
+      stopSelectors: ['button[class*="stop"]', 'div[class*="stop"]']
+    },
+    {
+      hosts: ['openrouter.ai'],
+      responseSelectors: ['div.prose:last-of-type', 'div[class*="message"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['genspark.ai', 'app.vooster.ai'],
+      responseSelectors: ['div.prose:last-of-type', 'div[class*="markdown"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
     }
+  ];
+
+  // Universal Fallbacks (Heuristics)
+  const UNIVERSAL_RESPONSE_SELECTORS = [
+    'div.markdown:last-of-type',
+    'div.prose:last-of-type',
+    'div[class*="message-content"]:last-of-type',
+    'div[class*="bot-message"]:last-of-type',
+    'div[class*="assistant-message"]:last-of-type'
+  ];
+
+  const UNIVERSAL_STOP_SELECTORS = [
+    'button[aria-label*="Stop"]',
+    'button[aria-label*="Pause"]',
+    'button:has(svg[data-icon="stop"])',
+    'button:has(svg[data-icon="pause"])',
+    '.stop-generating',
+    '[data-testid*="stop"]'
   ];
 
   function getResponseConfig() {
     const host = window.location.hostname;
-    return RESPONSE_CONFIGS.find(c => c.hosts.some(h => host.includes(h))) || {
-      responseSelectors: ['div.markdown:last-of-type', 'div.prose:last-of-type', 'div[data-message-author-role="assistant"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+    const specificConfig = RESPONSE_CONFIGS.find(c => c.hosts.some(h => host.includes(h)));
+
+    if (specificConfig) {
+      // Merge specific with universal for maximum robustness
+      return {
+        responseSelectors: [...specificConfig.responseSelectors, ...UNIVERSAL_RESPONSE_SELECTORS],
+        stopSelectors: [...specificConfig.stopSelectors, ...UNIVERSAL_STOP_SELECTORS]
+      };
+    }
+
+    return {
+      responseSelectors: UNIVERSAL_RESPONSE_SELECTORS,
+      stopSelectors: UNIVERSAL_STOP_SELECTORS
     };
   }
 
@@ -443,6 +529,8 @@
     let lastText = '';
     let lastChangeTime = Date.now();
     let isComplete = false;
+    let heartbeatInterval;
+    let fallbackCheckCount = 0;
 
     const getResponseText = () => {
       for (const selector of config.responseSelectors) {
@@ -461,6 +549,45 @@
       return '';
     };
 
+    const checkIsRunning = () => {
+      return config.stopSelectors.some(sel => {
+        const el = document.querySelector(sel);
+        return el && isElementVisible(el);
+      });
+    };
+
+    // Send heartbeat every 2 seconds regardless of state
+    heartbeatInterval = setInterval(() => {
+      if (isComplete) { clearInterval(heartbeatInterval); return; }
+
+      const isRunning = checkIsRunning();
+      // If we see a stop button, we are definitely running
+      if (isRunning) {
+        lastChangeTime = Date.now();
+        fallbackCheckCount = 0; // Reset fallback counter
+      } else {
+        fallbackCheckCount++;
+      }
+
+      // Force finish if silence > 5s AND not running (Double check)
+      const timeSinceChange = Date.now() - lastChangeTime;
+      if (!isRunning && timeSinceChange > 5000 && lastText.length > 0) {
+        console.log('[ModelDock] Force finishing due to silence:', requestId);
+        finish();
+        return;
+      }
+
+      window.parent.postMessage({
+        type: 'MODEL_DOCK_HEARTBEAT',
+        payload: {
+          requestId,
+          status: isRunning ? 'running' : 'idle',
+          textLength: lastText.length,
+          host: window.location.host
+        }
+      }, '*');
+    }, 2000);
+
     const observer = new MutationObserver(() => {
       if (isComplete) return;
       const currentText = getResponseText();
@@ -475,33 +602,36 @@
         }, '*');
       }
 
-      // Check for completion (Silence detection)
-      // If text hasn't changed for 2.5s AND no stop button is visible
+      // Check for completion
       const timeSinceChange = Date.now() - lastChangeTime;
-      const isStopVisible = config.stopSelectors.some(sel => {
-        const el = document.querySelector(sel);
-        return el && isElementVisible(el);
-      });
+      const isRunning = checkIsRunning();
 
-      if (timeSinceChange > 2500 && !isStopVisible && lastText.length > 0) {
+      // If text hasn't changed for 3s AND no stop button is visible
+      if (timeSinceChange > 3000 && !isRunning && lastText.length > 0) {
         finish();
       }
     });
 
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
-    // Backup timer for long silence
+    // Backup timer for long silence or missed mutation
     const checkInterval = setInterval(() => {
       if (isComplete) { clearInterval(checkInterval); return; }
       const timeSinceChange = Date.now() - lastChangeTime;
-      const isStopVisible = config.stopSelectors.some(sel => {
-        const el = document.querySelector(sel);
-        return el && isElementVisible(el);
-      });
+      const isRunning = checkIsRunning();
 
-      if (timeSinceChange > 3000 && !isStopVisible && lastText.length > 0) {
+      // If running, keep alive
+      if (isRunning) {
+        lastChangeTime = Date.now(); // Reset timer
+        return;
+      }
+
+      // If not running and silence > 5s (increased from 4s), finish
+      if (timeSinceChange > 5000 && !isRunning && lastText.length > 0) {
         finish();
       }
+
+      // Safety: If we have text, no stop button, and it's been > 10s since start but < 5s since change, just wait.
     }, 1000);
 
     function finish() {
@@ -509,6 +639,7 @@
       isComplete = true;
       observer.disconnect();
       clearInterval(checkInterval);
+      clearInterval(heartbeatInterval);
       console.log('[ModelDock] Response monitoring complete');
       window.parent.postMessage({
         type: 'MODEL_DOCK_RESPONSE_COMPLETE',
