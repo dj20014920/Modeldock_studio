@@ -394,5 +394,128 @@
     });
   }
 
+  // --- Response Monitoring (Added for Brain Flow) ---
+  const RESPONSE_CONFIGS = [
+    {
+      hosts: ['chatgpt.com', 'chat.openai.com'],
+      responseSelectors: ['div[data-message-author-role="assistant"]:last-of-type', 'div[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"]):last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop generating"]']
+    },
+    {
+      hosts: ['claude.ai'],
+      responseSelectors: ['div[data-testid*="message-content"]:last-of-type', 'div.font-claude-message:last-of-type'],
+      stopSelectors: ['button:has(svg[data-icon="stop"])', 'button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['gemini.google.com'],
+      responseSelectors: ['model-response:last-of-type', 'message-content[data-author="model"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    },
+    {
+      hosts: ['perplexity.ai', 'www.perplexity.ai'],
+      responseSelectors: ['div.prose:last-of-type', 'div[dir="auto"]:last-of-type'],
+      stopSelectors: ['button:has(svg[data-icon="pause"])'] // Perplexity often doesn't have a clear stop button, relies on stream end
+    },
+    {
+      hosts: ['grok.com'],
+      responseSelectors: ['div.prose:last-of-type', 'div[class*="message-content"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    }
+  ];
+
+  function getResponseConfig() {
+    const host = window.location.hostname;
+    return RESPONSE_CONFIGS.find(c => c.hosts.some(h => host.includes(h))) || {
+      responseSelectors: ['div.markdown:last-of-type', 'div.prose:last-of-type', 'div[data-message-author-role="assistant"]:last-of-type'],
+      stopSelectors: ['button[aria-label*="Stop"]']
+    };
+  }
+
+  window.addEventListener('message', (event) => {
+    if (event.data?.type === 'MODEL_DOCK_START_MONITORING') {
+      startResponseMonitoring(event.data.requestId);
+    }
+  });
+
+  function startResponseMonitoring(requestId) {
+    console.log('[ModelDock] Starting response monitoring for', requestId);
+    const config = getResponseConfig();
+    let lastText = '';
+    let lastChangeTime = Date.now();
+    let isComplete = false;
+
+    const getResponseText = () => {
+      for (const selector of config.responseSelectors) {
+        // Try normal query
+        let elements = document.querySelectorAll(selector);
+        if (elements.length === 0) {
+          // Try Shadow DOM
+          elements = queryShadowAll(document.body, selector);
+        }
+
+        if (elements.length > 0) {
+          const lastElement = elements[elements.length - 1];
+          return lastElement.innerText || lastElement.textContent || '';
+        }
+      }
+      return '';
+    };
+
+    const observer = new MutationObserver(() => {
+      if (isComplete) return;
+      const currentText = getResponseText();
+
+      if (currentText && currentText !== lastText) {
+        lastText = currentText;
+        lastChangeTime = Date.now();
+
+        window.parent.postMessage({
+          type: 'MODEL_DOCK_RESPONSE_CHUNK',
+          payload: { requestId, text: currentText, host: window.location.host }
+        }, '*');
+      }
+
+      // Check for completion (Silence detection)
+      // If text hasn't changed for 2.5s AND no stop button is visible
+      const timeSinceChange = Date.now() - lastChangeTime;
+      const isStopVisible = config.stopSelectors.some(sel => {
+        const el = document.querySelector(sel);
+        return el && isElementVisible(el);
+      });
+
+      if (timeSinceChange > 2500 && !isStopVisible && lastText.length > 0) {
+        finish();
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    // Backup timer for long silence
+    const checkInterval = setInterval(() => {
+      if (isComplete) { clearInterval(checkInterval); return; }
+      const timeSinceChange = Date.now() - lastChangeTime;
+      const isStopVisible = config.stopSelectors.some(sel => {
+        const el = document.querySelector(sel);
+        return el && isElementVisible(el);
+      });
+
+      if (timeSinceChange > 3000 && !isStopVisible && lastText.length > 0) {
+        finish();
+      }
+    }, 1000);
+
+    function finish() {
+      if (isComplete) return;
+      isComplete = true;
+      observer.disconnect();
+      clearInterval(checkInterval);
+      console.log('[ModelDock] Response monitoring complete');
+      window.parent.postMessage({
+        type: 'MODEL_DOCK_RESPONSE_COMPLETE',
+        payload: { requestId, text: lastText, host: window.location.host }
+      }, '*');
+    }
+  }
+
   console.log('[ModelDock] Content Script Loaded (v8.0 - Reference Port)');
 })();

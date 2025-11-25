@@ -1,11 +1,12 @@
 
 import React, { useState, KeyboardEvent, useEffect } from 'react';
-import { Send, Copy, Zap, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { Send, Copy, Zap, AlertTriangle, CheckCircle2, XCircle, BrainCircuit } from 'lucide-react';
 import { ActiveModel, DispatchMode, ModelId } from '../types';
 import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
 import { clsx } from 'clsx';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useTranslation } from 'react-i18next';
+import { BrainFlowModal } from './BrainFlowModal';
 
 interface ChatMessageInputProps {
   activeModels: ActiveModel[];
@@ -283,8 +284,66 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
     }
   };
 
+  const [isBrainFlowOpen, setIsBrainFlowOpen] = useState(false);
+
+  const handleBrainFlowStart = async (goal: string) => {
+    if (!mainBrainId) {
+      alert(t('brainFlowModal.errorNoMainBrain'));
+      return;
+    }
+
+    const mainBrain = activeModels.find(m => m.modelId === mainBrainId);
+    const slaves = activeModels.filter(m => m.modelId !== mainBrainId);
+
+    if (!mainBrain) return;
+    if (slaves.length === 0) {
+      alert(t('brainFlowModal.errorNoSlaves'));
+      return;
+    }
+
+    // Dynamic import to avoid circular dependencies or load time issues
+    const { ChainOrchestrator } = await import('../services/chain-orchestrator');
+
+    ChainOrchestrator.getInstance().runBrainFlow({
+      mainBrain,
+      slaves,
+      goal,
+      prompts: {
+        phase1: t('brainFlow.phase1'),
+        phase3: t('brainFlow.phase3')
+      },
+      callbacks: {
+        onPhaseStart: (phase) => {
+          console.log(`[BrainFlow] Starting Phase ${phase}`);
+          setLastActionStatus('sent'); // Just to show some activity
+        },
+        onModelStart: (modelId) => {
+          onStatusUpdate?.(modelId, 'sending');
+        },
+        onModelUpdate: (_modelId, _text) => {
+          // Optional: Stream text to UI if we had a place for it
+        },
+        onModelComplete: (modelId, _text) => {
+          onStatusUpdate?.(modelId, 'success');
+          setTimeout(() => onStatusUpdate?.(modelId, 'idle'), 2000);
+        },
+        onError: (err) => {
+          setErrorMessage(err.message);
+          setLastActionStatus('error');
+        }
+      }
+    });
+  };
+
   return (
     <div className="border-t border-slate-200 bg-white p-4 relative z-50 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+      <BrainFlowModal
+        isOpen={isBrainFlowOpen}
+        onClose={() => setIsBrainFlowOpen(false)}
+        onStart={handleBrainFlowStart}
+        slaveCount={activeModels.length - (mainBrainId ? 1 : 0)}
+      />
+
       {/* Risk Consent Modal */}
       {showConsent && (
         <div className="absolute bottom-full left-0 w-full p-4 bg-amber-50 border-t border-amber-200 shadow-lg animate-in slide-in-from-bottom-2">
@@ -332,7 +391,17 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
               {mode === 'manual' ? <Copy size={12} /> : <Zap size={12} />}
               {mode === 'manual' ? t('chatInput.manualMode') : t('chatInput.autoMode')}
             </button>
-            <span className="text-xs text-slate-400 hidden sm:inline-block">
+
+            {/* Brain Flow Button */}
+            <button
+              onClick={() => setIsBrainFlowOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-all border bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100"
+            >
+              <BrainCircuit size={12} />
+              Brain Flow
+            </button>
+
+            <span className="text-xs text-slate-400 hidden sm:inline-block ml-2">
               {mode === 'manual' ? t('chatInput.copyToClipboard') : t('chatInput.dispatchToAll')}
             </span>
           </div>

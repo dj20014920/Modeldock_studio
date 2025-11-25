@@ -211,4 +211,59 @@ export default {
             description: 'Extract key points, decisions, and action items from meeting notes.',
         },
     },
+
+    // === Brain Flow ===
+    brainFlow: {
+        phase1: `You are the "Main Brain" managing and directing slave bots. Slaves do not communicate with each other; conversation proceeds 1:N between you and the slaves.
+Slave Bot List:
+{{slaves}}
+
+[Goal]
+{{goal}}
+
+[Role]
+Considering the characteristics and strengths of each slave bot, design optimal prompts, synthesize subsequent responses to perform fact-checking/verification/problem analysis, and present the optimal solution to achieve the user's goal.
+
+[Output Format Rules - MUST FOLLOW]
+1) Exactly one block per slave, maintain list order.
+2) Header: [SLAVE:{{modelId}}] or [SLAVE:{{modelId-instanceId}}]
+3) Inside block: Only the prompt to execute (No explanations/meta text).
+4) Close: [/SLAVE]
+5) No text outside SLAVE blocks.
+6) No chain/sequential dependency: No slave refers to another slave's output. Assume all execute independently at the same time.
+7) Must write blocks for ALL items in the slave list. Missing any will significantly degrade quality.
+
+[Slave Instruction Guide]
+0. Persona: Specify the model's exact role.
+1. Instruction: Instruct clearly with specific verbs.
+2. Context: Provide sufficient background info.
+3. Input Data: Provide data to process accurately.
+4. Output Format: Specify desired result format concretely.
+- Specify role/goal/output format/constraints per model characteristics.
+- No duplicate questions, distribute different perspectives/strategies.
+- Configure to respond in the user's primary language.`,
+        phase3: `Below are the responses from the slave bots according to your instructions.
+Format: [Model Name(ID) Response: Content...]
+
+[User's Original Goal] - Recall carefully
+{{goal}}
+
+[Slave Response Data]
+{{responses}}
+
+[Final Instruction]
+Parse and synthesize the above responses, perform fact-checking, verification, and problem analysis, then present the optimal solution that meets the user's original goal.`,
+    },
+
+    // === Brain Flow Modal ===
+    brainFlowModal: {
+        title: '🧠 Brain Flow',
+        subtitle: 'Main Brain orchestrates {{count}} slave bots',
+        goalLabel: 'Enter your goal',
+        goalPlaceholder: 'e.g., Analyze this data, derive insights, and create an execution plan...',
+        tip: 'Tip: Press Ctrl+Enter (or ⌘+Enter) to execute immediately',
+        startButton: 'Start Brain Flow',
+        errorNoMainBrain: 'Please designate a Main Brain first.',
+        errorNoSlaves: 'No slave bots. Please add at least one model.',
+    },
 };
