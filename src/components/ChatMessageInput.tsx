@@ -7,6 +7,8 @@ import { clsx } from 'clsx';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { useTranslation } from 'react-i18next';
 import { BrainFlowModal } from './BrainFlowModal';
+import { BrainFlowProgress } from './BrainFlowProgress';
+import { ChainOrchestrator } from '../services/chain-orchestrator';
 
 interface ChatMessageInputProps {
   activeModels: ActiveModel[];
@@ -32,6 +34,11 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
   const [hasConsented, setHasConsented] = usePersistentState<boolean>('md_auto_consent', false);
   const [lastActionStatus, setLastActionStatus] = useState<ActionStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
+
+  // Brain Flow State
+  const [brainFlowPhase, setBrainFlowPhase] = useState<1 | 2 | 3 | 0>(0);
+  const [bfWaitingModels, setBfWaitingModels] = useState<string[]>([]);
+  const [bfCompletedModels, setBfCompletedModels] = useState<string[]>([]);
 
   // Handle external text injection (e.g., from Prompt Library)
   useEffect(() => {
@@ -302,7 +309,11 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
     }
 
     // Dynamic import to avoid circular dependencies or load time issues
-    const { ChainOrchestrator } = await import('../services/chain-orchestrator');
+    // const { ChainOrchestrator } = await import('../services/chain-orchestrator');
+
+    setBrainFlowPhase(1);
+    setBfWaitingModels([]);
+    setBfCompletedModels([]);
 
     ChainOrchestrator.getInstance().runBrainFlow({
       mainBrain,
@@ -315,24 +326,38 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       callbacks: {
         onPhaseStart: (phase) => {
           console.log(`[BrainFlow] Starting Phase ${phase}`);
-          setLastActionStatus('sent'); // Just to show some activity
+          setBrainFlowPhase(phase);
+          setLastActionStatus('sent');
+          if (phase === 2) {
+            setBfWaitingModels(slaves.map(s => s.modelId));
+            setBfCompletedModels([]);
+          }
         },
         onModelStart: (modelId) => {
           onStatusUpdate?.(modelId, 'sending');
         },
         onModelUpdate: (_modelId, _text) => {
-          // Optional: Stream text to UI if we had a place for it
+          // Optional: Stream text
         },
         onModelComplete: (modelId, _text) => {
           onStatusUpdate?.(modelId, 'success');
+          setBfWaitingModels(prev => prev.filter(id => id !== modelId));
+          setBfCompletedModels(prev => [...prev, modelId]);
           setTimeout(() => onStatusUpdate?.(modelId, 'idle'), 2000);
         },
         onError: (err) => {
           setErrorMessage(err.message);
           setLastActionStatus('error');
+          setBrainFlowPhase(0); // Reset on error
         }
       }
+    }).finally(() => {
+      setBrainFlowPhase(0);
     });
+  };
+
+  const handleSkipBrainFlow = () => {
+    ChainOrchestrator.getInstance().skipCurrentPhase();
   };
 
   return (
@@ -342,6 +367,13 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         onClose={() => setIsBrainFlowOpen(false)}
         onStart={handleBrainFlowStart}
         slaveCount={activeModels.length - (mainBrainId ? 1 : 0)}
+      />
+
+      <BrainFlowProgress
+        phase={brainFlowPhase as any}
+        waitingModels={bfWaitingModels}
+        completedModels={bfCompletedModels}
+        onSkip={handleSkipBrainFlow}
       />
 
       {/* Risk Consent Modal */}

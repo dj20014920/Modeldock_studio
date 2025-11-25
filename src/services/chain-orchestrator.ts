@@ -23,6 +23,7 @@ interface BrainFlowConfig {
 export class ChainOrchestrator {
     private static instance: ChainOrchestrator;
     private activeListeners: Map<string, (e: MessageEvent) => void> = new Map();
+    private pendingRequests: Map<string, { resolve: (value: string) => void, cleanup: () => void, getCurrentText: () => string }> = new Map();
 
     private constructor() { }
 
@@ -55,16 +56,32 @@ export class ChainOrchestrator {
             callbacks.onPhaseStart(2);
 
             // Parse the plan to find prompts for each slave
-            const slavePrompts = this.parseSlavePrompts(planResponse);
+            console.log('[BrainFlow] ===== PARSING PHASE =====');
+            console.log('[BrainFlow] Plan Response Length:', planResponse.length);
+            console.log('[BrainFlow] Slaves to process:', slaves.map(s => `${s.modelId} (${s.instanceId})`).join(', '));
+
+            const slavePrompts = this.parseSlavePrompts(planResponse, slaves);
+
+            console.log('[BrainFlow] ===== MATCHING RESULTS =====');
+            slaves.forEach(slave => {
+                const found = slavePrompts.get(slave.instanceId) || slavePrompts.get(slave.modelId);
+                console.log(`[BrainFlow] ${slave.modelId} (${slave.instanceId}): ${found ? 'FOUND ✓' : 'NOT FOUND ✗'}`);
+            });
 
             const slavePromises = slaves.map(async (slave) => {
-                const prompt = slavePrompts.get(slave.instanceId) || slavePrompts.get(slave.modelId);
+                // Try multiple matching strategies
+                let prompt = slavePrompts.get(slave.instanceId)
+                    || slavePrompts.get(slave.modelId)
+                    || slavePrompts.get(`${slave.modelId}-${slave.instanceId.split('-')[1]}`);
+
                 if (!prompt) {
-                    console.warn(`[BrainFlow] No prompt found for slave ${slave.modelId}`);
-                    return { slave, response: '(No instruction provided by Main Brain)' };
+                    console.error(`[BrainFlow] ❌ CRITICAL: No prompt found for ${slave.modelId} (${slave.instanceId})`);
+                    console.error(`[BrainFlow] Available keys:`, Array.from(slavePrompts.keys()));
+                    return { slave, response: '(Error: No instruction provided by Main Brain)' };
                 }
 
                 try {
+                    console.log(`[BrainFlow] ✓ Sending to ${slave.modelId}:`, prompt.substring(0, 100) + '...');
                     const response = await this.sendMessageToModel(slave, prompt, callbacks);
                     return { slave, response };
                 } catch (err: any) {
@@ -98,7 +115,101 @@ export class ChainOrchestrator {
         }
     }
 
+    public skipCurrentPhase() {
+        console.log('[BrainFlow] Skipping current phase...');
+        this.pendingRequests.forEach((request, requestId) => {
+            console.log(`[BrainFlow] Forcing completion for request ${requestId}`);
+            const text = request.getCurrentText();
+            request.resolve(text);
+            request.cleanup();
+        });
+        this.pendingRequests.clear();
+    }
+
     private async sendMessageToModel(
+        model: ActiveModel,
+        text: string,
+        callbacks: BrainFlowCallbacks
+    ): Promise<string> {
+        // Branch: Perplexity uses API service, others use iframe
+        if (model.modelId === 'perplexity') {
+            return this.sendToPerplexity(text, callbacks);
+        } else {
+            return this.sendToIframe(model, text, callbacks);
+        }
+    }
+
+    private async sendToPerplexity(
+        text: string,
+        callbacks: BrainFlowCallbacks
+    ): Promise<string> {
+        const { perplexityService } = await import('./perplexity-service');
+
+        const requestId = `bf-perplexity-${Date.now()}`;
+        callbacks.onModelStart('perplexity');
+
+        return new Promise((resolve) => {
+            let lastResponse = '';
+            let unsubscribe: (() => void) | null = null;
+
+            const cleanup = () => {
+                if (unsubscribe) {
+                    unsubscribe();
+                    unsubscribe = null;
+                }
+                this.pendingRequests.delete(requestId);
+            };
+
+            // Subscribe to Perplexity state changes
+            unsubscribe = perplexityService.subscribe((state) => {
+                // Update on streaming
+                if (state.isStreaming && state.messages.length > 0) {
+                    const lastMsg = state.messages[state.messages.length - 1];
+                    if (lastMsg.role === 'assistant' && lastMsg.content) {
+                        lastResponse = lastMsg.content;
+                        callbacks.onModelUpdate('perplexity', lastResponse);
+                    }
+                }
+
+                // Complete on done
+                if (!state.isStreaming && lastResponse) {
+                    callbacks.onModelComplete('perplexity', lastResponse);
+                    cleanup();
+                    resolve(lastResponse);
+                }
+
+                // Handle errors
+                if (state.error) {
+                    console.error('[BrainFlow] Perplexity error:', state.error);
+                    callbacks.onModelComplete('perplexity', lastResponse || `Error: ${state.error}`);
+                    cleanup();
+                    resolve(lastResponse || `Error: ${state.error}`);
+                }
+            });
+
+            // Store for skip functionality
+            this.pendingRequests.set(requestId, {
+                resolve: (text: string) => {
+                    cleanup();
+                    resolve(text);
+                },
+                cleanup,
+                getCurrentText: () => lastResponse
+            });
+
+            // Send message
+            try {
+                perplexityService.sendMessage(text);
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+                callbacks.onModelComplete('perplexity', `Error: ${errorMsg}`);
+                cleanup();
+                resolve(`Error: ${errorMsg}`);
+            }
+        });
+    }
+
+    private async sendToIframe(
         model: ActiveModel,
         text: string,
         callbacks: BrainFlowCallbacks
@@ -113,7 +224,7 @@ export class ChainOrchestrator {
 
         callbacks.onModelStart(model.modelId);
 
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             let responseText = '';
 
             // Listener for this specific request
@@ -124,6 +235,8 @@ export class ChainOrchestrator {
                 // Handle heartbeat (Reset timeout)
                 if (data.type === 'MODEL_DOCK_HEARTBEAT' && data.payload?.requestId === requestId) {
                     lastActivityTime = Date.now();
+                    // Optional: Log heartbeat for debugging
+                    // console.log(`[BrainFlow] Heartbeat from ${model.modelId}: ${data.payload.status}`);
                 }
 
                 // Handle chunks
@@ -135,6 +248,7 @@ export class ChainOrchestrator {
 
                 // Handle completion
                 if (data.type === 'MODEL_DOCK_RESPONSE_COMPLETE' && data.payload?.requestId === requestId) {
+                    console.log(`[BrainFlow] Completion signal received from ${model.modelId}`);
                     responseText = data.payload.text;
                     callbacks.onModelComplete(model.modelId, responseText);
                     cleanup();
@@ -145,8 +259,19 @@ export class ChainOrchestrator {
             const cleanup = () => {
                 window.removeEventListener('message', listener);
                 this.activeListeners.delete(requestId);
+                this.pendingRequests.delete(requestId);
                 clearInterval(statusInterval);
             };
+
+            // Store request control
+            this.pendingRequests.set(requestId, {
+                resolve: (text) => {
+                    callbacks.onModelComplete(model.modelId, text);
+                    resolve(text);
+                },
+                cleanup,
+                getCurrentText: () => responseText
+            });
 
             window.addEventListener('message', listener);
             this.activeListeners.set(requestId, listener);
@@ -180,11 +305,10 @@ export class ChainOrchestrator {
                     console.log(`[BrainFlow] Waiting for ${model.modelId}... (Last activity: ${Math.round(elapsed / 1000)}s ago)`);
                 }
 
-                // Crash detection: If absolutely no signal (chunk or heartbeat) for 45 seconds, assume dead
-                if (elapsed > 45000) {
-                    console.warn(`[BrainFlow] No signal from ${model.modelId} for 45s. Assuming crash or network error.`);
-                    cleanup();
-                    reject(new Error(`Timeout: No signal from ${model.modelId} for 45s`));
+                // NO TIMEOUT - Infinite wait until completion or manual skip
+                // We only warn if it's been a very long time without activity, but we don't reject.
+                if (elapsed > 120000 && (Date.now() % 30000) < 1000) {
+                    console.warn(`[BrainFlow] No signal from ${model.modelId} for over 2 minutes. Check connection.`);
                 }
             }, 1000);
         });
@@ -211,18 +335,67 @@ export class ChainOrchestrator {
         return null;
     }
 
-    private parseSlavePrompts(planText: string): Map<string, string> {
+    private parseSlavePrompts(planText: string, slaves: ActiveModel[]): Map<string, string> {
         const prompts = new Map<string, string>();
 
-        // Regex to find [SLAVE:id] ... [/SLAVE]
-        // Supports [SLAVE:modelId] and [SLAVE:modelId-instanceId]
-        const regex = /\[SLAVE:([a-zA-Z0-9-]+)\]([\s\S]*?)\[\/SLAVE\]/g;
-        let match;
+        console.log('[BrainFlow] ===== RAW PLAN TEXT (First 500 chars) =====');
+        console.log(planText.substring(0, 500));
+        console.log('[BrainFlow] ===== FULL LENGTH:', planText.length, 'chars =====');
 
-        while ((match = regex.exec(planText)) !== null) {
-            const id = match[1].trim();
-            const content = match[2].trim();
+        // Strategy 1: Split-based parsing
+        const parts = planText.split(/\[SLAVE:\s*/i);
+        console.log('[BrainFlow] Split into', parts.length, 'parts');
+
+        for (let i = 1; i < parts.length; i++) {
+            const part = parts[i];
+            console.log(`[BrainFlow] Processing part ${i}:`, part.substring(0, 50));
+
+            const closingBracketIndex = part.indexOf(']');
+            if (closingBracketIndex === -1) {
+                console.warn(`[BrainFlow] No closing bracket in part ${i}`);
+                continue;
+            }
+
+            let id = part.substring(0, closingBracketIndex).trim();
+            let content = part.substring(closingBracketIndex + 1);
+
+            console.log(`[BrainFlow] Extracted ID: "${id}"`);
+
+            // Remove closing tag if present
+            const closingTagRegex = /\[\/\s*SLAVE\s*\]/i;
+            const closingMatch = closingTagRegex.exec(content);
+            if (closingMatch) {
+                content = content.substring(0, closingMatch.index);
+                console.log(`[BrainFlow] Found closing tag at position ${closingMatch.index}`);
+            }
+
+            content = content.trim();
+
+            if (!id || !content) {
+                console.warn(`[BrainFlow] Skipping - ID: "${id}", Content Length: ${content.length}`);
+                continue;
+            }
+
+            // Store with original ID
             prompts.set(id, content);
+            console.log(`[BrainFlow] ✓ Stored prompt for "${id}" (${content.length} chars)`);
+
+            // Also try to map by modelId if ID looks like instanceId
+            const matchingSlave = slaves.find(s => s.instanceId === id || s.modelId === id);
+            if (matchingSlave && matchingSlave.instanceId !== id) {
+                prompts.set(matchingSlave.modelId, content);
+                console.log(`[BrainFlow] ✓ Also mapped to modelId: "${matchingSlave.modelId}"`);
+            }
+        }
+
+        console.log('[BrainFlow] ===== PARSING COMPLETE =====');
+        console.log('[BrainFlow] Total prompts parsed:', prompts.size);
+        console.log('[BrainFlow] Keys:', Array.from(prompts.keys()));
+
+        if (prompts.size === 0) {
+            console.error('[BrainFlow] ❌ CRITICAL: Zero prompts parsed!');
+            console.error('[BrainFlow] Full plan text:');
+            console.error(planText);
         }
 
         return prompts;

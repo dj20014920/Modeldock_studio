@@ -400,37 +400,83 @@
     {
       hosts: ['chatgpt.com', 'chat.openai.com'],
       responseSelectors: ['div[data-message-author-role="assistant"]:last-of-type', 'div[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"]):last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button[data-testid="stop-button"]']
+      stopSelectors: ['button[aria-label*="Stop"]', 'button[data-testid="stop-button"]'],
+      inputSelector: 'textarea[data-id="conversation-input"], textarea[data-testid="prompt-textarea"]',
+      submitSelector: 'button[data-testid="send-button"]'
     },
     {
       hosts: ['claude.ai'],
-      responseSelectors: ['div[data-testid*="message-content"]:last-of-type', 'div.font-claude-message:last-of-type', '.claude-response:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[data-icon="stop"])']
+      responseSelectors: [
+        'div[data-testid="message-content"]:last-of-type',
+        'div.font-claude-message:last-of-type',
+        '.claude-response:last-of-type',
+        'div[data-is-streaming="false"]:last-of-type' // New potential selector
+      ],
+      stopSelectors: ['button[aria-label*="Stop"]', 'button[aria-label*="중지"]'],
+      inputSelector: 'div[contenteditable="true"][data-placeholder*="Reply"]',
+      submitSelector: 'button[aria-label*="Send message"]'
     },
     {
       hosts: ['gemini.google.com', 'aistudio.google.com'],
-      responseSelectors: ['model-response:last-of-type', 'message-content[data-author="model"]:last-of-type', 'div[data-test-id="model-response"]:last-of-type', '.ms-text-chunk:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'div[role="button"][aria-label*="Stop"]', '.stop-button', 'button[aria-label*="Cancel"]']
+      responseSelectors: [
+        'message-content:last-of-type',
+        'model-response:last-of-type',
+        'div[class*="response-container"]:last-of-type',
+        '.ms-text-chunk:last-of-type'
+      ],
+      stopSelectors: ['button[aria-label*="Stop"]', 'button[aria-label*="Pause"]', 'button:has(svg[data-icon="pause"])'],
+      inputSelector: 'div[contenteditable="true"][role="textbox"]',
+      submitSelector: 'button[aria-label="Send message"]'
     },
     {
       hosts: ['perplexity.ai', 'www.perplexity.ai'],
       responseSelectors: ['div.prose:last-of-type', 'div[dir="auto"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[data-icon="pause"])', 'button:has(svg[data-icon="stop"])']
+      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[data-icon="pause"])', 'button:has(svg[data-icon="stop"])'],
+      inputSelector: 'textarea[placeholder*="Ask anything"]',
+      submitSelector: 'button[type="submit"]'
     },
     {
-      hosts: ['grok.com'],
-      responseSelectors: ['div.prose:last-of-type', 'div[class*="message-content"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      hosts: ['grok.com', 'x.com'],
+      responseSelectors: [
+        // Try specific Grok/X patterns first
+        'div.prose:last-of-type',
+        'div[class*="message-content"]:last-of-type',
+        'div[class*="bot-message"]:last-of-type',
+        'div[class*="response"]:last-of-type',
+        'div[class*="assistant"]:last-of-type',
+        'div[data-testid*="message"]:last-of-type',
+        'div[role="article"]:last-of-type',
+        // Generic chat message patterns
+        'div[class*="markdown"]:last-of-type',
+        'div[class*="text"]:last-of-type',
+        'p:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="stop"]',
+        'button:has(svg[data-icon="stop"])',
+        'div[role="button"][aria-label*="Stop"]'
+      ],
+      inputSelector: 'div[role="textbox"][contenteditable="true"]',
+      submitSelector: 'button[aria-label="Send"]'
     },
     {
       hosts: ['chat.qwen.ai'],
-      responseSelectors: ['div.message-content:last-of-type', 'div[class*="markdown"]:last-of-type'],
-      stopSelectors: ['button[class*="stop-btn"]', 'button:has(svg[class*="stop"])']
+      responseSelectors: [
+        'div[class*="ChatItem_content"]:last-of-type',
+        'div[class*="markdown"]:last-of-type',
+        'div.markdown-body:last-of-type'
+      ],
+      stopSelectors: ['button[class*="stop-btn"]', 'button:has(svg[class*="stop"])'],
+      inputSelector: 'textarea',
+      submitSelector: 'button[type="submit"]'
     },
     {
       hosts: ['chat.mistral.ai'],
       responseSelectors: ['div.prose:last-of-type', 'div[class*="message-content"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[class*="stop"])']
+      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[class*="stop"])'],
+      inputSelector: 'textarea[placeholder*="Message"]',
+      submitSelector: 'button[type="submit"]'
     },
     {
       hosts: ['chat.deepseek.com'],
@@ -528,7 +574,9 @@
     const config = getResponseConfig();
     let lastText = '';
     let lastChangeTime = Date.now();
+    let monitorStartTime = Date.now();
     let isComplete = false;
+    let hasReceivedFirstResponse = false;
     let heartbeatInterval;
     let fallbackCheckCount = 0;
 
@@ -543,40 +591,157 @@
 
         if (elements.length > 0) {
           const lastElement = elements[elements.length - 1];
-          return lastElement.innerText || lastElement.textContent || '';
+
+          // Enhanced text extraction with multiple fallbacks
+          // Strategy 1: textContent (gets ALL text including hidden)
+          let text = lastElement.textContent || '';
+
+          // Strategy 2: If textContent failed, try innerText
+          if (!text || text.trim().length === 0) {
+            text = lastElement.innerText || '';
+          }
+
+          // Strategy 3: If both failed, recursively collect from all text nodes
+          if (!text || text.trim().length === 0) {
+            text = extractAllTextNodes(lastElement);
+          }
+
+          // Clean up excessive whitespace while preserving structure
+          return text.trim();
         }
       }
       return '';
     };
 
+    // Recursive text extraction from all text nodes (ultimate fallback)
+    const extractAllTextNodes = (element) => {
+      let text = '';
+      const walker = document.createTreeWalker(
+        element,
+        NodeFilter.SHOW_TEXT,
+        null
+      );
+
+      let node;
+      while (node = walker.nextNode()) {
+        text += node.textContent;
+      }
+
+      return text;
+    };
+
     const checkIsRunning = () => {
-      return config.stopSelectors.some(sel => {
+      // Strategy 1: Check for visible stop button (most reliable)
+      const hasStopButton = config.stopSelectors.some(sel => {
         const el = document.querySelector(sel);
         return el && isElementVisible(el);
       });
+
+      if (hasStopButton) return true;
+
+      // Strategy 2: Check if input/submit is disabled (model still responding)
+      // When model is generating, input is usually disabled
+      const inputDisabled = config.inputSelector && (() => {
+        const input = document.querySelector(config.inputSelector);
+        return input && (input.disabled || input.getAttribute('disabled') !== null);
+      })();
+
+      const submitDisabled = config.submitSelector && (() => {
+        const submit = document.querySelector(config.submitSelector);
+        return submit && (submit.disabled || submit.getAttribute('disabled') !== null || submit.getAttribute('aria-disabled') === 'true');
+      })();
+
+      if (inputDisabled || submitDisabled) return true;
+
+      return false;
     };
 
-    // Send heartbeat every 2 seconds regardless of state
+    // === HYBRID MONITORING SYSTEM ===
+    // 1. MutationObserver: Immediate text change detection (real-time)
+    // 2. heartbeatInterval: Periodic checks + heartbeat (every 2s)
+    // 3. Safety timeout: Prevent infinite wait (max 3 minutes)
+
+    const observer = new MutationObserver(() => {
+      if (isComplete) return;
+
+      const currentText = getResponseText();
+      if (currentText && currentText !== lastText) {
+        lastText = currentText;
+        lastChangeTime = Date.now();
+        hasReceivedFirstResponse = true;
+
+        window.parent.postMessage({
+          type: 'MODEL_DOCK_RESPONSE_CHUNK',
+          payload: { requestId, text: currentText, host: window.location.host }
+        }, '*');
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    // Periodic check + heartbeat (every 2s)
     heartbeatInterval = setInterval(() => {
       if (isComplete) { clearInterval(heartbeatInterval); return; }
 
+      const currentText = getResponseText();
       const isRunning = checkIsRunning();
-      // If we see a stop button, we are definitely running
-      if (isRunning) {
+      const timeSinceStart = Date.now() - monitorStartTime;
+      const timeSinceChange = Date.now() - lastChangeTime;
+
+      // Update if MutationObserver missed anything
+      if (currentText && currentText !== lastText) {
+        lastText = currentText;
         lastChangeTime = Date.now();
-        fallbackCheckCount = 0; // Reset fallback counter
-      } else {
-        fallbackCheckCount++;
+        hasReceivedFirstResponse = true;
+
+        window.parent.postMessage({
+          type: 'MODEL_DOCK_RESPONSE_CHUNK',
+          payload: { requestId, text: currentText, host: window.location.host }
+        }, '*');
       }
 
-      // Force finish if silence > 5s AND not running (Double check)
-      const timeSinceChange = Date.now() - lastChangeTime;
-      if (!isRunning && timeSinceChange > 5000 && lastText.length > 0) {
-        console.log('[ModelDock] Force finishing due to silence:', requestId);
-        finish();
+      // Reset timer if actively running
+      if (isRunning) {
+        lastChangeTime = Date.now();
+      }
+
+      // TWO-PHASE COMPLETION DETECTION
+      // Phase 1: Wait for text stability (10 seconds)
+      // Phase 2: Verify UI signals (stop button + input state)
+
+      // Must satisfy ALL conditions:
+      // 1. Model has sent at least one response chunk
+      // 2. Text stable for 10 seconds (no new chunks)
+      // 3. THEN verify: NOT running (no stop button AND input/submit enabled)
+      // 4. Has actual content
+
+      const isStable10s = timeSinceChange > 10000;
+
+      if (hasReceivedFirstResponse &&
+        isStable10s &&
+        lastText.length > 0) {
+
+        // Double-check UI state before completing
+        if (!isRunning) {
+          console.log('[ModelDock] Completion verified (10s stable + UI ready):', requestId);
+          finish();
+          return;
+        } else {
+          // Still running despite 10s stability - reset timer
+          console.log('[ModelDock] 10s stable but still running, continuing...:', requestId);
+          lastChangeTime = Date.now();
+        }
+      }
+
+      // 3. Error timeout (no response after 3 minutes)
+      // Prevents infinite wait on errors
+      if (timeSinceStart > 180000) {
+        console.warn('[ModelDock] Timeout: No response after 3 minutes:', requestId);
+        finish(); // Complete with whatever we have (might be empty)
         return;
       }
 
+      // Send heartbeat
       window.parent.postMessage({
         type: 'MODEL_DOCK_HEARTBEAT',
         payload: {
@@ -588,57 +753,10 @@
       }, '*');
     }, 2000);
 
-    const observer = new MutationObserver(() => {
-      if (isComplete) return;
-      const currentText = getResponseText();
-
-      if (currentText && currentText !== lastText) {
-        lastText = currentText;
-        lastChangeTime = Date.now();
-
-        window.parent.postMessage({
-          type: 'MODEL_DOCK_RESPONSE_CHUNK',
-          payload: { requestId, text: currentText, host: window.location.host }
-        }, '*');
-      }
-
-      // Check for completion
-      const timeSinceChange = Date.now() - lastChangeTime;
-      const isRunning = checkIsRunning();
-
-      // If text hasn't changed for 3s AND no stop button is visible
-      if (timeSinceChange > 3000 && !isRunning && lastText.length > 0) {
-        finish();
-      }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-
-    // Backup timer for long silence or missed mutation
-    const checkInterval = setInterval(() => {
-      if (isComplete) { clearInterval(checkInterval); return; }
-      const timeSinceChange = Date.now() - lastChangeTime;
-      const isRunning = checkIsRunning();
-
-      // If running, keep alive
-      if (isRunning) {
-        lastChangeTime = Date.now(); // Reset timer
-        return;
-      }
-
-      // If not running and silence > 5s (increased from 4s), finish
-      if (timeSinceChange > 5000 && !isRunning && lastText.length > 0) {
-        finish();
-      }
-
-      // Safety: If we have text, no stop button, and it's been > 10s since start but < 5s since change, just wait.
-    }, 1000);
-
     function finish() {
       if (isComplete) return;
       isComplete = true;
       observer.disconnect();
-      clearInterval(checkInterval);
       clearInterval(heartbeatInterval);
       console.log('[ModelDock] Response monitoring complete');
       window.parent.postMessage({
