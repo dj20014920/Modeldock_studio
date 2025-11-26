@@ -131,12 +131,15 @@ export class ChainOrchestrator {
         text: string,
         callbacks: BrainFlowCallbacks
     ): Promise<string> {
-        // Branch: Perplexity uses API service, others use iframe
+        // 🔧 FIX: Perplexity 분기를 최상단에서 명확히 처리
+        // Perplexity는 API 방식을 사용하므로 iframe을 찾지 않음
         if (model.modelId === 'perplexity') {
+            console.log('[BrainFlow] Perplexity detected - using API mode');
             return this.sendToPerplexity(text, callbacks);
-        } else {
-            return this.sendToIframe(model, text, callbacks);
         }
+        
+        // 다른 모델들은 iframe 방식 사용
+        return this.sendToIframe(model, text, callbacks);
     }
 
     private async sendToPerplexity(

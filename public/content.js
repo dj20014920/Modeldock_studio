@@ -395,135 +395,475 @@
   }
 
   // --- Response Monitoring (Added for Brain Flow) ---
+  // === RESPONSE_CONFIGS v3.0 - 정밀 셀렉터 (2025 대폭 업데이트) ===
+  // 🔧 핵심 원칙: 봇 응답만 선택, 사용자 메시지 제외, 안정화 시간 증가
   const RESPONSE_CONFIGS = [
-    // Major Platforms
+    // === ChatGPT ===
     {
       hosts: ['chatgpt.com', 'chat.openai.com'],
-      responseSelectors: ['div[data-message-author-role="assistant"]:last-of-type', 'div[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"]):last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button[data-testid="stop-button"]'],
+      responseSelectors: [
+        // 봇 응답만 선택 (data-message-author-role="assistant")
+        'div[data-message-author-role="assistant"]:last-of-type .markdown',
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"]):last-of-type .markdown'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[data-testid="stop-button"]',
+        'button[aria-label*="중지"]'
+      ],
       inputSelector: 'textarea[data-id="conversation-input"], textarea[data-testid="prompt-textarea"]',
-      submitSelector: 'button[data-testid="send-button"]'
+      submitSelector: 'button[data-testid="send-button"]',
+      stabilizationTime: 12000
     },
+    // === Claude ===
     {
       hosts: ['claude.ai'],
       responseSelectors: [
+        // 🔧 Claude 봇 응답 전용 셀렉터 (더 정밀하게)
         'div[data-testid="message-content"]:last-of-type',
         'div.font-claude-message:last-of-type',
-        '.claude-response:last-of-type',
-        'div[data-is-streaming="false"]:last-of-type' // New potential selector
+        'div[data-is-streaming="false"]:last-of-type .prose',
+        // Claude 특유의 응답 영역
+        'div[class*="prose"][class*="break-words"]:last-of-type'
       ],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button[aria-label*="중지"]'],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="중지"]',
+        'button[aria-label*="Cancel"]',
+        'button:has(svg[class*="stop"])',
+        // 🔧 Claude 전용: 응답 생성 중 표시되는 버튼
+        'button[data-testid="stop-button"]'
+      ],
       inputSelector: 'div[contenteditable="true"][data-placeholder*="Reply"]',
-      submitSelector: 'button[aria-label*="Send message"]'
+      submitSelector: 'button[aria-label*="Send message"], button[aria-label*="메시지 보내기"]',
+      // 🔧 Claude 전용: 더 긴 안정화 시간 (20초 -> 25초)
+      stabilizationTime: 25000
     },
+    // === Gemini / AI Studio ===
     {
       hosts: ['gemini.google.com', 'aistudio.google.com'],
       responseSelectors: [
+        // AI Studio/Gemini 전용 (Shadow DOM 포함)
         'message-content:last-of-type',
         'model-response:last-of-type',
+        'div[data-testid="model-response"]:last-of-type',
+        'div[data-role="assistant"]:last-of-type',
+        // 구조 기반
+        'div[data-role="user"]:last-of-type ~ div[data-role="assistant"]',
+        'div[class*="user-message"]:last-of-type ~ div[class*="model-message"]',
+        // 클래스 기반
         'div[class*="response-container"]:last-of-type',
-        '.ms-text-chunk:last-of-type'
+        'div[class*="model-response"]:last-of-type',
+        'div[class*="assistant-message"]:last-of-type',
+        '.ms-text-chunk:last-of-type',
+        // Markdown 영역 (부모 확인)
+        'div[data-role="assistant"] div.markdown-body:last-of-type',
+        'div[class*="model"] div[class*="content"]:last-of-type',
+        'div.markdown-body:last-of-type'
       ],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button[aria-label*="Pause"]', 'button:has(svg[data-icon="pause"])'],
-      inputSelector: 'div[contenteditable="true"][role="textbox"]',
-      submitSelector: 'button[aria-label="Send message"]'
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Pause"]',
+        'button[aria-label*="중지"]',
+        'button:has(svg[data-icon="pause"])',
+        'button:has(svg[data-icon="stop"])'
+      ],
+      inputSelector: 'div[contenteditable="true"][role="textbox"], textarea[placeholder*="Enter a prompt"]',
+      submitSelector: 'button[aria-label="Send message"], button[aria-label="Build"], button[aria-label="Send"]',
+      excludeUserMessage: true,
+      stabilizationTime: 18000
     },
+    // === Perplexity ===
     {
       hosts: ['perplexity.ai', 'www.perplexity.ai'],
-      responseSelectors: ['div.prose:last-of-type', 'div[dir="auto"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[data-icon="pause"])', 'button:has(svg[data-icon="stop"])'],
+      responseSelectors: [
+        'div.prose:last-of-type',
+        'div[dir="auto"]:last-of-type',
+        'div[class*="markdown"]:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button:has(svg[data-icon="pause"])',
+        'button:has(svg[data-icon="stop"])'
+      ],
       inputSelector: 'textarea[placeholder*="Ask anything"]',
-      submitSelector: 'button[type="submit"]'
+      submitSelector: 'button[type="submit"]',
+      stabilizationTime: 15000
     },
+    // === Grok (X/Twitter AI) ===
+    // 🔧 핵심 수정: 봇 응답만 선택, 프롬프트 파싱 오류 해결
     {
       hosts: ['grok.com', 'x.com'],
       responseSelectors: [
-        // Try specific Grok/X patterns first
-        'div.prose:last-of-type',
-        'div[class*="message-content"]:last-of-type',
-        'div[class*="bot-message"]:last-of-type',
-        'div[class*="response"]:last-of-type',
-        'div[class*="assistant"]:last-of-type',
-        'div[data-testid*="message"]:last-of-type',
-        'div[role="article"]:last-of-type',
-        // Generic chat message patterns
-        'div[class*="markdown"]:last-of-type',
-        'div[class*="text"]:last-of-type',
-        'p:last-of-type'
+        // 🔧 Grok 전용: 더 정밀한 봇 응답 셀렉터
+        // Strategy 1: 봇 메시지에만 붙는 data 속성 활용
+        'div[data-testid="conversation-turn"]:has(div[data-message-author-role="assistant"]):last-of-type',
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        'div[data-testid="grok-response"]:last-of-type',
+        // Strategy 2: 구조 기반 - 사용자 메시지 이후의 다음 div
+        'div[data-message-author-role="user"]:last-of-type ~ div',
+        // Strategy 3: 클래스 기반
+        'div[class*="assistant-message"]:last-of-type',
+        'div[class*="grok-message"]:last-of-type',
+        // Fallback: prose 영역 중 봇 것만 (부모 요소 확인 강화)
+        'div[data-message-author-role="assistant"] div.prose:last-of-type',
+        'div[class*="assistant"] div.prose:last-of-type'
       ],
       stopSelectors: [
         'button[aria-label*="Stop"]',
         'button[aria-label*="stop"]',
         'button:has(svg[data-icon="stop"])',
-        'div[role="button"][aria-label*="Stop"]'
+        'div[role="button"][aria-label*="Stop"]',
+        // Grok 전용 스톱 버튼
+        'button[data-testid="stop-generation"]'
       ],
       inputSelector: 'div[role="textbox"][contenteditable="true"]',
-      submitSelector: 'button[aria-label="Send"]'
+      submitSelector: 'button[aria-label="Send"]',
+      // 🔧 Grok 전용 설정: 사용자 메시지 제외 검증 활성화
+      excludeUserMessage: true,
+      stabilizationTime: 18000
     },
+    // === Qwen ===
+    // 🔧 핵심 수정: stabilizationTime 대폭 증가 (토큰 간격이 긴 경우 대응)
     {
       hosts: ['chat.qwen.ai'],
       responseSelectors: [
         'div[class*="ChatItem_content"]:last-of-type',
         'div[class*="markdown"]:last-of-type',
-        'div.markdown-body:last-of-type'
+        'div.markdown-body:last-of-type',
+        // 봇 응답 전용
+        'div[class*="assistant"]:last-of-type',
+        'div[class*="bot"]:last-of-type',
+        // Qwen 특유의 응답 영역
+        'div[class*="message-content"]:last-of-type'
       ],
-      stopSelectors: ['button[class*="stop-btn"]', 'button:has(svg[class*="stop"])'],
+      stopSelectors: [
+        'button[class*="stop-btn"]',
+        'button:has(svg[class*="stop"])',
+        'button[aria-label*="Stop"]',
+        // Qwen 전용: 생성 중지 버튼
+        'div[class*="stop-generating"]'
+      ],
       inputSelector: 'textarea',
-      submitSelector: 'button[type="submit"]'
+      submitSelector: 'button[type="submit"]',
+      // 🔧 Qwen 전용: 토큰 간격이 매우 긴 경우를 위해 40초로 증가
+      stabilizationTime: 40000,
+      excludeUserMessage: true
     },
+    // === Mistral ===
+    // 🔧 수정: 더 정밀한 셀렉터
     {
       hosts: ['chat.mistral.ai'],
-      responseSelectors: ['div.prose:last-of-type', 'div[class*="message-content"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button:has(svg[class*="stop"])'],
-      inputSelector: 'textarea[placeholder*="Message"]',
-      submitSelector: 'button[type="submit"]'
+      responseSelectors: [
+        // Mistral 전용 셀렉터 (data 속성 우선)
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        'div[data-role="assistant"]:last-of-type',
+        // 구조 기반
+        'div[data-message-author-role="user"]:last-of-type ~ div[data-message-author-role="assistant"]',
+        // 클래스 기반
+        'div[class*="assistant-message"]:last-of-type',
+        'div[class*="bot-message"]:last-of-type',
+        'div[class*="assistant-content"]:last-of-type',
+        // Prose/markdown 영역 (부모 확인)
+        'div[data-message-author-role="assistant"] div.prose:last-of-type',
+        'div[class*="assistant"] div[class*="message-content"]:last-of-type',
+        'div.prose:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="stop"]',
+        'button:has(svg[class*="stop"])',
+        'button[data-testid="stop-button"]'
+      ],
+      inputSelector: 'textarea[placeholder*="Message"], textarea',
+      submitSelector: 'button[type="submit"], button[aria-label="Send"]',
+      excludeUserMessage: true,
+      stabilizationTime: 18000
     },
+    // === DeepSeek ===
     {
       hosts: ['chat.deepseek.com'],
-      responseSelectors: ['div.ds-markdown:last-of-type', 'div[class*="message-content"]:last-of-type'],
-      stopSelectors: ['div[role="button"]:has(svg)', 'div[class*="stop"]']
+      responseSelectors: [
+        'div.ds-markdown:last-of-type',
+        'div[class*="message-content"]:last-of-type',
+        'div[class*="assistant"]:last-of-type'
+      ],
+      stopSelectors: [
+        'div[role="button"]:has(svg)',
+        'div[class*="stop"]',
+        'button[aria-label*="Stop"]'
+      ],
+      inputSelector: 'textarea',
+      submitSelector: 'button[type="submit"]',
+      stabilizationTime: 15000
     },
-    // Coding & Dev Platforms
+    // === GitHub Copilot ===
+    // 🔧 수정: 더 정밀한 셀렉터
     {
-      hosts: ['github.com/copilot'],
-      responseSelectors: ['div[class*="markdown-body"]:last-of-type', 'div[class*="conversation-message"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      hosts: ['github.com/copilot', 'copilot.github.com', 'github.com'],
+      responseSelectors: [
+        // GitHub Copilot 전용 (data 속성 우선)
+        'div[data-testid="copilot-response"]:last-of-type',
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        'div[data-role="assistant"]:last-of-type',
+        // 구조 기반
+        'div[data-message-author-role="user"]:last-of-type ~ div',
+        // 클래스 기반
+        'div[class*="copilot-message"]:last-of-type',
+        'div[class*="assistant-message"]:last-of-type',
+        'div[class*="bot-response"]:last-of-type',
+        // Markdown 영역 (부모 확인)
+        'div[data-message-author-role="assistant"] div[class*="markdown-body"]:last-of-type',
+        'div[class*="assistant"] div[class*="content"]:last-of-type',
+        'div[class*="markdown-body"]:last-of-type',
+        'div[class*="conversation-message"]:not([class*="user"]):last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]',
+        'button[data-testid="stop-button"]'
+      ],
+      inputSelector: 'textarea[class*="ChatInput"], textarea',
+      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+      excludeUserMessage: true,
+      stabilizationTime: 20000
     },
+    // === Replit ===
     {
       hosts: ['replit.com'],
-      responseSelectors: ['div[class*="markdown"]:last-of-type', 'div[class*="message-body"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      responseSelectors: [
+        'div[class*="markdown"]:last-of-type',
+        'div[class*="message-body"]:last-of-type',
+        'div[class*="assistant"]:last-of-type',
+        'div[class*="ai-response"]:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]'
+      ],
+      inputSelector: 'textarea, .cm-content',
+      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+      stabilizationTime: 20000
     },
+    // === v0 (Vercel) ===
+    // 🔧 수정: 조기 종료 방지를 위한 안정화 시간 증가
     {
       hosts: ['v0.dev'],
-      responseSelectors: ['div[data-testid="message"]:last-of-type', 'div.prose:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      responseSelectors: [
+        // v0 전용 셀렉터
+        'div[data-testid="message"]:last-of-type',
+        'div[data-testid="ai-message"]:last-of-type',
+        'div[class*="ai-message"]:last-of-type',
+        // 일반 prose
+        'div.prose:last-of-type',
+        'div[class*="assistant"]:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]',
+        'button:has(svg[class*="stop"])',
+        // v0 전용: 코드 생성 중지 버튼
+        'button[data-testid="stop-generation"]'
+      ],
+      inputSelector: 'div.tiptap.ProseMirror[contenteditable="true"]',
+      submitSelector: 'button[data-testid="prompt-form-send-button"]',
+      // 🔧 v0 전용: 코드 생성 시간이 길 수 있으므로 30초로 증가
+      stabilizationTime: 30000
     },
+    // === Lovable ===
+    // 🔧 수정: 더 정밀한 셀렉터
     {
       hosts: ['lovable.dev'],
-      responseSelectors: ['div[class*="message"]:last-of-type', 'div.prose:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      responseSelectors: [
+        // Lovable 전용 셀렉터 (data 속성 우선)
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        'div[data-role="assistant"]:last-of-type',
+        // 구조 기반
+        'div[data-message-author-role="user"]:last-of-type ~ div',
+        // 클래스 기반
+        'div[class*="ai-response"]:last-of-type',
+        'div[class*="assistant-message"]:last-of-type',
+        'div[class*="bot-message"]:last-of-type',
+        // Prose/markdown 영역 (부모 확인)
+        'div[data-message-author-role="assistant"] div.prose:last-of-type',
+        'div[class*="assistant"] div[class*="content"]:last-of-type',
+        'div.prose:last-of-type',
+        'div[class*="message"]:not([class*="user"]):last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]',
+        'button[data-testid="stop-button"]'
+      ],
+      inputSelector: 'textarea, div[contenteditable="true"]',
+      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+      excludeUserMessage: true,
+      // 🔧 Lovable: 코드 생성이 길 수 있음
+      stabilizationTime: 30000
     },
-    // Other Platforms
+    // === LM Arena ===
+    // 🔧 핵심 수정: 봇 응답만 선택
     {
       hosts: ['lmarena.ai'],
-      responseSelectors: ['div[class*="message"]:last-of-type', 'div.prose:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      responseSelectors: [
+        // 🔧 LM Arena 전용: 더 정밀한 봇 응답 셀렉터
+        // Strategy 1: data 속성 기반
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        'div[data-testid="model-response"]:last-of-type',
+        'div[data-role="assistant"]:last-of-type',
+        // Strategy 2: 구조 기반 - 사용자 메시지 이후의 다음 형제
+        'div[data-message-author-role="user"]:last-of-type ~ div[data-message-author-role="assistant"]',
+        'div[data-role="user"]:last-of-type ~ div[data-role="assistant"]',
+        // Strategy 3: 클래스 기반
+        'div[class*="assistant-message"]:last-of-type',
+        'div[class*="bot-message"]:last-of-type',
+        'div[class*="model-response"]:last-of-type',
+        // Fallback: prose/markdown 영역 (부모 확인 강화)
+        'div[data-message-author-role="assistant"] div.prose:last-of-type',
+        'div[data-role="assistant"] div[class*="content"]:last-of-type',
+        'div[class*="assistant"] div[class*="response-content"]:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]',
+        'button[data-testid="stop-button"]'
+      ],
+      inputSelector: 'textarea, #chat-input',
+      submitSelector: 'button.send-button, button[id="send-message-button"]',
+      // 🔧 사용자 메시지 제외 검증 활성화
+      excludeUserMessage: true,
+      stabilizationTime: 20000
     },
+    // === Kimi ===
     {
       hosts: ['kimi.moonshot.cn'],
-      responseSelectors: ['div[class*="markdown"]:last-of-type', 'div[class*="message"]:last-of-type'],
-      stopSelectors: ['button[class*="stop"]', 'div[class*="stop"]']
+      responseSelectors: [
+        'div[class*="markdown"]:last-of-type',
+        'div[class*="message"]:last-of-type',
+        'div[class*="assistant"]:last-of-type'
+      ],
+      stopSelectors: [
+        'button[class*="stop"]',
+        'div[class*="stop"]'
+      ],
+      inputSelector: 'div[contenteditable="true"], textarea',
+      submitSelector: 'button[class*="sendButton"], div[class*="sendButton"]',
+      stabilizationTime: 18000
     },
+    // === OpenRouter ===
+    // 🔧 수정: 더 정밀한 셀렉터
     {
       hosts: ['openrouter.ai'],
-      responseSelectors: ['div.prose:last-of-type', 'div[class*="message"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      responseSelectors: [
+        // OpenRouter 전용 (data 속성 우선)
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        'div[data-role="assistant"]:last-of-type',
+        // 구조 기반
+        'div[data-message-author-role="user"]:last-of-type ~ div',
+        // 클래스 기반
+        'div[class*="assistant-response"]:last-of-type',
+        'div[class*="model-response"]:last-of-type',
+        'div[class*="bot-message"]:last-of-type',
+        // Prose/markdown 영역 (부모 확인)
+        'div[data-message-author-role="assistant"] div.prose:last-of-type',
+        'div[class*="assistant"] div[class*="content"]:last-of-type',
+        'div.prose:last-of-type',
+        'div[class*="message"]:not([class*="user"]):last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]',
+        'button[data-testid="stop-button"]'
+      ],
+      inputSelector: 'textarea, input[type="text"]',
+      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+      excludeUserMessage: true,
+      stabilizationTime: 20000
     },
+    // === Genspark / Vooster ===
     {
       hosts: ['genspark.ai', 'app.vooster.ai'],
-      responseSelectors: ['div.prose:last-of-type', 'div[class*="markdown"]:last-of-type'],
-      stopSelectors: ['button[aria-label*="Stop"]']
+      responseSelectors: [
+        'div.prose:last-of-type',
+        'div[class*="markdown"]:last-of-type',
+        'div[class*="assistant"]:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]'
+      ],
+      inputSelector: 'textarea',
+      submitSelector: 'button[type="submit"]',
+      stabilizationTime: 18000
+    },
+    // === Codex (OpenAI) ===
+    // 🔧 수정: 더 정밀한 셀렉터
+    {
+      hosts: ['chatgpt.com/codex', 'codex.openai.com'],
+      responseSelectors: [
+        // Codex 전용 (data 속성 우선)
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="codex-output"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        // 구조 기반
+        'div[data-message-author-role="user"]:last-of-type ~ div',
+        // 클래스 기반
+        'div[class*="codex-response"]:last-of-type',
+        'div[class*="assistant-message"]:last-of-type',
+        'div[class*="code-output"]:last-of-type',
+        // Prose/markdown 영역 (부모 확인)
+        'div[data-message-author-role="assistant"] div.prose:last-of-type',
+        'div[class*="assistant"] div[class*="content"]:last-of-type',
+        'div.prose:last-of-type',
+        'div[class*="markdown"]:not([class*="user"]):last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[data-testid="stop-button"]',
+        'button[aria-label*="중지"]'
+      ],
+      inputSelector: 'div[data-testid="codex-input"] textarea, textarea, div[contenteditable="true"]',
+      submitSelector: 'button[data-testid="composer-send-button"], button[data-testid="send-button"]',
+      excludeUserMessage: true,
+      stabilizationTime: 25000
+    },
+    // === Claude Code ===
+    // 🔧 수정: 더 정밀한 셀렉터
+    {
+      hosts: ['claude.ai/code', 'code.anthropic.com'],
+      responseSelectors: [
+        // Claude Code 전용 (data 속성 우선)
+        'div[data-testid="message-content"]:last-of-type',
+        'div[data-message-author-role="assistant"]:last-of-type',
+        'div[data-testid="assistant-message"]:last-of-type',
+        // 구조 기반
+        'div[data-message-author-role="user"]:last-of-type ~ div',
+        // 클래스 기반
+        'div.font-claude-message:last-of-type',
+        'div[class*="code-response"]:last-of-type',
+        'div[class*="assistant-message"]:last-of-type',
+        // Prose 영역 (부모 확인)
+        'div[data-message-author-role="assistant"] div.prose:last-of-type',
+        'div[class*="assistant"] div[class*="content"]:last-of-type',
+        'div.prose:last-of-type'
+      ],
+      stopSelectors: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="중지"]',
+        'button[data-testid="stop-button"]',
+        'button:has(svg[class*="stop"])'
+      ],
+      inputSelector: 'div[contenteditable="true"], textarea, div[data-placeholder*="Reply"]',
+      submitSelector: 'button[data-testid*="send"], button[aria-label*="Send"]',
+      excludeUserMessage: true,
+      stabilizationTime: 30000
     }
   ];
 
@@ -553,13 +893,22 @@
       // Merge specific with universal for maximum robustness
       return {
         responseSelectors: [...specificConfig.responseSelectors, ...UNIVERSAL_RESPONSE_SELECTORS],
-        stopSelectors: [...specificConfig.stopSelectors, ...UNIVERSAL_STOP_SELECTORS]
+        stopSelectors: [...(specificConfig.stopSelectors || []), ...UNIVERSAL_STOP_SELECTORS],
+        inputSelector: specificConfig.inputSelector,
+        submitSelector: specificConfig.submitSelector,
+        // 🔧 FIX: 모델별 안정화 시간 (기본값: 18초로 증가)
+        stabilizationTime: specificConfig.stabilizationTime || 18000,
+        // 사용자 메시지 제외 여부
+        excludeUserMessage: specificConfig.excludeUserMessage || false
       };
     }
 
+    // 🔧 FIX: 알 수 없는 모델에 대한 기본 설정도 18초로
     return {
       responseSelectors: UNIVERSAL_RESPONSE_SELECTORS,
-      stopSelectors: UNIVERSAL_STOP_SELECTORS
+      stopSelectors: UNIVERSAL_STOP_SELECTORS,
+      stabilizationTime: 18000,
+      excludeUserMessage: false
     };
   }
 
@@ -579,6 +928,10 @@
     let hasReceivedFirstResponse = false;
     let heartbeatInterval;
     let fallbackCheckCount = 0;
+    
+    // 모델별 안정화 시간 적용 (기본값: 15초)
+    const STABILIZATION_TIME = config.stabilizationTime || 15000;
+    console.log(`[ModelDock] Using stabilization time: ${STABILIZATION_TIME}ms for ${window.location.hostname}`);
 
     const getResponseText = () => {
       for (const selector of config.responseSelectors) {
@@ -591,6 +944,39 @@
 
         if (elements.length > 0) {
           const lastElement = elements[elements.length - 1];
+          
+          // 🔧 FIX: excludeUserMessage 옵션 - 사용자 메시지 제외 검증 강화
+          if (config.excludeUserMessage) {
+            // 요소 자체와 조상 요소에서 user/human 관련 표시 확인
+            const parentClasses = (lastElement.className || '').toLowerCase();
+            const parentDataRole = (lastElement.getAttribute('data-role') || '').toLowerCase();
+            const parentDataAuthor = (lastElement.getAttribute('data-message-author-role') || '').toLowerCase();
+            const parentDataTestId = (lastElement.getAttribute('data-testid') || '').toLowerCase();
+            
+            // 조상 요소 확인 (최대 5단계)
+            let ancestor = lastElement.parentElement;
+            let ancestorHasUserMarker = false;
+            for (let i = 0; i < 5 && ancestor; i++) {
+              const ancestorClasses = (ancestor.className || '').toLowerCase();
+              const ancestorDataRole = (ancestor.getAttribute('data-role') || '').toLowerCase();
+              const ancestorDataAuthor = (ancestor.getAttribute('data-message-author-role') || '').toLowerCase();
+              
+              if (ancestorClasses.includes('user') || ancestorClasses.includes('human') ||
+                  ancestorDataRole === 'user' || ancestorDataAuthor === 'user' ||
+                  ancestorClasses.includes('user-message') || ancestorClasses.includes('human-message')) {
+                ancestorHasUserMarker = true;
+                break;
+              }
+              ancestor = ancestor.parentElement;
+            }
+            
+            if (parentClasses.includes('user') || parentClasses.includes('human') ||
+                parentDataRole === 'user' || parentDataAuthor === 'user' ||
+                parentDataTestId.includes('user-message') || ancestorHasUserMarker) {
+              console.log('[ModelDock] Skipping user message element');
+              continue; // 다음 셀렉터 시도
+            }
+          }
 
           // Enhanced text extraction with multiple fallbacks
           // Strategy 1: textContent (gets ALL text including hidden)
@@ -634,7 +1020,10 @@
       // Strategy 1: Check for visible stop button (most reliable)
       const hasStopButton = config.stopSelectors.some(sel => {
         const el = document.querySelector(sel);
-        return el && isElementVisible(el);
+        // 🔧 FIX: Shadow DOM도 탐색
+        const shadowEl = !el ? queryShadow(document.body, sel) : null;
+        const finalEl = el || shadowEl;
+        return finalEl && isElementVisible(finalEl);
       });
 
       if (hasStopButton) return true;
@@ -642,16 +1031,40 @@
       // Strategy 2: Check if input/submit is disabled (model still responding)
       // When model is generating, input is usually disabled
       const inputDisabled = config.inputSelector && (() => {
-        const input = document.querySelector(config.inputSelector);
-        return input && (input.disabled || input.getAttribute('disabled') !== null);
+        const input = document.querySelector(config.inputSelector) || queryShadow(document.body, config.inputSelector);
+        return input && (
+          input.disabled ||
+          input.getAttribute('disabled') !== null ||
+          input.getAttribute('aria-disabled') === 'true' ||
+          input.hasAttribute('readonly')
+        );
       })();
 
       const submitDisabled = config.submitSelector && (() => {
-        const submit = document.querySelector(config.submitSelector);
-        return submit && (submit.disabled || submit.getAttribute('disabled') !== null || submit.getAttribute('aria-disabled') === 'true');
+        const submit = document.querySelector(config.submitSelector) || queryShadow(document.body, config.submitSelector);
+        return submit && (
+          submit.disabled ||
+          submit.getAttribute('disabled') !== null ||
+          submit.getAttribute('aria-disabled') === 'true' ||
+          submit.classList.contains('disabled')
+        );
       })();
 
       if (inputDisabled || submitDisabled) return true;
+
+      // Strategy 3: Check for loading indicators (추가 검증)
+      const hasLoadingIndicator = [
+        '[class*="loading"]',
+        '[class*="generating"]',
+        '[class*="thinking"]',
+        '[class*="typing"]',
+        '[aria-busy="true"]'
+      ].some(sel => {
+        const el = document.querySelector(sel) || queryShadow(document.body, sel);
+        return el && isElementVisible(el);
+      });
+
+      if (hasLoadingIndicator) return true;
 
       return false;
     };
@@ -706,31 +1119,46 @@
       }
 
       // TWO-PHASE COMPLETION DETECTION
-      // Phase 1: Wait for text stability (10 seconds)
+      // Phase 1: Wait for text stability (모델별 STABILIZATION_TIME)
       // Phase 2: Verify UI signals (stop button + input state)
 
       // Must satisfy ALL conditions:
       // 1. Model has sent at least one response chunk
-      // 2. Text stable for 10 seconds (no new chunks)
+      // 2. Text stable for STABILIZATION_TIME (no new chunks)
       // 3. THEN verify: NOT running (no stop button AND input/submit enabled)
       // 4. Has actual content
 
-      const isStable10s = timeSinceChange > 10000;
+      const isStable = timeSinceChange > STABILIZATION_TIME;
 
       if (hasReceivedFirstResponse &&
-        isStable10s &&
+        isStable &&
         lastText.length > 0) {
 
-        // Double-check UI state before completing
+        // 🔧 FIX: Triple-check UI state before completing (더 엄격한 검증)
+        // 3회 연속 확인 (2초 간격)으로 false positive 방지
         if (!isRunning) {
-          console.log('[ModelDock] Completion verified (10s stable + UI ready):', requestId);
-          finish();
-          return;
+          fallbackCheckCount++;
+
+          // v0/Claude 같이 민감한 모델은 3회 연속 확인
+          const requiredChecks = (window.location.hostname.includes('v0.') ||
+                                  window.location.hostname.includes('claude.ai')) ? 3 : 2;
+
+          if (fallbackCheckCount >= requiredChecks) {
+            console.log(`[ModelDock] Completion verified (${STABILIZATION_TIME/1000}s stable + ${fallbackCheckCount}x UI ready):`, requestId);
+            finish();
+            return;
+          } else {
+            console.log(`[ModelDock] UI ready check ${fallbackCheckCount}/${requiredChecks}, waiting...`);
+          }
         } else {
-          // Still running despite 10s stability - reset timer
-          console.log('[ModelDock] 10s stable but still running, continuing...:', requestId);
+          // Still running despite stability - reset timer AND counter
+          console.log(`[ModelDock] ${STABILIZATION_TIME/1000}s stable but still running, continuing...:`, requestId);
           lastChangeTime = Date.now();
+          fallbackCheckCount = 0; // 실행 중이면 카운터 리셋
         }
+      } else {
+        // 안정화 전이거나 조건 불만족 - 카운터 리셋
+        fallbackCheckCount = 0;
       }
 
       // 3. Error timeout (no response after 3 minutes)

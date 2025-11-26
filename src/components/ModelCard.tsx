@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2 } from 'lucide-react';
 import { ModelConfig } from '../types';
 import { clsx } from 'clsx';
 import { ModelFrame } from './ModelFrame';
 import { PerplexityChat } from './PerplexityChat';
+
+// Zoom 상태 영속화를 위한 localStorage 키
+// 🔧 FIX: modelId 기반으로 저장하여 재시작 시에도 zoom 유지
+const ZOOM_STORAGE_KEY = 'modeldock_zoom_levels_v2';
 
 interface ModelCardProps {
   model: ModelConfig;
@@ -26,12 +30,39 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   status = 'idle'
 }) => {
   const { t } = useTranslation();
-  // State for Frame Controls
-  const [zoomLevel, setZoomLevel] = useState(0.75);
+  
+  // 🔧 FIX: modelId 기반으로 zoom 저장 (instanceId는 재시작마다 바뀌므로 사용 안함)
+  const getZoomKey = useCallback(() => model.id, [model.id]);
+  
+  const [zoomLevel, setZoomLevel] = useState(() => {
+    try {
+      const stored = localStorage.getItem(ZOOM_STORAGE_KEY);
+      if (stored) {
+        const zoomLevels = JSON.parse(stored);
+        return zoomLevels[getZoomKey()] ?? 0.75;
+      }
+    } catch (e) {
+      console.warn('[ModelCard] Failed to load zoom level:', e);
+    }
+    return 0.75;
+  });
+  
+  // Zoom 변경 시 localStorage에 저장
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(ZOOM_STORAGE_KEY);
+      const zoomLevels = stored ? JSON.parse(stored) : {};
+      zoomLevels[getZoomKey()] = zoomLevel;
+      localStorage.setItem(ZOOM_STORAGE_KEY, JSON.stringify(zoomLevels));
+    } catch (e) {
+      console.warn('[ModelCard] Failed to save zoom level:', e);
+    }
+  }, [zoomLevel, getZoomKey]);
+  
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev + 0.1, 1.5));
-  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev - 0.1, 0.25));
+  const handleZoomIn = () => setZoomLevel((prev: number) => Math.min(prev + 0.1, 1.5));
+  const handleZoomOut = () => setZoomLevel((prev: number) => Math.max(prev - 0.1, 0.25));
   const handleRefresh = () => setRefreshKey(prev => prev + 1);
 
   // Session Sync Logic
@@ -174,7 +205,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       {/* Iframe Container */}
       <div className="flex-1 relative bg-slate-50 w-full h-full overflow-hidden group">
         {model.id === 'perplexity' ? (
-          <PerplexityChat />
+          <PerplexityChat zoomLevel={zoomLevel} />
         ) : (
           <ModelFrame
             modelId={model.id}

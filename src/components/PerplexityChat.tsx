@@ -4,7 +4,12 @@ import { Bot, User, AlertCircle, Loader2, BrainCircuit, Paperclip, Send, XCircle
 import { clsx } from 'clsx';
 import { useTranslation } from 'react-i18next';
 
-export const PerplexityChat: React.FC = () => {
+// 🔧 FIX: zoom 지원을 위한 Props 인터페이스 추가
+interface PerplexityChatProps {
+    zoomLevel?: number;
+}
+
+export const PerplexityChat: React.FC<PerplexityChatProps> = ({ zoomLevel = 1 }) => {
     const { t } = useTranslation();
     const [state, setState] = useState<PerplexityState>({
         messages: [],
@@ -97,7 +102,15 @@ export const PerplexityChat: React.FC = () => {
     };
 
     return (
-        <div className="flex flex-col h-full bg-white font-sans">
+        <div 
+            className="flex flex-col h-full bg-white font-sans origin-top-left"
+            style={{
+                // 🔧 FIX: Perplexity zoom 지원
+                width: `${100 / zoomLevel}%`,
+                height: `${100 / zoomLevel}%`,
+                transform: `scale(${zoomLevel})`
+            }}
+        >
             {/* Header Controls */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white">
                 <div className="flex items-center gap-2">
