@@ -1,6 +1,6 @@
 
 import { ModelConfig, ModelId, InjectionSelector, PromptData } from './types';
-import { Bot, Cpu, MessageSquare, Sparkles } from 'lucide-react';
+import { Bot, Cpu, MessageSquare, Sparkles, Clock } from 'lucide-react';
 
 export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
   gemini: {
@@ -85,21 +85,24 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
     name: 'Google AI Studio',
     url: 'https://aistudio.google.com',
     iconColor: 'bg-blue-600',
-    themeColor: 'border-blue-300'
+    themeColor: 'border-blue-300',
+    excludeFromBrainFlow: true // Vibe Coding Tool
   },
   codex: {
     id: 'codex',
     name: 'Codex Cloud',
     url: 'https://chatgpt.com/codex',
     iconColor: 'bg-green-600',
-    themeColor: 'border-green-300'
+    themeColor: 'border-green-300',
+    excludeFromBrainFlow: true // Vibe Coding Tool
   },
   claudecode: {
     id: 'claudecode',
-    name: 'Claude Code Cloud',
+    name: 'Claude Code',
     url: 'https://claude.ai/code',
     iconColor: 'bg-orange-600',
-    themeColor: 'border-orange-300'
+    themeColor: 'border-orange-300',
+    excludeFromBrainFlow: true // Vibe Coding Tool
   },
   githubcopilot: {
     id: 'githubcopilot',
@@ -113,7 +116,8 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
     name: 'Replit',
     url: 'https://replit.com',
     iconColor: 'bg-orange-600',
-    themeColor: 'border-orange-300'
+    themeColor: 'border-orange-300',
+    excludeFromBrainFlow: true // Vibe Coding Tool
   },
   genspark: {
     id: 'genspark',
@@ -127,14 +131,16 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
     name: 'Lovable',
     url: 'https://lovable.dev',
     iconColor: 'bg-pink-500',
-    themeColor: 'border-pink-200'
+    themeColor: 'border-pink-200',
+    excludeFromBrainFlow: true // Vibe Coding Tool
   },
   v0: {
     id: 'v0',
     name: 'v0',
     url: 'https://v0.dev',
     iconColor: 'bg-neutral-900',
-    themeColor: 'border-neutral-300'
+    themeColor: 'border-neutral-300',
+    excludeFromBrainFlow: true // Vibe Coding Tool
   },
   vooster: {
     id: 'vooster',
@@ -142,6 +148,7 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
     url: 'https://app.vooster.ai',
     iconColor: 'bg-cyan-500',
     themeColor: 'border-cyan-200',
+    excludeFromBrainFlow: true, // Vibe Coding Tool
     sessionSync: {
       method: 'cookiePartition',
       domains: ['vooster.ai', 'app.vooster.ai']
@@ -152,6 +159,7 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
 // For the sidebar visual construction
 export const NAV_ITEMS = [
   { id: 'chats', icon: MessageSquare, label: 'Chats' },
+  { id: 'history', icon: Clock, label: 'History' },
   { id: 'models', icon: Bot, label: 'Models' },
   { id: 'prompts', icon: Sparkles, label: 'Prompts' },
   { id: 'settings', icon: Cpu, label: 'Settings' },
@@ -544,3 +552,16 @@ export const SYSTEM_PROMPTS: PromptData[] = [
     isSystem: true
   }
 ];
+
+// ===== BYOK Configuration =====
+
+/**
+ * BYOK 프록시 서버 URL
+ * Cloudflare Worker 엔드포인트
+ *
+ * Production: https://modeldock-byok-proxy.vinny4920-081.workers.dev/models
+ * Development: 로컬 테스트용 URL (필요시)
+ */
+export const BYOK_PROXY_URL =
+  process.env.BYOK_PROXY_URL ||
+  'https://modeldock-byok-proxy.vinny4920-081.workers.dev/models';

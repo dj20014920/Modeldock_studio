@@ -1,0 +1,29 @@
+# Cloudflare Worker Configuration
+# ModelDock Studio - BYOK Proxy Server
+
+name = "modeldock-byok-proxy"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+account_id = "081a9810680543ee912eb54ae15876a3"
+
+# R2 Bucket Binding
+[[r2_buckets]]
+binding = "MODEL_CACHE"
+bucket_name = "modeldock-models-cache"
+
+# Environment Variables
+[vars]
+CACHE_TTL_HOURS = 6
+
+# ⚠️ SECURITY: OPENROUTER_API_KEY는 Secret으로만 관리됩니다!
+# 설정 방법: wrangler secret put OPENROUTER_API_KEY
+# vars에 절대 넣지 마세요 (레포 노출 위험)
+
+# Custom Domain (Optional - 나중에 설정)
+# routes = [
+#   { pattern = "api.yourdomain.com/byok/*", zone_name = "yourdomain.com" }
+# ]
+
+[build]
+command = ""

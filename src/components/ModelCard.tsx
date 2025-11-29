@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2 } from 'lucide-react';
-import { ModelConfig } from '../types';
+import { ModelConfig, ChatMessage } from '../types';
 import { clsx } from 'clsx';
 import { ModelFrame } from './ModelFrame';
 import { PerplexityChat } from './PerplexityChat';
+import { BYOKChat } from './BYOKChat';
 
 // Zoom 상태 영속화를 위한 localStorage 키
-// 🔧 FIX: modelId 기반으로 저장하여 재시작 시에도 zoom 유지
 const ZOOM_STORAGE_KEY = 'modeldock_zoom_levels_v2';
 
 interface ModelCardProps {
@@ -18,6 +18,8 @@ interface ModelCardProps {
   onRemoveMainBrain?: () => void;
   onClose?: () => void;
   status?: 'idle' | 'sending' | 'success' | 'error';
+  messages?: ChatMessage[]; // Added for BYOK
+  onSendMessage?: (message: string) => Promise<void>; // Added for BYOK individual sending
 }
 
 export const ModelCard: React.FC<ModelCardProps> = ({
@@ -27,13 +29,15 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   onSetMainBrain,
   onRemoveMainBrain,
   onClose,
-  status = 'idle'
+  status = 'idle',
+  messages = [],
+  onSendMessage
 }) => {
   const { t } = useTranslation();
-  
-  // 🔧 FIX: modelId 기반으로 zoom 저장 (instanceId는 재시작마다 바뀌므로 사용 안함)
+
+  // modelId 기반으로 zoom 저장
   const getZoomKey = useCallback(() => model.id, [model.id]);
-  
+
   const [zoomLevel, setZoomLevel] = useState(() => {
     try {
       const stored = localStorage.getItem(ZOOM_STORAGE_KEY);
@@ -46,7 +50,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     }
     return 0.75;
   });
-  
+
   // Zoom 변경 시 localStorage에 저장
   useEffect(() => {
     try {
@@ -58,7 +62,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       console.warn('[ModelCard] Failed to save zoom level:', e);
     }
   }, [zoomLevel, getZoomKey]);
-  
+
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleZoomIn = () => setZoomLevel((prev: number) => Math.min(prev + 0.1, 1.5));
@@ -93,6 +97,8 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   const handleOpenInNewTab = () => {
     window.open(model.url, '_blank');
   };
+
+  const isBYOK = model.id.startsWith('byok-');
 
   return (
     <div className={clsx(
@@ -132,34 +138,40 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
         {/* Right: Controls */}
         <div className="flex items-center gap-1">
-          {/* Zoom Controls */}
-          <div className="flex items-center bg-slate-100 rounded-md p-0.5 mr-1">
-            <button onClick={handleZoomOut} className="p-1 hover:bg-white rounded text-slate-500 hover:text-slate-700 transition-colors">
-              <ZoomOut size={12} />
+          {/* Zoom Controls (Hide for BYOK) */}
+          {!isBYOK && (
+            <div className="flex items-center bg-slate-100 rounded-md p-0.5 mr-1">
+              <button onClick={handleZoomOut} className="p-1 hover:bg-white rounded text-slate-500 hover:text-slate-700 transition-colors">
+                <ZoomOut size={12} />
+              </button>
+              <span className="text-[9px] font-medium text-slate-500 w-8 text-center tabular-nums">
+                {Math.round(zoomLevel * 100)}%
+              </span>
+              <button onClick={handleZoomIn} className="p-1 hover:bg-white rounded text-slate-500 hover:text-slate-700 transition-colors">
+                <ZoomIn size={12} />
+              </button>
+            </div>
+          )}
+
+          {!isBYOK && (
+            <button onClick={handleRefresh} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors" title={t('modelCard.refresh')}>
+              <RotateCw size={13} />
             </button>
-            <span className="text-[9px] font-medium text-slate-500 w-8 text-center tabular-nums">
-              {Math.round(zoomLevel * 100)}%
-            </span>
-            <button onClick={handleZoomIn} className="p-1 hover:bg-white rounded text-slate-500 hover:text-slate-700 transition-colors">
-              <ZoomIn size={12} />
+          )}
+
+          {/* Open in New Tab (Hide for BYOK if no URL) */}
+          {!isBYOK && (
+            <button
+              onClick={handleOpenInNewTab}
+              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+              title={t('modelCard.openInNewTab')}
+            >
+              <ExternalLink size={13} />
             </button>
-          </div>
+          )}
 
-          <button onClick={handleRefresh} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors" title={t('modelCard.refresh')}>
-            <RotateCw size={13} />
-          </button>
-
-          {/* Open in New Tab */}
-          <button
-            onClick={handleOpenInNewTab}
-            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-            title={t('modelCard.openInNewTab')}
-          >
-            <ExternalLink size={13} />
-          </button>
-
-          {/* Session Sync */}
-          {supportsSessionSync && (
+          {/* Session Sync (Hide for BYOK) */}
+          {supportsSessionSync && !isBYOK && (
             <button
               onClick={handleSessionSync}
               title={sessionSyncTooltip}
@@ -202,10 +214,12 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         </div>
       </div>
 
-      {/* Iframe Container */}
+      {/* Content Container */}
       <div className="flex-1 relative bg-slate-50 w-full h-full overflow-hidden group">
         {model.id === 'perplexity' ? (
           <PerplexityChat zoomLevel={zoomLevel} />
+        ) : isBYOK ? (
+          <BYOKChat messages={messages} isStreaming={status === 'sending'} onSendMessage={onSendMessage} />
         ) : (
           <ModelFrame
             modelId={model.id}
@@ -218,7 +232,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         )}
 
         {/* Overlay for drag/interaction protection if needed */}
-        {status === 'sending' && (
+        {status === 'sending' && !isBYOK && (
           <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px] z-10 pointer-events-none animate-pulse" />
         )}
       </div>

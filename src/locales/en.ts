@@ -226,22 +226,29 @@ Considering the characteristics and strengths of each slave bot, design optimal 
 
 [Output Format Rules - MUST FOLLOW]
 1) Exactly one block per slave, maintain list order.
-2) Header: [SLAVE:{{modelId}}] or [SLAVE:{{modelId-instanceId}}]
-3) Inside block: Only the prompt to execute (No explanations/meta text).
+2) Header: [SLAVE:modelId-number] (e.g., [SLAVE:gemini-1], [SLAVE:grok-2])
+   ※ IMPORTANT: Use the exact ID provided in the list above!
+3) Inside block: Prompt content only (no meta text)
 4) Close: [/SLAVE]
-5) No text outside SLAVE blocks.
-6) No chain/sequential dependency: No slave refers to another slave's output. Assume all execute independently at the same time.
-7) Must write blocks for ALL items in the slave list. Missing any will significantly degrade quality.
+5) No text outside SLAVE blocks
+6) No chain dependencies: Slaves run in parallel.
+7) Do not miss any slave from the list.
 
 [Slave Instruction Guide]
-0. Persona: Specify the model's exact role.
-1. Instruction: Instruct clearly with specific verbs.
-2. Context: Provide sufficient background info.
-3. Input Data: Provide data to process accurately.
-4. Output Format: Specify desired result format concretely.
-- Specify role/goal/output format/constraints per model characteristics.
-- No duplicate questions, distribute different perspectives/strategies.
-- Configure to respond in the user's primary language.`,
+0. Persona: Define role clearly
+1. Instruction: Use specific verbs
+2. Context: Provide background info
+3. Input Data: Provide data to process
+4. Output Format: Specify desired format
+- Specify role/goal/format/constraints per model
+- Avoid duplicate questions, distribute perspectives
+- Ensure response is in user's language
+
+[Example Format]
+[SLAVE:gemini-1]
+Persona: You are a market analyst.
+Instruction: Answer the following based on data...
+[/SLAVE]`,
         phase3: `Below are the responses from the slave bots according to your instructions.
 Format: [Model Name(ID) Response: Content...]
 
@@ -264,6 +271,131 @@ Parse and synthesize the above responses, perform fact-checking, verification, a
         tip: 'Tip: Press Ctrl+Enter (or ⌘+Enter) to execute immediately',
         startButton: 'Start Brain Flow',
         errorNoMainBrain: 'Please designate a Main Brain first.',
-        errorNoSlaves: 'No slave bots. Please add at least one model.',
+        errorNoSlaves: 'At least one other model must be active to run Brain Flow.',
+        errorNotSupported: 'The selected Main Brain ({modelName}) does not support Brain Flow. (e.g., Vibe Coding tools)',
+        warningExcludedModels: 'Some models were excluded as they do not support Brain Flow.',
+        excludedMessage: 'The following models are excluded from Brain Flow: {{models}}',
+        previewButton: 'Preview & gently edit the main prompt',
+        previewShow: 'open',
+        previewHide: 'close',
+        previewTitle: 'Main Brain prompt preview (goal/slaves will auto-fill below)',
+        previewFilledLabel: 'Preview with your current goal',
+        warningKeepBlocks: 'Please keep the [SLAVE:...] blocks, {{slaves}}, and {{goal}} placeholders intact — adjust the wording around them only.',
+        persistNote: 'Saved. We will keep using this tailored main prompt for future Brain Flow runs.',
+        previewGoalPlaceholder: 'Tell me what you want to achieve, and I will guide the whole team…',
+        synthesisPreviewButton: 'Preview & gently edit the synthesis prompt',
+        synthesisPreviewTitle: 'Synthesis prompt preview (goal/responses will auto-fill below)',
+        synthesisPreviewFilledLabel: 'Preview with sample responses',
+        synthesisWarningKeepBlocks: 'Keep {{goal}} and {{responses}} placeholders intact — you can rephrase around them. This prompt guides the final synthesis, not the slave blocks.',
+    },
+
+    // === BYOK (Bring Your Own Key) ===
+    byok: {
+        title: 'BYOK Settings',
+        subtitle: 'Use AI models with your own API keys',
+        systemActive: 'System Active',
+        systemDisabled: 'System Disabled',
+        refreshAll: 'Refresh All',
+        refreshing: 'Refreshing...',
+        saveChanges: 'Save Changes',
+        saving: 'Saving...',
+
+        // Provider Info
+        providerName: 'Provider',
+        modelsCount: '{{count}} Models',
+        getApiKey: 'Get API Key',
+        documentation: 'Documentation',
+
+        // API Key Section
+        apiCredentials: 'API Credentials',
+        validate: 'Validate',
+        validating: 'Validating...',
+        valid: 'Valid',
+        invalid: 'Invalid',
+
+        // Model Selection
+        modelSelection: 'Model Selection',
+        available: 'Available',
+        searchModels: 'Search models...',
+        sortBy: 'Sort by',
+        sortPopular: 'Popular',
+        sortLatest: 'Latest',
+
+        // Model Categories
+        allModels: 'All Models',
+        reasoning: 'Reasoning',
+        coding: 'Coding',
+        vision: 'Vision',
+        realtime: 'Realtime',
+
+        // Model Details
+        contextWindow: 'Context Window',
+        pricing: 'Pricing',
+        pricingVaries: 'Pricing varies',
+        perMillionTokens: '${{price}}/1M tokens',
+        inputPrice: 'Input: ${{price}}',
+        outputPrice: 'Output: ${{price}}',
+
+        // Model Badges
+        newBadge: 'NEW',
+        topBadge: 'TOP',
+        recommendedBadge: 'RECOMMENDED',
+
+        // Capabilities
+        supportsReasoning: 'Reasoning',
+        supportsCoding: 'Coding',
+        supportsVision: 'Vision',
+        supportsRealtime: 'Realtime',
+
+        // Advanced Parameters
+        reasoningEffort: 'Reasoning Effort',
+        reasoningEffortLow: 'Low (Fast)',
+        reasoningEffortMedium: 'Medium (Balanced)',
+        reasoningEffortHigh: 'High (Accurate)',
+
+        thinkingBudget: 'Thinking Budget',
+        thinkingBudgetTokens: '{{count}} tokens',
+
+        temperature: 'Temperature',
+        temperatureDesc: 'Creativity vs Consistency (0.0 ~ 2.0)',
+
+        maxTokens: 'Max Tokens',
+        maxTokensDesc: 'Maximum tokens to generate',
+
+        // Messages
+        noModelsFound: 'No models found matching your criteria.',
+        refreshSuccess: 'Model list refreshed successfully.',
+        refreshError: 'Failed to refresh model list.',
+        validationSuccess: 'API key is valid.',
+        validationError: 'API key validation failed.',
+        saveSuccess: 'Settings saved successfully.',
+
+        // Validation Messages (Auto-verification on Save)
+        validation: {
+            title: 'API Key Verification Required',
+            unverifiedProvidersMessage: 'The following providers have not been verified:',
+            autoVerifyPrompt: 'Would you like to automatically verify them now?',
+            cancelNote: '(Cancel to return without saving)',
+
+            unavailableTitle: 'Cannot Save',
+            unavailableMessage: 'The following providers have invalid API keys or inaccessible models:',
+            modelLabel: 'Model',
+            reasonLabel: 'Reason',
+            reasonInvalidKey: 'API key is invalid or model is inaccessible.',
+            solutionsTitle: 'Solutions:',
+            solution1: '1. Double-check your API key',
+            solution2: '2. Try selecting a different model',
+            solution3: '3. Verify permissions on the provider website',
+
+            uncertainTitle: 'Warning: Verification Uncertain',
+            uncertainMessage: 'Some providers could not be verified:',
+            uncertainReason: 'Verification uncertain (network error or rate limit)',
+            proceedQuestion: 'Do you still want to save?',
+            recommendation: 'Recommendation: Press "Cancel" and retry with the "Verify" button.',
+        },
+
+        // Cache Info
+        cacheAge: 'Updated {{minutes}} min ago',
+        cached: 'Cached',
     },
 };

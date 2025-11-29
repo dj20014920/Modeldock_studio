@@ -1,0 +1,25 @@
+{
+  "name": "modeldock-byok-proxy",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for BYOK model list caching",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "byok",
+    "openrouter",
+    "ai-models"
+  ],
+  "author": "ModelDock Studio",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  },
+  "dependencies": {
+    "@cloudflare/workerd-darwin-arm64": "^1.20251128.0"
+  }
+}

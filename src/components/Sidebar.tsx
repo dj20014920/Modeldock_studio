@@ -1,12 +1,15 @@
 
-import React from 'react';
-import { ModelId, ActiveModel, SidebarView } from '../types';
+import React, { useState, useEffect } from 'react';
+import { ModelId, ActiveModel, SidebarView, ConversationMetadata, BYOKProviderId } from '../types';
 import { SUPPORTED_MODELS, NAV_ITEMS } from '../constants';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Plus, Minus, MessageSquare, ArrowRight, Crown } from 'lucide-react';
+import { Plus, Minus, MessageSquare, ArrowRight, Crown, Trash2, Edit2, Check, X } from 'lucide-react';
 
 import { useTranslation } from 'react-i18next';
+import { loadBYOKSettings } from '../services/byokService';
+import { BYOK_PROVIDERS } from '../byokProviders';
+import { HistoryService } from '../services/historyService';
 
 interface SidebarProps {
   activeModels: ActiveModel[];
@@ -18,6 +21,7 @@ interface SidebarProps {
   onRemoveLastInstance: (id: ModelId) => void;
   onActivateInstance: (instanceId: string) => void;
   mainBrainInstanceId: string | null;
+  onLoadHistory: (id: string) => void; // New Prop
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -29,15 +33,209 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAddModel,
   onRemoveLastInstance,
   onActivateInstance,
-  mainBrainInstanceId
+  mainBrainInstanceId,
+  onLoadHistory
 }) => {
   const { t } = useTranslation();
+  const [byokModels, setByokModels] = useState<{ id: string; name: string; providerId: string; iconColor: string }[]>([]);
+
+  // History State
+  const [historyList, setHistoryList] = useState<ConversationMetadata[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+
+  // Load BYOK Settings
+  useEffect(() => {
+    const loadBYOK = async () => {
+      const settings = await loadBYOKSettings();
+      if (!settings.enabled) {
+        setByokModels([]);
+        return;
+      }
+
+      const models = Object.entries(settings.providers)
+        .filter(([_, config]) => config.apiKey)
+        .map(([providerId, config]) => {
+          const provider = BYOK_PROVIDERS[providerId as BYOKProviderId];
+          const variant = config.selectedVariant || provider.name;
+          const modelName = variant.includes('/') ? variant.split('/').pop() : variant;
+
+          return {
+            id: `byok-${providerId}`,
+            name: modelName || provider.name,
+            providerId,
+            iconColor: 'bg-purple-500'
+          };
+        });
+      setByokModels(models);
+    };
+    loadBYOK();
+
+    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.byokSettings) {
+        console.log('[Sidebar] BYOK settings changed, reloading...');
+        loadBYOK();
+      }
+      // Reload history if metadata changes
+      if (changes.md_history_metadata) {
+        loadHistory();
+      }
+    };
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+  }, []);
+
+  // Load History
+  const loadHistory = async () => {
+    const list = await HistoryService.getInstance().getHistoryList();
+    // Sort by updatedAt desc
+    setHistoryList(list.sort((a, b) => b.updatedAt - a.updatedAt));
+  };
+
+  useEffect(() => {
+    if (currentView === 'history') {
+      loadHistory();
+    }
+  }, [currentView]);
+
+  const handleDeleteHistory = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (confirm(t('common.confirmDelete', 'Are you sure you want to delete this conversation?'))) {
+      await HistoryService.getInstance().deleteConversation(id);
+      loadHistory();
+    }
+  };
+
+  const handleRenameHistory = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!editTitle.trim()) return;
+    await HistoryService.getInstance().renameConversation(id, editTitle);
+    setEditingId(null);
+    loadHistory();
+  };
+
+  const startEditing = (e: React.MouseEvent, item: ConversationMetadata) => {
+    e.stopPropagation();
+    setEditingId(item.id);
+    setEditTitle(item.title);
+  };
+
+  // Group History by Date
+  const groupHistory = () => {
+    const groups: { [key: string]: ConversationMetadata[] } = {
+      'Today': [],
+      'Yesterday': [],
+      'Previous 7 Days': [],
+      'Older': []
+    };
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterday = today - 86400000;
+    const lastWeek = today - 86400000 * 7;
+
+    historyList.forEach(item => {
+      if (item.updatedAt >= today) {
+        groups['Today'].push(item);
+      } else if (item.updatedAt >= yesterday) {
+        groups['Yesterday'].push(item);
+      } else if (item.updatedAt >= lastWeek) {
+        groups['Previous 7 Days'].push(item);
+      } else {
+        groups['Older'].push(item);
+      }
+    });
+
+    return groups;
+  };
 
   // Helper to get count of instances per model
-  const getModelCount = (id: ModelId) => activeModels.filter(m => m.modelId === id).length;
+  const getModelCount = (id: string) => activeModels.filter(m => m.modelId === id).length;
 
   // Render Logic based on View
   const renderContent = () => {
+    if (currentView === 'history') {
+      const groups = groupHistory();
+      const hasHistory = historyList.length > 0;
+
+      if (!hasHistory) {
+        return (
+          <div className="flex flex-col items-center justify-center h-40 text-center px-4">
+            <MessageSquare size={24} className="text-slate-300 mb-2" />
+            <p className="text-xs text-slate-400">No conversation history</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-6 px-4 pb-4">
+          {Object.entries(groups).map(([label, items]) => {
+            if (items.length === 0) return null;
+            return (
+              <div key={label} className="space-y-2">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2">
+                  {label}
+                </div>
+                {items.map(item => (
+                  <div
+                    key={item.id}
+                    onClick={() => onLoadHistory(item.id)}
+                    className="group relative flex flex-col gap-1 p-3 rounded-lg border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm cursor-pointer transition-all"
+                  >
+                    {editingId === item.id ? (
+                      <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={e => setEditTitle(e.target.value)}
+                          className="flex-1 text-sm border rounded px-1 py-0.5"
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleRenameHistory(e as any, item.id);
+                            if (e.key === 'Escape') setEditingId(null);
+                          }}
+                        />
+                        <button onClick={e => handleRenameHistory(e as any, item.id)} className="text-green-600 hover:bg-green-50 p-1 rounded">
+                          <Check size={14} />
+                        </button>
+                        <button onClick={() => setEditingId(null)} className="text-red-500 hover:bg-red-50 p-1 rounded">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-sm font-medium text-slate-700 truncate flex-1">
+                          {item.title}
+                        </span>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={e => startEditing(e, item)}
+                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded"
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                          <button
+                            onClick={e => handleDeleteHistory(e, item.id)}
+                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span className="truncate max-w-[120px]">{item.preview}</span>
+                      <span>{new Date(item.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
     if (currentView === 'chats') {
       // --- CHATS VIEW (Active Instances) ---
       if (activeModels.length === 0) {
@@ -58,8 +256,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return (
         <div className="space-y-1 px-4">
           {activeModels.map((instance) => {
-            const modelConfig = SUPPORTED_MODELS[instance.modelId];
+            const modelConfig = SUPPORTED_MODELS[instance.modelId] || {
+              name: instance.modelId.replace('byok-', ''),
+              iconColor: 'bg-purple-500'
+            };
             const isMain = instance.instanceId === mainBrainInstanceId;
+
+            // BYOK 모델 이름 처리
+            let displayName = modelConfig.name;
+            if (instance.modelId.startsWith('byok-')) {
+              const providerId = instance.modelId.replace('byok-', '');
+              displayName = providerId.charAt(0).toUpperCase() + providerId.slice(1);
+            }
 
             return (
               <div
@@ -76,7 +284,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-slate-700 truncate">
-                      {modelConfig.name}
+                      {displayName}
                     </span>
                     {isMain && <Crown size={12} className="text-amber-500" />}
                   </div>
@@ -94,70 +302,150 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     // --- MODELS VIEW (Add New) ---
     return (
-      <div className="px-4 space-y-1">
-        {Object.values(SUPPORTED_MODELS).map((model) => {
-          const count = getModelCount(model.id);
-          const isActive = count > 0;
-          const isMaxed = count >= 3;
+      <div className="px-4 space-y-4 pb-4">
+        {/* BYOK Models Section */}
+        {byokModels.length > 0 && (
+          <div className="space-y-1">
+            <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+              <span>BYOK Models</span>
+              <span className="bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded text-[9px]">API</span>
+            </div>
+            {byokModels.map((model) => {
+              const count = getModelCount(model.id);
+              const isActive = count > 0;
+              const isMaxed = count >= 3;
 
-          return (
-            <div
-              key={model.id}
-              className={twMerge(
-                "group flex items-center justify-between px-3 py-2.5 rounded-lg transition-all duration-200 border border-transparent select-none",
-                isActive
-                  ? "bg-slate-50 border-slate-200 shadow-sm"
-                  : "hover:bg-slate-50 opacity-70 hover:opacity-100 cursor-pointer"
-              )}
-              onClick={() => !isActive && onAddModel(model.id)}
-            >
-              {/* Left: Icon & Name */}
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={clsx(
-                  "w-2.5 h-2.5 rounded-full shadow-sm transition-colors shrink-0",
-                  isActive ? model.iconColor : "bg-slate-300 group-hover:bg-slate-400"
-                )} />
-                <span className={clsx("text-sm font-medium truncate", isActive ? "text-slate-800" : "text-slate-500")}>
-                  {model.name}
-                </span>
-              </div>
-
-              {/* Right: Counter Controls */}
-              {isActive ? (
-                <div className="flex items-center bg-white rounded-md border border-slate-200 shadow-sm overflow-hidden ml-2" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    onClick={() => onRemoveLastInstance(model.id)}
-                    className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-red-500 transition-colors border-r border-slate-100"
-                  >
-                    <Minus size={12} />
-                  </button>
-
-                  <div className="w-6 text-center text-xs font-semibold text-slate-700 tabular-nums">
-                    {count}
+              return (
+                <div
+                  key={model.id}
+                  className={twMerge(
+                    "group flex items-center justify-between px-3 py-2.5 rounded-lg transition-all duration-200 border border-transparent select-none",
+                    isActive
+                      ? "bg-purple-50 border-purple-200 shadow-sm"
+                      : "hover:bg-purple-50/50 opacity-80 hover:opacity-100 cursor-pointer"
+                  )}
+                  onClick={() => !isActive && onAddModel(model.id as ModelId)}
+                >
+                  {/* Left: Icon & Name */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={clsx(
+                      "w-2.5 h-2.5 rounded-full shadow-sm transition-colors shrink-0",
+                      isActive ? "bg-purple-500" : "bg-slate-300 group-hover:bg-purple-400"
+                    )} />
+                    <span className={clsx("text-sm font-medium truncate", isActive ? "text-purple-900" : "text-slate-600")}>
+                      {model.name}
+                    </span>
                   </div>
 
-                  <button
-                    onClick={() => !isMaxed && onAddModel(model.id)}
-                    disabled={isMaxed}
-                    className={clsx(
-                      "p-1.5 transition-colors border-l border-slate-100",
-                      isMaxed
-                        ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                        : "hover:bg-slate-100 text-slate-500 hover:text-indigo-600"
-                    )}
-                  >
-                    <Plus size={12} />
-                  </button>
+                  {/* Right: Counter Controls */}
+                  {isActive ? (
+                    <div className="flex items-center bg-white rounded-md border border-purple-100 shadow-sm overflow-hidden ml-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => onRemoveLastInstance(model.id as ModelId)}
+                        className="p-1.5 hover:bg-purple-50 text-slate-500 hover:text-red-500 transition-colors border-r border-purple-100"
+                      >
+                        <Minus size={12} />
+                      </button>
+
+                      <div className="w-6 text-center text-xs font-semibold text-purple-700 tabular-nums">
+                        {count}
+                      </div>
+
+                      <button
+                        onClick={() => !isMaxed && onAddModel(model.id as ModelId)}
+                        disabled={isMaxed}
+                        className={clsx(
+                          "p-1.5 transition-colors border-l border-purple-100",
+                          isMaxed
+                            ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                            : "hover:bg-purple-50 text-slate-500 hover:text-purple-600"
+                        )}
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Plus size={14} className="text-purple-400" />
+                    </div>
+                  )}
                 </div>
-              ) : (
-                // Inactive State Hover Indicator
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Plus size={14} className="text-slate-400" />
-                </div>
-              )}
+              );
+            })}
+          </div>
+        )}
+
+        {/* Standard Models Section */}
+        <div className="space-y-1">
+          {byokModels.length > 0 && (
+            <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 mt-2">
+              <span>Standard Models</span>
             </div>
-          );
-        })}
+          )}
+          {Object.values(SUPPORTED_MODELS).map((model) => {
+            const count = getModelCount(model.id);
+            const isActive = count > 0;
+            const isMaxed = count >= 3;
+
+            return (
+              <div
+                key={model.id}
+                className={twMerge(
+                  "group flex items-center justify-between px-3 py-2.5 rounded-lg transition-all duration-200 border border-transparent select-none",
+                  isActive
+                    ? "bg-slate-50 border-slate-200 shadow-sm"
+                    : "hover:bg-slate-50 opacity-70 hover:opacity-100 cursor-pointer"
+                )}
+                onClick={() => !isActive && onAddModel(model.id)}
+              >
+                {/* Left: Icon & Name */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={clsx(
+                    "w-2.5 h-2.5 rounded-full shadow-sm transition-colors shrink-0",
+                    isActive ? model.iconColor : "bg-slate-300 group-hover:bg-slate-400"
+                  )} />
+                  <span className={clsx("text-sm font-medium truncate", isActive ? "text-slate-800" : "text-slate-500")}>
+                    {model.name}
+                  </span>
+                </div>
+
+                {/* Right: Counter Controls */}
+                {isActive ? (
+                  <div className="flex items-center bg-white rounded-md border border-slate-200 shadow-sm overflow-hidden ml-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => onRemoveLastInstance(model.id)}
+                      className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-red-500 transition-colors border-r border-slate-100"
+                    >
+                      <Minus size={12} />
+                    </button>
+
+                    <div className="w-6 text-center text-xs font-semibold text-slate-700 tabular-nums">
+                      {count}
+                    </div>
+
+                    <button
+                      onClick={() => !isMaxed && onAddModel(model.id)}
+                      disabled={isMaxed}
+                      className={clsx(
+                        "p-1.5 transition-colors border-l border-slate-100",
+                        isMaxed
+                          ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                          : "hover:bg-slate-100 text-slate-500 hover:text-indigo-600"
+                      )}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  // Inactive State Hover Indicator
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Plus size={14} className="text-slate-400" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
@@ -168,14 +456,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-4 mb-6">
         <div className="space-y-1">
           {NAV_ITEMS.map((item) => {
-            const isActive = (item.id === 'chats' || item.id === 'models') ? currentView === item.id : false;
+            const isActive = item.id === currentView || (item.id === 'chats' && currentView === 'chats');
 
             return (
               <button
                 key={item.id}
                 onClick={() => {
-                  if (item.id === 'chats' || item.id === 'models') {
-                    onViewChange(item.id);
+                  if (item.id === 'chats' || item.id === 'models' || item.id === 'history') {
+                    onViewChange(item.id as SidebarView);
                   } else if (item.id === 'prompts') {
                     onTriggerPrompt();
                   } else if (item.id === 'settings') {
@@ -200,7 +488,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Dynamic Content Header */}
       <div className="px-7 mb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider flex justify-between items-center">
         <span>
-          {currentView === 'chats' ? t('sidebar.activeSessions') : t('sidebar.availableModels')}
+          {currentView === 'chats' ? t('sidebar.activeSessions') :
+            currentView === 'history' ? 'Conversation History' :
+              t('sidebar.availableModels')}
         </span>
         {currentView === 'models' && (
           <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">{t('sidebar.maxInstancesHint')}</span>

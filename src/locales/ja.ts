@@ -174,4 +174,50 @@ export default {
         business: 'ビジネス',
         academic: '学術',
     },
+
+    brainFlowModal: {
+        title: '🧠 Brain Flow',
+        subtitle: 'メインブレインが {{count}} 件のスレーブボットをやさしく指揮します',
+        goalLabel: 'あなたの目的を入力してください',
+        goalPlaceholder: '例: このデータを分析して、インサイトを出し、実行計画を立てて…',
+        tip: 'ヒント: 目的が明確だと、よりやわらかく的確な結果が得られます。',
+        previewButton: 'メインプロンプトをプレビュー・やさしく調整',
+        previewShow: '開く',
+        previewHide: '閉じる',
+        previewTitle: 'メインブレインプロンプトのプレビュー（目的/ボットは自動で埋まります）',
+        previewFilledLabel: '現在の目的でのプレビュー',
+        warningKeepBlocks: '[SLAVE:…] ブロックと {{slaves}}, {{goal}} はそのまま残し、周辺だけやさしく調整してください。',
+        persistNote: '保存しました。これからのBrain Flowでもこの調整済みプロンプトを使います。',
+        previewGoalPlaceholder: '叶えたいことを教えてください。チーム全体をやさしく導きます…',
+        synthesisPreviewButton: '統合プロンプトをプレビュー・やさしく調整',
+        synthesisPreviewTitle: '統合プロンプトのプレビュー（目的/回答は自動で埋まります）',
+        synthesisPreviewFilledLabel: 'サンプル回答でのプレビュー',
+        synthesisWarningKeepBlocks: '{{goal}} と {{responses}} はそのままにして、周辺だけ整えてください。これは最終統合用のプロンプトです。',
+    },
+
+    // === BYOK ===
+    byok: {
+        validation: {
+            title: 'APIキー検証が必要',
+            unverifiedProvidersMessage: '次のプロバイダーは検証されていません:',
+            autoVerifyPrompt: '今すぐ自動的に検証しますか？',
+            cancelNote: '(キャンセルすると保存せずに戻ります)',
+
+            unavailableTitle: '保存できません',
+            unavailableMessage: '次のプロバイダーのAPIキーまたはモデルが利用できません:',
+            modelLabel: 'モデル',
+            reasonLabel: '理由',
+            reasonInvalidKey: 'APIキーが無効か、モデルにアクセスできません。',
+            solutionsTitle: '解決方法:',
+            solution1: '1. APIキーを再確認してください',
+            solution2: '2. 別のモデルを選択してみてください',
+            solution3: '3. プロバイダーのウェブサイトで権限を確認してください',
+
+            uncertainTitle: '警告: 検証が不確実',
+            uncertainMessage: '一部のプロバイダーを検証できませんでした:',
+            uncertainReason: '検証不確実（ネットワークエラーまたはレート制限）',
+            proceedQuestion: 'それでも保存しますか？',
+            recommendation: '推奨: "キャンセル"を押して"検証"ボタンで再試行してください。',
+        },
+    },
 };

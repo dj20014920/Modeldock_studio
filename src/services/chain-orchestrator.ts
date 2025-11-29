@@ -1,5 +1,6 @@
-import { ActiveModel, ModelId } from '../types';
+import { ActiveModel, ModelId, BYOKProviderId } from '../types';
 import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
+import { BYOKAPIService, loadBYOKSettings } from './byokService';
 
 export interface BrainFlowCallbacks {
     onPhaseStart: (phase: 1 | 2 | 3) => void;
@@ -34,6 +35,19 @@ export class ChainOrchestrator {
         return ChainOrchestrator.instance;
     }
 
+    public async sendMessage(
+        model: ActiveModel,
+        text: string
+    ): Promise<string> {
+        return this.sendMessageToModel(model, text, {
+            onPhaseStart: () => { },
+            onModelStart: () => { },
+            onModelUpdate: () => { },
+            onModelComplete: () => { },
+            onError: () => { }
+        });
+    }
+
     public async runBrainFlow(config: BrainFlowConfig): Promise<void> {
         const { mainBrain, slaves, goal, prompts, callbacks } = config;
 
@@ -41,7 +55,20 @@ export class ChainOrchestrator {
             // === Phase 1: Main Brain Planning ===
             callbacks.onPhaseStart(1);
 
-            const slaveListText = slaves.map(s => `- ${s.modelId} (${s.instanceId})`).join('\n');
+            // 🔧 Generate unique display IDs for slaves (e.g., grok-1, grok-2)
+            const slaveIdMap = new Map<string, string>(); // instanceId -> displayId
+            const displayIdMap = new Map<string, string>(); // displayId -> instanceId
+            const modelCounters = new Map<string, number>();
+
+            slaves.forEach(slave => {
+                const count = (modelCounters.get(slave.modelId) || 0) + 1;
+                modelCounters.set(slave.modelId, count);
+                const displayId = `${slave.modelId}-${count}`;
+                slaveIdMap.set(slave.instanceId, displayId);
+                displayIdMap.set(displayId, slave.instanceId);
+            });
+
+            const slaveListText = slaves.map(s => `- [SLAVE:${slaveIdMap.get(s.instanceId)}] ${SUPPORTED_MODELS[s.modelId].name}`).join('\n');
             const phase1Prompt = prompts.phase1
                 .replace('{{slaves}}', slaveListText)
                 .replace('{{goal}}', goal);
@@ -58,34 +85,36 @@ export class ChainOrchestrator {
             // Parse the plan to find prompts for each slave
             console.log('[BrainFlow] ===== PARSING PHASE =====');
             console.log('[BrainFlow] Plan Response Length:', planResponse.length);
-            console.log('[BrainFlow] Slaves to process:', slaves.map(s => `${s.modelId} (${s.instanceId})`).join(', '));
+            console.log('[BrainFlow] Slaves to process:', slaves.map(s => `${s.modelId} (${slaveIdMap.get(s.instanceId)})`).join(', '));
 
             const slavePrompts = this.parseSlavePrompts(planResponse, slaves);
 
             console.log('[BrainFlow] ===== MATCHING RESULTS =====');
             slaves.forEach(slave => {
-                const found = slavePrompts.get(slave.instanceId) || slavePrompts.get(slave.modelId);
-                console.log(`[BrainFlow] ${slave.modelId} (${slave.instanceId}): ${found ? 'FOUND ✓' : 'NOT FOUND ✗'}`);
+                const displayId = slaveIdMap.get(slave.instanceId);
+                const found = slavePrompts.get(displayId!) || slavePrompts.get(slave.instanceId) || slavePrompts.get(slave.modelId);
+                console.log(`[BrainFlow] ${displayId} (${slave.instanceId}): ${found ? 'FOUND ✓' : 'NOT FOUND ✗'}`);
             });
 
             const slavePromises = slaves.map(async (slave) => {
+                const displayId = slaveIdMap.get(slave.instanceId);
                 // Try multiple matching strategies
-                let prompt = slavePrompts.get(slave.instanceId)
-                    || slavePrompts.get(slave.modelId)
-                    || slavePrompts.get(`${slave.modelId}-${slave.instanceId.split('-')[1]}`);
+                let prompt = slavePrompts.get(displayId!) // Priority 1: grok-1
+                    || slavePrompts.get(slave.instanceId) // Priority 2: instanceId (fallback)
+                    || slavePrompts.get(slave.modelId);   // Priority 3: modelId (legacy)
 
                 if (!prompt) {
-                    console.error(`[BrainFlow] ❌ CRITICAL: No prompt found for ${slave.modelId} (${slave.instanceId})`);
+                    console.error(`[BrainFlow] ❌ CRITICAL: No prompt found for ${displayId}`);
                     console.error(`[BrainFlow] Available keys:`, Array.from(slavePrompts.keys()));
                     return { slave, response: '(Error: No instruction provided by Main Brain)' };
                 }
 
                 try {
-                    console.log(`[BrainFlow] ✓ Sending to ${slave.modelId}:`, prompt.substring(0, 100) + '...');
+                    console.log(`[BrainFlow] ✓ Sending to ${displayId}:`, prompt.substring(0, 100) + '...');
                     const response = await this.sendMessageToModel(slave, prompt, callbacks);
                     return { slave, response };
                 } catch (err: any) {
-                    console.error(`[BrainFlow] Slave ${slave.modelId} failed:`, err);
+                    console.error(`[BrainFlow] Slave ${displayId} failed:`, err);
                     return { slave, response: `(Error: ${err.message || 'Unknown error'})` };
                 }
             });
@@ -96,7 +125,7 @@ export class ChainOrchestrator {
             callbacks.onPhaseStart(3);
 
             const responsesText = slaveResults.map(r =>
-                `[${r.slave.modelId} Response]\n${r.response}\n`
+                `[${slaveIdMap.get(r.slave.instanceId)} Response]\n${r.response}\n`
             ).join('\n\n');
 
             const phase3Prompt = prompts.phase3
@@ -126,20 +155,87 @@ export class ChainOrchestrator {
         this.pendingRequests.clear();
     }
 
+    private byokService: BYOKAPIService = new BYOKAPIService();
+
     private async sendMessageToModel(
         model: ActiveModel,
         text: string,
         callbacks: BrainFlowCallbacks
     ): Promise<string> {
-        // 🔧 FIX: Perplexity 분기를 최상단에서 명확히 처리
-        // Perplexity는 API 방식을 사용하므로 iframe을 찾지 않음
+        // 1. Check BYOK configuration first
+        try {
+            const settings = await loadBYOKSettings();
+            const providerId = this.mapModelIdToProvider(model.modelId);
+
+            if (settings.enabled && providerId && settings.providers[providerId]?.apiKey) {
+                console.log(`[BrainFlow] Using BYOK for ${model.modelId} (${providerId})`);
+                callbacks.onModelStart(model.modelId);
+
+                const config = settings.providers[providerId]!;
+                const response = await this.byokService.callAPI({
+                    providerId,
+                    apiKey: config.apiKey,
+                    variant: config.selectedVariant,
+                    prompt: text,
+                    temperature: config.customTemperature,
+                    reasoningEffort: config.reasoningEffort,
+                    thinkingBudget: config.thinkingBudget,
+                    thinkingLevel: config.thinkingLevel,
+                    enableThinking: config.enableThinking
+                });
+
+                if (response.success) {
+                    let finalText = response.content || '';
+                    if (response.reasoning) {
+                        // Append reasoning if available (or handle via callback if UI supports it)
+                        finalText = `[Reasoning]\n${response.reasoning}\n\n[Answer]\n${finalText}`;
+                    }
+                    callbacks.onModelComplete(model.modelId, finalText);
+                    return finalText;
+                } else {
+                    console.warn(`[BrainFlow] BYOK call failed: ${response.error}. Falling back to standard mode.`);
+                    // Fallback to standard execution below
+                }
+            }
+        } catch (e) {
+            console.error('[BrainFlow] BYOK check failed:', e);
+        }
+
+        // 2. Standard Execution (Perplexity API or Iframe)
         if (model.modelId === 'perplexity') {
             console.log('[BrainFlow] Perplexity detected - using API mode');
             return this.sendToPerplexity(text, callbacks);
         }
-        
-        // 다른 모델들은 iframe 방식 사용
+
+        // 3. Iframe Automation
         return this.sendToIframe(model, text, callbacks);
+    }
+
+    private mapModelIdToProvider(modelId: string): BYOKProviderId | null {
+        const lower = modelId.toLowerCase();
+
+        // 1. Explicit BYOK ID check
+        if (lower.startsWith('byok-')) {
+            const providerPart = lower.replace('byok-', '');
+            // Validate if it's a known provider
+            const validProviders: BYOKProviderId[] = ['openai', 'anthropic', 'google', 'deepseek', 'xai', 'mistral', 'qwen', 'kimi', 'openrouter'];
+            if (validProviders.includes(providerPart as BYOKProviderId)) {
+                return providerPart as BYOKProviderId;
+            }
+        }
+
+        // 2. Existing heuristic checks
+        if (lower.includes('gpt') || lower.includes('o1')) return 'openai';
+        if (lower.includes('claude')) return 'anthropic';
+        if (lower.includes('gemini')) return 'google';
+        if (lower.includes('deepseek')) return 'deepseek';
+        if (lower.includes('grok')) return 'xai';
+        if (lower.includes('mistral')) return 'mistral';
+        if (lower.includes('qwen')) return 'qwen';
+        if (lower.includes('kimi')) return 'kimi';
+        // OpenRouter is usually a manual selection, but if modelId implies it:
+        if (lower.includes('openrouter')) return 'openrouter';
+        return null;
     }
 
     private async sendToPerplexity(

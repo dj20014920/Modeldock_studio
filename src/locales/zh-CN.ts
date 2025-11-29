@@ -158,4 +158,50 @@ export default {
         business: '商业',
         academic: '学术',
     },
+
+    brainFlowModal: {
+        title: '🧠 Brain Flow',
+        subtitle: '主脑轻柔地协调 {{count}} 个辅助手Bot',
+        goalLabel: '请输入你的目标',
+        goalPlaceholder: '例：请分析这些数据，提炼洞察，并制定执行计划……',
+        tip: '提示：目标越清晰，结果越柔和、越贴心。',
+        previewButton: '预览并轻柔调整主提示词',
+        previewShow: '展开',
+        previewHide: '收起',
+        previewTitle: '主脑提示词预览（目标/机器人将自动填充）',
+        previewFilledLabel: '使用当前目标的预览',
+        warningKeepBlocks: '请保留 [SLAVE:…]、{{slaves}}、{{goal}} 不变——只需轻柔调整周围文字。',
+        persistNote: '已保存。后续 Brain Flow 将继续使用这个温和调整后的提示词。',
+        previewGoalPlaceholder: '告诉我你的目标，我会温柔地带领整个团队……',
+        synthesisPreviewButton: '预览并轻柔调整汇总提示词',
+        synthesisPreviewTitle: '汇总提示词预览（目标/回复将自动填充）',
+        synthesisPreviewFilledLabel: '使用示例回复的预览',
+        synthesisWarningKeepBlocks: '请保留 {{goal}} 和 {{responses}} 不变——此提示用于最终汇总。',
+    },
+
+    // === BYOK ===
+    byok: {
+        validation: {
+            title: '需要API密钥验证',
+            unverifiedProvidersMessage: '以下提供商尚未验证:',
+            autoVerifyPrompt: '是否立即自动验证?',
+            cancelNote: '(取消将不保存并返回)',
+
+            unavailableTitle: '无法保存',
+            unavailableMessage: '以下提供商的API密钥或模型不可用:',
+            modelLabel: '模型',
+            reasonLabel: '原因',
+            reasonInvalidKey: 'API密钥无效或无法访问模型。',
+            solutionsTitle: '解决方法:',
+            solution1: '1. 重新检查您的API密钥',
+            solution2: '2. 尝试选择其他模型',
+            solution3: '3. 在提供商网站验证权限',
+
+            uncertainTitle: '警告: 验证不确定',
+            uncertainMessage: '部分提供商无法验证:',
+            uncertainReason: '验证不确定 (网络错误或速率限制)',
+            proceedQuestion: '仍要保存吗?',
+            recommendation: '建议: 按「取消」并使用「验证」按钮重试。',
+        },
+    },
 };

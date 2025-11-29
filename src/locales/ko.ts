@@ -226,8 +226,8 @@ export default {
 
 [출력 형식 규칙 - 반드시 준수]
 1) 슬레이브마다 정확히 1개 블록, 목록 순서 유지
-2) 헤더: [SLAVE:모델ID] (예: [SLAVE:gemini], [SLAVE:claude], [SLAVE:grok])
-   ※ 중요: instanceId가 아닌 모델ID만 사용하세요! (gemini-123456789 같은 긴 ID 사용 금지)
+2) 헤더: [SLAVE:모델ID-번호] (예: [SLAVE:gemini-1], [SLAVE:grok-2])
+   ※ 중요: 위 목록에 제공된 ID를 정확히 사용하세요!
 3) 블록 내부엔 실행할 프롬프트만 (설명/메타 텍스트 금지)
 4) 닫기: [/SLAVE]
 5) SLAVE 블록 외 텍스트 금지
@@ -245,7 +245,7 @@ export default {
 - 사용자의 주 언어에 맞춰 응답하도록 구성하라
 
 [예시 형식]
-[SLAVE:gemini]
+[SLAVE:gemini-1]
 페르소나: 당신은 시장 분석 전문가입니다.
 명령: 다음 질문에 대해 데이터 기반으로 답변하세요...
 [/SLAVE]
@@ -272,9 +272,134 @@ export default {
         subtitle: '메인 브레인이 {{count}}개의 슬레이브 봇을 지휘합니다',
         goalLabel: '당신의 목적을 입력하세요',
         goalPlaceholder: '예: 이 데이터를 분석하고, 인사이트를 도출하고, 실행 계획을 수립해줘...',
-        tip: '팁: Ctrl+Enter (또는 ⌘+Enter) 누르면 즉시 실행됩니다',
+        tip: 'Tip: 구체적인 목표를 입력할수록 더 좋은 결과를 얻을 수 있습니다.',
         startButton: 'Brain Flow 시작',
         errorNoMainBrain: '메인 브레인을 먼저 지정하세요.',
-        errorNoSlaves: '슬레이브 봇이 없습니다. 최소 1개 이상의 모델을 추가하세요.',
+        errorNoSlaves: 'Brain Flow를 실행하려면 최소 1개 이상의 다른 모델이 활성화되어 있어야 합니다.',
+        errorNotSupported: '선택하신 메인 브레인({modelName})은 Brain Flow를 지원하지 않는 모델입니다. (Vibe Coding 도구 등)',
+        warningExcludedModels: '일부 모델은 Brain Flow를 지원하지 않아 제외되었습니다.',
+        excludedMessage: '다음 모델은 Brain Flow에서 제외됩니다: {{models}}',
+        previewButton: '메인 프롬프트 미리보기 · 부드럽게 다듬기',
+        previewShow: '열기',
+        previewHide: '닫기',
+        previewTitle: '메인 브레인 프롬프트 미리보기 (목표/슬레이브는 자동으로 채워져요)',
+        previewFilledLabel: '현재 목표로 채운 모습',
+        warningKeepBlocks: '※ [SLAVE:…] 블록과 {{slaves}}, {{goal}} 자리표시자는 그대로 두고, 주변 문장만 다듬어 주세요. (핵심 로직 보호)',
+        persistNote: '방금 다듬은 메인 프롬프트를 앞으로도 계속 기본값으로 사용할게요.',
+        previewGoalPlaceholder: '당신이 이루고 싶은 목표를 말해주면, 제가 팀 전체를 안내할게요…',
+        synthesisPreviewButton: '종합 프롬프트 미리보기 · 부드럽게 다듬기',
+        synthesisPreviewTitle: '종합 프롬프트 미리보기 (목표/슬레이브 응답은 자동으로 채워져요)',
+        synthesisPreviewFilledLabel: '샘플 응답으로 채운 모습',
+        synthesisWarningKeepBlocks: '※ {{goal}}, {{responses}} 자리표시자는 그대로 두고 문장만 다듬어 주세요. 이 프롬프트는 최종 종합 단계에 쓰입니다.',
+    },
+
+    // === BYOK (Bring Your Own Key) ===
+    byok: {
+        title: 'BYOK 설정',
+        subtitle: '자신의 API 키로 AI 모델 사용하기',
+        systemActive: '시스템 활성화',
+        systemDisabled: '시스템 비활성화',
+        refreshAll: '전체 새로고침',
+        refreshing: '새로고침 중...',
+        saveChanges: '변경사항 저장',
+        saving: '저장 중...',
+
+        // Provider Info
+        providerName: '제공자',
+        modelsCount: '{{count}}개 모델',
+        getApiKey: 'API 키 발급',
+        documentation: '문서',
+
+        // API Key Section
+        apiCredentials: 'API 인증',
+        validate: '검증',
+        validating: '검증 중...',
+        valid: '유효',
+        invalid: '무효',
+
+        // Model Selection
+        modelSelection: '모델 선택',
+        available: '사용 가능',
+        searchModels: '모델 검색...',
+        sortBy: '정렬',
+        sortPopular: '인기순',
+        sortLatest: '최신순',
+
+        // Model Categories
+        allModels: '전체 모델',
+        reasoning: '추론',
+        coding: '코딩',
+        vision: '비전',
+        realtime: '실시간',
+
+        // Model Details
+        contextWindow: '컨텍스트 윈도우',
+        pricing: '가격',
+        pricingVaries: '가격 변동',
+        perMillionTokens: '${{price}}/1M 토큰',
+        inputPrice: '입력: ${{price}}',
+        outputPrice: '출력: ${{price}}',
+
+        // Model Badges
+        newBadge: '신규',
+        topBadge: '인기',
+        recommendedBadge: '추천',
+
+        // Capabilities
+        supportsReasoning: '추론 지원',
+        supportsCoding: '코딩 특화',
+        supportsVision: '이미지 인식',
+        supportsRealtime: '실시간 처리',
+
+        // Advanced Parameters
+        reasoningEffort: '추론 강도',
+        reasoningEffortLow: '낮음 (빠름)',
+        reasoningEffortMedium: '보통 (균형)',
+        reasoningEffortHigh: '높음 (정확)',
+
+        thinkingBudget: '사고 예산',
+        thinkingBudgetTokens: '{{count}} 토큰',
+
+        temperature: '온도',
+        temperatureDesc: '창의성 vs 일관성 (0.0 ~ 2.0)',
+
+        maxTokens: '최대 토큰',
+        maxTokensDesc: '생성할 최대 토큰 수',
+
+        // Messages
+        noModelsFound: '검색 조건에 맞는 모델이 없습니다.',
+        refreshSuccess: '모델 목록이 성공적으로 갱신되었습니다.',
+        refreshError: '모델 목록 갱신 중 오류가 발생했습니다.',
+        validationSuccess: 'API 키가 유효합니다.',
+        validationError: 'API 키 검증에 실패했습니다.',
+        saveSuccess: '설정이 저장되었습니다.',
+
+        // 검증 메시지 (저장 시 자동 검증)
+        validation: {
+            title: 'API 키 검증이 필요합니다',
+            unverifiedProvidersMessage: '다음 provider의 검증이 완료되지 않았습니다:',
+            autoVerifyPrompt: '지금 자동으로 검증을 실행할까요?',
+            cancelNote: '(취소하면 저장하지 않고 돌아갑니다)',
+
+            unavailableTitle: '저장할 수 없습니다',
+            unavailableMessage: '다음 provider의 API 키 또는 모델이 사용 불가능합니다:',
+            modelLabel: '모델',
+            reasonLabel: '사유',
+            reasonInvalidKey: 'API 키가 유효하지 않거나 모델에 접근할 수 없습니다.',
+            solutionsTitle: '해결 방법:',
+            solution1: '1. API 키를 다시 확인하세요',
+            solution2: '2. 다른 모델을 선택해보세요',
+            solution3: '3. Provider 웹사이트에서 권한을 확인하세요',
+
+            uncertainTitle: '주의: 검증이 불확실합니다',
+            uncertainMessage: '일부 provider의 검증이 불확실합니다:',
+            uncertainReason: '검증 불확실 (네트워크 오류 또는 Rate Limit)',
+            proceedQuestion: '그래도 저장하시겠습니까?',
+            recommendation: '권장: "취소"를 누르고 "검증" 버튼으로 재시도해보세요.',
+        },
+
+        // Cache Info
+        cacheAge: '{{minutes}}분 전 갱신',
+        cached: '캐시됨',
     },
 };

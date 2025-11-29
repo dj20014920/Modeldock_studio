@@ -1,7 +1,7 @@
 
 import React, { useState, KeyboardEvent, useEffect } from 'react';
 import { Send, Copy, Zap, AlertTriangle, CheckCircle2, XCircle, BrainCircuit } from 'lucide-react';
-import { ActiveModel, DispatchMode, ModelId } from '../types';
+import { ActiveModel, DispatchMode, ModelId, ChatMessage } from '../types';
 import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
 import { clsx } from 'clsx';
 import { usePersistentState } from '../hooks/usePersistentState';
@@ -16,6 +16,7 @@ interface ChatMessageInputProps {
   forcedInputText?: string | null;
   onInputHandled?: () => void;
   onStatusUpdate?: (modelId: ModelId, status: 'idle' | 'sending' | 'success' | 'error') => void;
+  onMessageUpdate?: (instanceId: string, message: ChatMessage) => void;
 }
 
 type ActionStatus = 'idle' | 'copied' | 'sent' | 'error';
@@ -25,9 +26,40 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
   mainBrainId,
   forcedInputText,
   onInputHandled,
-  onStatusUpdate
+  onStatusUpdate,
+  onMessageUpdate
 }) => {
   const { t } = useTranslation();
+
+  // Helper: Get Model Config (supports BYOK models)
+  const getModelConfig = (modelId: string) => {
+    const standardModel = SUPPORTED_MODELS[modelId as keyof typeof SUPPORTED_MODELS];
+    if (standardModel) {
+      return standardModel;
+    }
+
+    if (modelId.startsWith('byok-')) {
+      const providerId = modelId.replace('byok-', '');
+      return {
+        id: modelId as any,
+        name: providerId.charAt(0).toUpperCase() + providerId.slice(1),
+        url: '',
+        iconColor: 'bg-purple-500',
+        themeColor: 'border-purple-300',
+        excludeFromBrainFlow: false
+      };
+    }
+
+    return {
+      id: modelId as any,
+      name: modelId,
+      url: '',
+      iconColor: 'bg-gray-500',
+      themeColor: 'border-gray-300',
+      excludeFromBrainFlow: false
+    };
+  };
+
   const [input, setInput] = useState('');
   const [mode, setMode] = usePersistentState<DispatchMode>('md_dispatch_mode', 'manual');
   const [showConsent, setShowConsent] = useState(false);
@@ -89,6 +121,37 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
           perplexityService.sendMessage(input);
         });
       }
+
+      // BYOK 모델 처리 (병렬 전송)
+      const byokModels = activeModels.filter(m => m.modelId.startsWith('byok-'));
+      byokModels.forEach(async (model) => {
+        // User 메시지 추가
+        onMessageUpdate?.(model.instanceId, {
+          role: 'user',
+          content: input,
+          timestamp: Date.now()
+        });
+
+        onStatusUpdate?.(model.modelId, 'sending');
+
+        try {
+          const response = await ChainOrchestrator.getInstance().sendMessage(model, input);
+
+          // Assistant 메시지 추가
+          onMessageUpdate?.(model.instanceId, {
+            role: 'assistant',
+            content: response,
+            timestamp: Date.now()
+          });
+
+          onStatusUpdate?.(model.modelId, 'success');
+          setTimeout(() => onStatusUpdate?.(model.modelId, 'idle'), 2000);
+        } catch (err) {
+          console.error(`BYOK send failed for ${model.modelId}`, err);
+          onStatusUpdate?.(model.modelId, 'error');
+          setTimeout(() => onStatusUpdate?.(model.modelId, 'idle'), 2000);
+        }
+      });
 
       const requestIdBase = `md - ${Date.now()} -${Math.random().toString(16).slice(2)} `;
       const allIframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[data-md-frame="true"]'));
@@ -293,18 +356,45 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
 
   const [isBrainFlowOpen, setIsBrainFlowOpen] = useState(false);
 
-  const handleBrainFlowStart = async (goal: string) => {
+  const handleBrainFlowStart = async (goal: string, mainPromptTemplate: string, synthesisPromptTemplate: string) => {
     if (!mainBrainId) {
       alert(t('brainFlowModal.errorNoMainBrain'));
       return;
     }
 
+    // 🔧 FIX: instanceId 기반 필터링으로 중복 모델 지원
+    // mainBrainId는 ModelId 타입이므로, 실제 메인 브레인 인스턴스를 찾아야 함
+    // 여러 개의 동일 모델이 있을 경우를 대비하여 첫 번째 매칭을 메인으로 사용
     const mainBrain = activeModels.find(m => m.modelId === mainBrainId);
-    const slaves = activeModels.filter(m => m.modelId !== mainBrainId);
 
     if (!mainBrain) return;
+
+    // 🚨 Vibe Coding Tool 제한 (Main Brain)
+    const mainBrainConfig = getModelConfig(mainBrain.modelId);
+    if (mainBrainConfig.excludeFromBrainFlow) {
+      alert(t('brainFlowModal.errorNotSupported', { modelName: mainBrainConfig.name }));
+      return;
+    }
+
+    // ✅ CRITICAL FIX: modelId 대신 instanceId로 필터링 + Vibe Coding Tool 제외
+    const slaves = activeModels.filter(m => {
+      // 메인 브레인 제외
+      if (m.instanceId === mainBrain.instanceId) return false;
+
+      // Vibe Coding Tool 제외
+      const config = getModelConfig(m.modelId);
+      return !config.excludeFromBrainFlow;
+    });
+
     if (slaves.length === 0) {
-      alert(t('brainFlowModal.errorNoSlaves'));
+      // 원래 슬레이브가 있었는데 Vibe Tool이라서 다 제외된 경우와, 아예 없었던 경우 구분 가능하지만
+      // 일단 단순하게 처리
+      const originalSlavesCount = activeModels.length - 1;
+      if (originalSlavesCount > 0 && slaves.length === 0) {
+        alert(t('brainFlowModal.warningExcludedModels') + '\n' + t('brainFlowModal.errorNoSlaves'));
+      } else {
+        alert(t('brainFlowModal.errorNoSlaves'));
+      }
       return;
     }
 
@@ -320,8 +410,8 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       slaves,
       goal,
       prompts: {
-        phase1: t('brainFlow.phase1'),
-        phase3: t('brainFlow.phase3')
+        phase1: mainPromptTemplate || t('brainFlow.phase1'),
+        phase3: synthesisPromptTemplate || t('brainFlow.phase3')
       },
       callbacks: {
         onPhaseStart: (phase) => {
@@ -360,13 +450,22 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
     ChainOrchestrator.getInstance().skipCurrentPhase();
   };
 
+  // 🔧 Calculate Brain Flow stats for Modal
+  const mainBrainInstance = activeModels.find(m => m.modelId === mainBrainId);
+  const potentialSlaves = activeModels.filter(m => m.instanceId !== mainBrainInstance?.instanceId);
+
+  const validSlaves = potentialSlaves.filter(m => !getModelConfig(m.modelId).excludeFromBrainFlow);
+  const excludedSlaves = potentialSlaves.filter(m => getModelConfig(m.modelId).excludeFromBrainFlow);
+  const excludedModelNames = excludedSlaves.map(m => getModelConfig(m.modelId).name);
+
   return (
     <div className="border-t border-slate-200 bg-white p-4 relative z-50 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
       <BrainFlowModal
         isOpen={isBrainFlowOpen}
         onClose={() => setIsBrainFlowOpen(false)}
         onStart={handleBrainFlowStart}
-        slaveCount={activeModels.length - (mainBrainId ? 1 : 0)}
+        slaveCount={validSlaves.length}
+        excludedModels={excludedModelNames}
       />
 
       <BrainFlowProgress
