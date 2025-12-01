@@ -17,6 +17,7 @@ interface ChatMessageInputProps {
   onInputHandled?: () => void;
   onStatusUpdate?: (modelId: ModelId, status: 'idle' | 'sending' | 'success' | 'error') => void;
   onMessageUpdate?: (instanceId: string, message: ChatMessage) => void;
+  onModelMetadataUpdate?: (instanceId: string, metadata: { conversationUrl?: string; historyMode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual'; lastPrompt?: string }) => void;
 }
 
 type ActionStatus = 'idle' | 'copied' | 'sent' | 'error';
@@ -27,7 +28,8 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
   forcedInputText,
   onInputHandled,
   onStatusUpdate,
-  onMessageUpdate
+  onMessageUpdate,
+  onModelMetadataUpdate
 }) => {
   const { t } = useTranslation();
 
@@ -112,11 +114,25 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
   const performAutoInjection = async () => {
     setLastActionStatus('idle');
     setErrorMessage('');
+    const successfulAutoInstances = new Set<string>();
 
     try {
       // Perplexity는 별도 서비스로 병렬 전송
       const isPerplexityActive = activeModels.some(m => m.modelId === 'perplexity');
       if (isPerplexityActive) {
+        const ts = Date.now();
+        const perplexityInstances = activeModels.filter(m => m.modelId === 'perplexity');
+        perplexityInstances.forEach(inst => {
+          onMessageUpdate?.(inst.instanceId, {
+            role: 'user',
+            content: input,
+            timestamp: ts
+          });
+          onModelMetadataUpdate?.(inst.instanceId, {
+            historyMode: 'auto-routing',
+            lastPrompt: input
+          });
+        });
         import('../services/perplexity-service').then(({ perplexityService }) => {
           perplexityService.sendMessage(input);
         });
@@ -130,6 +146,11 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
           role: 'user',
           content: input,
           timestamp: Date.now()
+        });
+
+        onModelMetadataUpdate?.(model.instanceId, {
+          historyMode: 'auto-routing',
+          lastPrompt: input
         });
 
         onStatusUpdate?.(model.modelId, 'sending');
@@ -168,7 +189,11 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         }))
         .filter((entry) => entry.selector && entry.selector.inputSelector);
 
-      if (activeSelectorEntries.length === 0) {
+      // ✅ BYOK 모델이 이미 처리되었으면 에러가 아님
+      // iframe 기반 모델이 없어도 BYOK 모델이 있으면 정상 작동
+      const hasBYOKModels = byokModels.length > 0;
+      
+      if (activeSelectorEntries.length === 0 && !hasBYOKModels && !isPerplexityActive) {
         setErrorMessage(t('chatInput.errorNoTargets'));
         setLastActionStatus('error');
         return;
@@ -178,7 +203,8 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         onStatusUpdate?.(modelId, status);
       };
 
-      let anySuccess = false;
+      // ✅ BYOK 모델도 성공으로 카운트 (이미 위에서 처리됨)
+      let anySuccess = isPerplexityActive || hasBYOKModels;
       const frameCache = new Map<string, HTMLIFrameElement>();
       const claimedFrames = new Set<HTMLIFrameElement>();
 
@@ -298,6 +324,19 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
             anySuccess = true;
             updateStatusFor(modelId, 'success');
             setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
+            successfulAutoInstances.add(instanceId);
+            if (targetFrame?.src) {
+              onModelMetadataUpdate?.(instanceId, {
+                conversationUrl: targetFrame.src,
+                historyMode: 'auto-routing',
+                lastPrompt: input
+              });
+            } else {
+              onModelMetadataUpdate?.(instanceId, {
+                historyMode: 'auto-routing',
+                lastPrompt: input
+              });
+            }
             break;
           } else {
             updateStatusFor(modelId, 'error');
@@ -310,6 +349,14 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       }
 
       if (anySuccess) {
+        const ts = Date.now();
+        successfulAutoInstances.forEach((instanceId) => {
+          onMessageUpdate?.(instanceId, {
+            role: 'user',
+            content: input,
+            timestamp: ts
+          });
+        });
         setLastActionStatus('sent');
         setInput('');
       } else {
@@ -369,6 +416,20 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
 
     if (!mainBrain) return;
 
+    const seedBrainFlowMetadata = (instanceId: string, prompt?: string) => {
+      const iframe = document.querySelector(`iframe[data-instance-id="${instanceId}"]`) as HTMLIFrameElement | null;
+      const base: { conversationUrl?: string; historyMode?: 'brainflow'; lastPrompt?: string } = {
+        historyMode: 'brainflow',
+        lastPrompt: prompt || goal
+      };
+      if (iframe?.src) {
+        base.conversationUrl = iframe.src;
+      }
+      onModelMetadataUpdate?.(instanceId, base);
+    };
+
+    seedBrainFlowMetadata(mainBrain.instanceId, goal);
+
     // 🚨 Vibe Coding Tool 제한 (Main Brain)
     const mainBrainConfig = getModelConfig(mainBrain.modelId);
     if (mainBrainConfig.excludeFromBrainFlow) {
@@ -398,6 +459,15 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       return;
     }
 
+    slaves.forEach(slave => seedBrainFlowMetadata(slave.instanceId));
+
+    const goalTimestamp = Date.now();
+    onMessageUpdate?.(mainBrain.instanceId, {
+      role: 'user',
+      content: `[BrainFlow Goal]\n${goal}`,
+      timestamp: goalTimestamp
+    });
+
     // Dynamic import to avoid circular dependencies or load time issues
     // const { ChainOrchestrator } = await import('../services/chain-orchestrator');
 
@@ -423,22 +493,42 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
             setBfCompletedModels([]);
           }
         },
-        onModelStart: (modelId) => {
+        onModelStart: (modelId, instanceId) => {
           onStatusUpdate?.(modelId, 'sending');
+          if (instanceId) seedBrainFlowMetadata(instanceId);
         },
-        onModelUpdate: (_modelId, _text) => {
+        onModelUpdate: (_modelId, _text, instanceId) => {
           // Optional: Stream text
+          if (instanceId) seedBrainFlowMetadata(instanceId);
         },
-        onModelComplete: (modelId, _text) => {
+        onModelComplete: (modelId, text, instanceId) => {
           onStatusUpdate?.(modelId, 'success');
           setBfWaitingModels(prev => prev.filter(id => id !== modelId));
           setBfCompletedModels(prev => [...prev, modelId]);
           setTimeout(() => onStatusUpdate?.(modelId, 'idle'), 2000);
+          if (instanceId && text) {
+            onMessageUpdate?.(instanceId, {
+              role: 'assistant',
+              content: text,
+              timestamp: Date.now()
+            });
+            seedBrainFlowMetadata(instanceId);
+          }
         },
         onError: (err) => {
           setErrorMessage(err.message);
           setLastActionStatus('error');
           setBrainFlowPhase(0); // Reset on error
+        },
+        onConversationLink: (instanceId, url, modelId) => {
+          onModelMetadataUpdate?.(instanceId, {
+            conversationUrl: url,
+            historyMode: 'brainflow',
+            lastPrompt: goal
+          });
+          if (modelId) {
+            onStatusUpdate?.(modelId, 'sending');
+          }
         }
       }
     }).finally(() => {

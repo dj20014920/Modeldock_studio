@@ -192,7 +192,7 @@ function classifyModels(rawModels) {
         classified[primaryProviderKey].push(transformedModel);
 
         // 5. openrouter 카테고리에도 모든 모델 추가 (복사본)
-        classified['openrouter'].push({...transformedModel});
+        classified['openrouter'].push({ ...transformedModel });
     }
 
     // 각 제공자별로 인기순 정렬 (popularity 높은 순)
@@ -277,18 +277,21 @@ function transformModel(rawModel, providerKey) {
         modelIdLower.includes('gemini-2') || modelIdLower.includes('gemini-pro')) {
         seriesBonus = 100; // Tier S
     } else if (modelIdLower.includes('llama-3.3') || modelIdLower.includes('llama-3.1-405b') ||
-               modelIdLower.includes('claude-3') || modelIdLower.includes('gemini-1.5') ||
-               modelIdLower.includes('qwen-2.5-72b') || modelIdLower.includes('deepseek-r1')) {
+        modelIdLower.includes('claude-3') || modelIdLower.includes('gemini-1.5') ||
+        modelIdLower.includes('qwen-2.5-72b') || modelIdLower.includes('deepseek-r1')) {
         seriesBonus = 80; // Tier A
     } else if (modelIdLower.includes('gpt-3.5') || modelIdLower.includes('llama-3.1-70b') ||
-               modelIdLower.includes('mixtral') || modelIdLower.includes('qwen-2.5')) {
+        modelIdLower.includes('mixtral') || modelIdLower.includes('qwen-2.5')) {
         seriesBonus = 60; // Tier B
     } else if (modelIdLower.includes('llama-3') || modelIdLower.includes('mistral')) {
         seriesBonus = 40; // Tier C
     }
 
     // 5. 무료 모델은 추가 가산점 (+50점)
-    const isFree = rawModel.pricing?.prompt === "0" && rawModel.pricing?.completion === "0";
+    // 가격이 0이거나 ID에 :free가 포함되거나 이름에 (free)가 포함된 경우
+    const isFree = (rawModel.pricing?.prompt === "0" && rawModel.pricing?.completion === "0") ||
+        rawModel.id.endsWith(':free') ||
+        (rawModel.name || '').toLowerCase().includes('(free)');
     const freeBonus = isFree ? 50 : 0;
 
     const popularityScore = contextScore + recencyScore + providerScore + seriesBonus + freeBonus;
@@ -304,6 +307,7 @@ function transformModel(rawModel, providerKey) {
         // parseFloat로 문자열 "0"도 올바르게 처리
         costPer1MInput: parseFloat(rawModel.pricing?.prompt || 0) * 1000000,
         costPer1MOutput: parseFloat(rawModel.pricing?.completion || 0) * 1000000,
+        isFree, // ✅ 클라이언트에 무료 여부 전달
         capabilities,
         supportsReasoningEffort,
         supportsThinkingBudget,
@@ -403,7 +407,7 @@ export default {
         try {
             // 🆕 URL 파라미터에서 force 확인 (사용자가 명시적으로 새로고침 요청)
             const forceRefresh = url.searchParams.get('force') === '1' ||
-                                 url.searchParams.get('refresh') === '1';
+                url.searchParams.get('refresh') === '1';
 
             if (forceRefresh) {
                 console.log('[Worker] Force refresh requested - bypassing cache');

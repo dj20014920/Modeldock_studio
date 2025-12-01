@@ -46,7 +46,7 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
 
     const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState<number | null>(null);
 
-    const apiService = new BYOKAPIService();
+    const apiService = BYOKAPIService.getInstance();
 
     useEffect(() => {
         if (isOpen) {
@@ -143,8 +143,8 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
         const configuredProviders = (Object.keys(settings.providers) as BYOKProviderId[])
             .filter(id => {
                 const config = settings.providers[id];
-                // API 키가 있고 && 모델도 선택된 경우만 검증 필요
-                return config?.apiKey && config?.selectedVariant;
+                // ✅ 멀티 선택: selectedVariants 배열에 1개 이상 있어야 함
+                return config?.apiKey && config?.selectedVariants && config.selectedVariants.length > 0;
             });
 
         if (configuredProviders.length === 0) {
@@ -196,9 +196,10 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
 
                 let modelVerification: VerificationResult = 'uncertain';
                 if (isValid) {
-                    const selectedVariantId = settings.providers[providerId]?.selectedVariant;
-                    if (selectedVariantId) {
-                        modelVerification = await apiService.verifyModelAvailability(providerId, apiKey, selectedVariantId);
+                    // ✅ 멀티 선택: 첫 번째 모델로 검증 (대표 모델)
+                    const selectedVariants = settings.providers[providerId]?.selectedVariants;
+                    if (selectedVariants && selectedVariants.length > 0) {
+                        modelVerification = await apiService.verifyModelAvailability(providerId, apiKey, selectedVariants[0]);
                     } else {
                         // 선택된 모델이 없으면 'uncertain' (검증 불가)
                         modelVerification = 'uncertain';
@@ -244,8 +245,8 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
             summaryMessage += `✅ ${t('common.success')} (${availableProviders.length}): \n`;
             availableProviders.forEach(id => {
                 const provider = BYOK_PROVIDERS[id];
-                const variant = settings.providers[id]?.selectedVariant;
-                summaryMessage += `  • ${provider.name} - ${variant} \n`;
+                const variants = settings.providers[id]?.selectedVariants || [];
+                summaryMessage += `  • ${provider.name} - ${variants.join(', ')} \n`;
             });
             summaryMessage += '\n';
         }
@@ -254,8 +255,8 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
             summaryMessage += `❌ ${t('byok.validation.unavailableTitle')} (${unavailableProviders.length}): \n`;
             unavailableProviders.forEach(id => {
                 const provider = BYOK_PROVIDERS[id];
-                const variant = settings.providers[id]?.selectedVariant;
-                summaryMessage += `  • ${provider.name} - ${variant} \n`;
+                const variants = settings.providers[id]?.selectedVariants || [];
+                summaryMessage += `  • ${provider.name} - ${variants.join(', ')} \n`;
                 summaryMessage += `    ${t('byok.validation.reasonLabel')}: ${t('byok.validation.reasonInvalidKey')} \n`;
             });
             summaryMessage += '\n';
@@ -265,8 +266,8 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
             summaryMessage += `⚠️ ${t('byok.validation.uncertainTitle')} (${uncertainProviders.length}): \n`;
             uncertainProviders.forEach(id => {
                 const provider = BYOK_PROVIDERS[id];
-                const variant = settings.providers[id]?.selectedVariant;
-                summaryMessage += `  • ${provider.name} - ${variant} \n`;
+                const variants = settings.providers[id]?.selectedVariants || [];
+                summaryMessage += `  • ${provider.name} - ${variants.join(', ')} \n`;
                 summaryMessage += `    ${t('byok.validation.reasonLabel')}: ${t('byok.validation.uncertainReason')} \n`;
             });
             summaryMessage += '\n';
@@ -337,6 +338,13 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
         const trimmedUpdates = { ...updates };
         if ('apiKey' in trimmedUpdates && typeof trimmedUpdates.apiKey === 'string') {
             trimmedUpdates.apiKey = trimmedUpdates.apiKey.trim();
+
+            // ✅ Edge Case: API 키 길이 제한 (chrome.storage.local 한계 방지)
+            const MAX_API_KEY_LENGTH = 1000;
+            if (trimmedUpdates.apiKey.length > MAX_API_KEY_LENGTH) {
+                alert(`⚠️ API Key is too long!\\n\\nMaximum allowed: ${MAX_API_KEY_LENGTH} characters\\nYour key: ${trimmedUpdates.apiKey.length} characters\\n\\nPlease check if you copied the correct key.`);
+                return;
+            }
         }
 
         setSettings((prev) => ({
@@ -344,7 +352,7 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
             providers: {
                 ...prev.providers,
                 [providerId]: {
-                    ...prev.providers[providerId] || { apiKey: '', selectedVariant: BYOK_PROVIDERS[providerId].defaultVariant },
+                    ...prev.providers[providerId] || { apiKey: '', selectedVariants: [] },
                     ...trimmedUpdates,
                 },
             },
@@ -356,7 +364,7 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
         }
 
         // ✅ 모델이 변경되면 검증 상태 초기화
-        if ('selectedVariant' in updates) {
+        if ('selectedVariants' in updates) {
             setValidationStatus((prev) => ({ ...prev, [providerId]: null }));
         }
     };
@@ -371,9 +379,10 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
         // 모델 가용성 검증 (3가지 상태: available, unavailable, uncertain)
         let modelVerification: VerificationResult = 'uncertain';
         if (isValid) {
-            const selectedVariantId = settings.providers[providerId]?.selectedVariant;
-            if (selectedVariantId) {
-                modelVerification = await apiService.verifyModelAvailability(providerId, apiKey, selectedVariantId);
+            // ✅ 멀티 선택: 첫 번째 모델로 검증
+            const selectedVariants = settings.providers[providerId]?.selectedVariants;
+            if (selectedVariants && selectedVariants.length > 0) {
+                modelVerification = await apiService.verifyModelAvailability(providerId, apiKey, selectedVariants[0]);
             } else {
                 // 선택된 모델이 없으면 'uncertain' (검증 불가)
                 modelVerification = 'uncertain';
@@ -738,7 +747,11 @@ function ProviderConfig({
         });
     }
 
-    const selectedVariant = availableVariants.find((v) => v.id === config?.selectedVariant) || availableVariants[0];
+    // ✅ 멀티 선택: selectedVariants 배열 사용
+    const selectedVariants = config?.selectedVariants || [];
+    const isVariantSelected = (variantId: string) => selectedVariants.includes(variantId);
+    // 대표 variant (파라미터 표시용): 첫 번째 선택된 모델 또는 기본값
+    const primaryVariant = availableVariants.find(v => selectedVariants.includes(v.id)) || availableVariants[0];
 
     // Filter and sort variants based on search, category, and sort order
     const filteredVariants = useMemo(() => {
@@ -749,7 +762,7 @@ function ProviderConfig({
             if (!matchesSearch) return false;
 
             if (activeCategory === 'all') return true;
-            if (activeCategory === 'free') return variant.costPer1MInput === 0 && variant.costPer1MOutput === 0;
+            if (activeCategory === 'free') return variant.isFree === true;
             if (activeCategory === 'reasoning') return variant.capabilities?.includes('reasoning');
             if (activeCategory === 'coding') return variant.capabilities?.includes('coding');
             if (activeCategory === 'vision') return variant.capabilities?.includes('vision');
@@ -960,25 +973,40 @@ function ProviderConfig({
                         <button
                             key={variant.id}
                             onClick={() => {
-                                // ✅ 토글 로직: 같은 모델 클릭 시 선택 해제
-                                if (config?.selectedVariant === variant.id) {
-                                    onUpdate(providerId, { selectedVariant: undefined });
-                                } else {
-                                    onUpdate(providerId, { selectedVariant: variant.id });
-                                }
+                                // ✅ 멀티 선택 토글: 체크박스처럼 동작
+                                const currentSelected = config?.selectedVariants || [];
+                                const newSelected = currentSelected.includes(variant.id)
+                                    ? currentSelected.filter(id => id !== variant.id)  // 제거
+                                    : [...currentSelected, variant.id];  // 추가
+                                onUpdate(providerId, { selectedVariants: newSelected });
                             }}
-                            className={`relative p-4 rounded-xl border-2 text-left transition-all duration-200 group ${config?.selectedVariant === variant.id
+                            className={`relative p-4 rounded-xl border-2 text-left transition-all duration-200 group ${isVariantSelected(variant.id)
                                 ? 'border-indigo-500 bg-indigo-50/50 shadow-md'
                                 : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm'
-                                } `}
+                                }`}
                         >
                             <div className="flex justify-between items-start mb-2">
-                                <span className="font-bold text-gray-900 group-hover:text-indigo-700 transition-colors truncate pr-2">{variant.name}</span>
+                                <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                                    <span className="font-bold text-gray-900 group-hover:text-indigo-700 transition-colors truncate">
+                                        {variant.name}
+                                    </span>
+                                    {providerId === 'openrouter' && (
+                                        <a
+                                            href={`https://openrouter.ai/${variant.id}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="text-gray-400 hover:text-indigo-600 transition-colors flex-shrink-0 p-0.5 hover:bg-indigo-50 rounded"
+                                            title="View on OpenRouter"
+                                        >
+                                            <ExternalLink className="w-3.5 h-3.5" />
+                                        </a>
+                                    )}
+                                </div>
                                 <div className="flex gap-1 flex-shrink-0">
                                     {variant.isNew && (
                                         <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase rounded-full tracking-wide">NEW</span>
                                     )}
-                                    {/* Recommended 뱃지는 정적 데이터에만 있을 수 있으므로 체크 */}
                                     {(variant as any).isRecommended && (
                                         <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full tracking-wide">TOP</span>
                                     )}
@@ -999,21 +1027,17 @@ function ProviderConfig({
                                 <span className="bg-gray-100 px-2 py-1 rounded-md">
                                     {variant.contextWindow.toLocaleString()} ctx
                                 </span>
-                                {/* 가격 정보 표시 */}
-                                {/* 가격 정보 표시 */}
-                                {providerId === 'openrouter' && variant.costPer1MInput === 0 && variant.costPer1MOutput === 0 ? (
+                                {variant.isFree ? (
                                     <span className="text-green-600 font-bold">Free</span>
-                                ) : variant.costPer1MInput > 0 ? (
+                                ) : variant.costPer1MInput > 0 || variant.costPer1MOutput > 0 ? (
                                     <span>
                                         ${variant.costPer1MInput.toFixed(2)}/${variant.costPer1MOutput.toFixed(2)}
                                     </span>
                                 ) : (
-                                    null
+                                    <span className="text-gray-400 italic">Pricing varies</span>
                                 )}
                             </div>
-                            {config?.selectedVariant === variant.id && (
-                                <div className="absolute top-3 right-3 w-3 h-3 bg-indigo-500 rounded-full shadow-sm ring-2 ring-white" />
-                            )}
+                            {/* ✅ 체크박스 제거: 기존 border/bg 선택 UI만 사용 */}
                         </button>
                     ))}
                     {filteredVariants.length === 0 && (
@@ -1026,7 +1050,7 @@ function ProviderConfig({
                 {/* Advanced Parameters */}
                 <div className="space-y-6 pt-4 border-t border-gray-100">
                     {/* Reasoning Effort (OpenAI o1/o3/GPT-5) */}
-                    {(selectedVariant?.supportsReasoningEffort || selectedVariant?.capabilities?.includes('reasoning')) && providerId === 'openai' && (
+                    {(primaryVariant?.supportsReasoningEffort || primaryVariant?.capabilities?.includes('reasoning')) && providerId === 'openai' && (
                         <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
                             <div className="flex items-center justify-between">
                                 <label className="text-sm font-bold text-gray-900 flex items-center gap-2">
@@ -1056,7 +1080,7 @@ function ProviderConfig({
                     )}
 
                     {/* Thinking Budget (Anthropic) */}
-                    {(selectedVariant?.supportsThinkingBudget || (providerId === 'anthropic' && selectedVariant?.capabilities?.includes('reasoning'))) && (
+                    {(primaryVariant?.supportsThinkingBudget || (providerId === 'anthropic' && primaryVariant?.capabilities?.includes('reasoning'))) && (
                         <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
                             <div className="flex items-center justify-between">
                                 <label className="text-sm font-bold text-gray-900 flex items-center gap-2">
@@ -1071,7 +1095,7 @@ function ProviderConfig({
                             <input
                                 type="range"
                                 min={0}
-                                max={Math.min(32000, (selectedVariant.maxOutputTokens || 8192) - 1000)}
+                                max={Math.min(32000, (primaryVariant.maxOutputTokens || 8192) - 1000)}
                                 step={1024}
                                 value={config?.thinkingBudget || 0}
                                 onChange={(e) => onUpdate(providerId, { thinkingBudget: parseInt(e.target.value) })}
@@ -1084,7 +1108,7 @@ function ProviderConfig({
                     )}
 
                     {/* Temperature (Standard) */}
-                    {provider.supportsTemperature && !selectedVariant?.id.startsWith('o1') && !selectedVariant?.id.startsWith('o3') && (
+                    {provider.supportsTemperature && !primaryVariant?.id.startsWith('o1') && !primaryVariant?.id.startsWith('o3') && (
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
                                 <label className="text-sm font-bold text-gray-900 flex items-center gap-2">

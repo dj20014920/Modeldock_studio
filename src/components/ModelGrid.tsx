@@ -12,6 +12,10 @@ interface ModelGridProps {
     onSetMainBrain: (instanceId: string) => void;
     onCloseInstance: (instanceId: string) => void;
     onSendMessage?: (instanceId: string, message: string) => Promise<void>; // BYOK 개별 전송
+    onLoadHistory?: (id: string) => void;
+    onNewChat?: (instanceId: string) => void;
+    currentConversationId?: string | null;
+    onLoadBYOKHistory?: (historyId: string, targetInstanceId: string) => void;
 }
 
 export const ModelGrid: React.FC<ModelGridProps> = ({
@@ -19,7 +23,11 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
     mainBrainInstanceId,
     onSetMainBrain,
     onCloseInstance,
-    onSendMessage
+    onSendMessage,
+    onLoadHistory,
+    onNewChat,
+    currentConversationId,
+    onLoadBYOKHistory
 }) => {
     const { t } = useTranslation();
 
@@ -142,11 +150,17 @@ export const ModelGrid: React.FC<ModelGridProps> = ({
                         <ModelCard
                             model={modelConfig}
                             instanceId={activeModel.instanceId}
+                            conversationUrl={activeModel.conversationUrl}
                             onSetMainBrain={() => onSetMainBrain(activeModel.instanceId)}
                             onClose={() => onCloseInstance(activeModel.instanceId)}
                             status={activeModel.lastStatus}
                             messages={activeModel.messages}
                             onSendMessage={onSendMessage ? async (msg) => onSendMessage(activeModel.instanceId, msg) : undefined}
+                            onLoadHistory={onLoadHistory}
+                            onNewChat={onNewChat ? () => onNewChat(activeModel.instanceId) : undefined}
+                            currentConversationId={currentConversationId}
+                            onLoadBYOKHistory={onLoadBYOKHistory ? (id) => onLoadBYOKHistory(id, activeModel.instanceId) : undefined}
+                            byokHistoryId={activeModel.byokHistoryId}
                         />
                     </div>
                 );

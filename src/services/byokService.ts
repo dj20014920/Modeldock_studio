@@ -4,7 +4,9 @@ import {
     ReasoningEffort,
     BYOKModelVariant,
     ThinkingLevel,
-    VerificationResult
+    VerificationResult,
+    ChatMessage,
+    ReasoningDetail
 } from '../types';
 import { BYOK_PROVIDERS } from '../byokProviders';
 
@@ -34,6 +36,7 @@ interface APICallParams {
     variant: string;
     prompt: string;
     systemPrompt?: string;
+    historyMessages?: ChatMessage[]; // full conversation to support multi-turn
 
     // Basic Sampling
     temperature?: number;
@@ -75,7 +78,8 @@ interface APICallParams {
 interface APIResponse {
     success: boolean;
     content?: string;
-    reasoning?: string;
+    reasoning?: string;               // 단순 텍스트 reasoning (DeepSeek R1 등)
+    reasoningDetails?: ReasoningDetail[]; // OpenRouter 표준 reasoning_details
     error?: string;
     usage?: {
         promptTokens: number;
@@ -140,8 +144,8 @@ abstract class AbstractBYOKAdapter implements BYOKAdapter {
                 console.log(`[BYOK] ✅ Key validated for ${this.providerId} via /models endpoint`);
                 return true;
             }
-        } catch (e) {
-            console.warn(`[BYOK] /models validation failed for ${this.providerId}, trying fallback...`);
+        } catch (e: any) {
+            console.warn(`[BYOK] /models validation failed for ${this.providerId}: ${e.message}`);
         }
 
         // Strategy 2: Try fetchModels (might return more data)
@@ -243,11 +247,26 @@ class OpenAICompatibleAdapter extends AbstractBYOKAdapter {
                 headers[headerFormat.apiKeyHeader] = params.apiKey;
             }
 
-            const messages = [];
-            if (params.systemPrompt) {
-                messages.push({ role: 'system', content: params.systemPrompt });
-            }
-            messages.push({ role: 'user', content: params.prompt });
+            const messages = (() => {
+                const history = params.historyMessages || [];
+                if (history.length > 0) {
+                    const mapped = history.map(msg => ({
+                        role: msg.role === 'assistant' ? 'assistant' : msg.role === 'system' ? 'system' : 'user',
+                        content: msg.content
+                    }));
+                    if (params.systemPrompt && mapped[0]?.role !== 'system') {
+                        return [{ role: 'system', content: params.systemPrompt }, ...mapped];
+                    }
+                    if (params.systemPrompt && !mapped.some(m => m.role === 'system')) {
+                        mapped.unshift({ role: 'system', content: params.systemPrompt });
+                    }
+                    return mapped;
+                }
+                const fallback: any[] = [];
+                if (params.systemPrompt) fallback.push({ role: 'system', content: params.systemPrompt });
+                fallback.push({ role: 'user', content: params.prompt });
+                return fallback;
+            })();
 
             const body: any = {
                 model: params.variant,
@@ -357,17 +376,8 @@ class OpenAICompatibleAdapter extends AbstractBYOKAdapter {
 
     // 🆕 실제 API를 통해 모델 리스트 가져오기
     async listModels(apiKey: string): Promise<BYOKRawModel[] | null> {
-        const endpoints: Record<string, string> = {
-            openai: 'https://api.openai.com/v1/models',
-            mistral: 'https://api.mistral.ai/v1/models',
-            deepseek: 'https://api.deepseek.com/models',
-            xai: 'https://api.x.ai/v1/models',
-            qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models',
-            kimi: 'https://api.moonshot.cn/v1/models',
-            openrouter: 'https://openrouter.ai/api/v1/models',
-        };
-
-        const endpoint = endpoints[this.providerId];
+        // ✅ DRY 원칙: byokProviders.ts의 apiEndpoint를 단일 진실의 원천으로 사용
+        const endpoint = `${this.providerConfig.apiEndpoint}/models`;
         if (!endpoint) return null;
 
         try {
@@ -410,10 +420,16 @@ class OpenAICompatibleAdapter extends AbstractBYOKAdapter {
             'Content-Type': 'application/json',
         };
 
+        // ✨ UX Perfection: 사용자가 실수로 "Bearer "를 포함해서 복사했을 경우 자동 제거
+        let cleanKey = apiKey.trim();
+        if (headerFormat.apiKeyPrefix === 'Bearer ' && cleanKey.startsWith('Bearer ')) {
+            cleanKey = cleanKey.replace(/^Bearer\s+/i, '');
+        }
+
         if (headerFormat.apiKeyPrefix) {
-            headers[headerFormat.apiKeyHeader] = `${headerFormat.apiKeyPrefix}${apiKey}`;
+            headers[headerFormat.apiKeyHeader] = `${headerFormat.apiKeyPrefix}${cleanKey}`;
         } else {
-            headers[headerFormat.apiKeyHeader] = apiKey;
+            headers[headerFormat.apiKeyHeader] = cleanKey;
         }
 
         return headers;
@@ -472,7 +488,7 @@ class AnthropicAdapter extends AbstractBYOKAdapter {
     async listModels(apiKey: string): Promise<BYOKRawModel[] | null> {
         try {
             console.log('[BYOK] 📥 Fetching raw model list from anthropic...');
-            const response = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+            const response = await fetch(`${this.providerConfig.apiEndpoint}/models?limit=100`, {
                 method: 'GET',
                 headers: {
                     'x-api-key': apiKey,
@@ -512,8 +528,8 @@ class AnthropicAdapter extends AbstractBYOKAdapter {
                 'Content-Type': 'application/json'
             };
 
-            // Conditional Beta Header
-            if (params.variant.includes('claude-3-5') || params.variant.includes('sonnet-20241022')) {
+            // Conditional Beta Header (Future Proofing for 3.7)
+            if (params.variant.includes('claude-3-5') || params.variant.includes('sonnet-20241022') || params.variant.includes('claude-3-7')) {
                 headers['anthropic-beta'] = 'models-2024-10-22';
             }
 
@@ -523,13 +539,77 @@ class AnthropicAdapter extends AbstractBYOKAdapter {
             const body: any = {
                 model: params.variant,
                 max_tokens: params.maxTokens || 4096,
-                messages: [
-                    { role: 'user', content: params.prompt }
-                ]
+                messages: []
             };
 
+            const history = params.historyMessages || [];
+            if (history.length > 0) {
+                const filteredHistory = history.filter(m => m.role === 'user' || m.role === 'assistant');
+
+                // ✅ Anthropic Prompt Caching 구현
+                // 공식 문서: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+                // - 시스템 프롬프트에 cache_control 추가 (90% 비용 절감)
+                // - 마지막 메시지에 cache_control 추가 (20블록 lookback 보장)
+                body.messages = filteredHistory.map((m, index) => {
+                    const convertedContent = this.convertContentForAnthropic(m.content);
+                    const isLastMessage = index === filteredHistory.length - 1;
+
+                    // 마지막 메시지에 cache_control 추가 (멀티턴 대화 캐싱 최적화)
+                    if (isLastMessage && typeof convertedContent === 'string') {
+                        return {
+                            role: m.role,
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: convertedContent,
+                                    cache_control: { type: 'ephemeral' }
+                                }
+                            ]
+                        };
+                    }
+
+                    // 마지막 메시지가 배열인 경우 (이미지 등 포함)
+                    if (isLastMessage && Array.isArray(convertedContent)) {
+                        const lastPart = convertedContent[convertedContent.length - 1];
+                        if (lastPart && lastPart.type === 'text') {
+                            return {
+                                role: m.role,
+                                content: [
+                                    ...convertedContent.slice(0, -1),
+                                    { ...lastPart, cache_control: { type: 'ephemeral' } }
+                                ]
+                            };
+                        }
+                    }
+
+                    return {
+                        role: m.role,
+                        content: convertedContent
+                    };
+                });
+            } else {
+                // 단일 메시지도 캐싱 적용
+                body.messages = [{
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: params.prompt,
+                            cache_control: { type: 'ephemeral' }
+                        }
+                    ]
+                }];
+            }
+
+            // ✅ 시스템 프롬프트에 cache_control 추가 (가장 효과적인 캐싱 지점)
             if (params.systemPrompt) {
-                body.system = params.systemPrompt;
+                body.system = [
+                    {
+                        type: 'text',
+                        text: params.systemPrompt,
+                        cache_control: { type: 'ephemeral' }
+                    }
+                ];
             }
 
             // Extended Thinking - Only if supported
@@ -636,6 +716,59 @@ class AnthropicAdapter extends AbstractBYOKAdapter {
             return [];
         }
     }
+
+    /**
+     * Convert MessageContent to Anthropic API format
+     * Anthropic uses a different structure for images:
+     * { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '...' } }
+     */
+    private convertContentForAnthropic(content: any): any {
+        // 단순 문자열 (하위 호환)
+        if (typeof content === 'string') {
+            return content;
+        }
+
+        // MessageContentPart[] (이미지 포함)
+        if (Array.isArray(content)) {
+            return content.map(part => {
+                if (part.type === 'text') {
+                    return { type: 'text', text: part.text };
+                } else if (part.type === 'image_url') {
+                    // base64 URL 파싱: data:image/jpeg;base64,/9j/4AAQ...
+                    const url = part.image_url.url;
+                    if (url.startsWith('data:')) {
+                        const matches = url.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+                        if (matches) {
+                            const mediaType = matches[1]; // image/jpeg, image/png 등
+                            const base64Data = matches[2];
+                            return {
+                                type: 'image',
+                                source: {
+                                    type: 'base64',
+                                    media_type: mediaType,
+                                    data: base64Data
+                                }
+                            };
+                        }
+                    }
+                    // HTTP URL인 경우 (Anthropic은 URL도 지원)
+                    if (url.startsWith('http://') || url.startsWith('https://')) {
+                        return {
+                            type: 'image',
+                            source: {
+                                type: 'url',
+                                url: url
+                            }
+                        };
+                    }
+                }
+                return part; // Fallback
+            });
+        }
+
+        // Fallback
+        return content;
+    }
 }
 
 /**
@@ -645,7 +778,7 @@ class GoogleAdapter extends AbstractBYOKAdapter {
     async listModels(apiKey: string): Promise<BYOKRawModel[] | null> {
         try {
             console.log('[BYOK] 📥 Fetching raw model list from google...');
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+            const response = await fetch(`${this.providerConfig.apiEndpoint}/models?key=${apiKey}`);
 
             if (!response.ok) {
                 console.warn(`[BYOK] Failed to list models for google: ${response.status}`);
@@ -677,9 +810,7 @@ class GoogleAdapter extends AbstractBYOKAdapter {
             const url = `${apiEndpoint}/models/${params.variant}:generateContent?key=${params.apiKey}`;
 
             const body: any = {
-                contents: [
-                    { parts: [{ text: params.prompt }] }
-                ],
+                contents: [],
                 generationConfig: {
                     maxOutputTokens: params.maxTokens || 8192,
                     temperature: params.temperature ?? this.providerConfig.defaultTemperature,
@@ -687,17 +818,25 @@ class GoogleAdapter extends AbstractBYOKAdapter {
                     topK: params.topK
                 },
                 safetySettings: [
-                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
                 ]
             };
 
+            const history = params.historyMessages || [];
+            if (history.length > 0) {
+                body.contents = history.map(m => ({
+                    role: m.role === 'assistant' ? 'model' : m.role,
+                    parts: this.convertContentForGoogle(m.content)
+                }));
+            } else {
+                body.contents = [{ role: 'user', parts: [{ text: params.prompt }] }];
+            }
+
             if (params.systemPrompt) {
-                body.systemInstruction = {
-                    parts: [{ text: params.systemPrompt }]
-                };
+                body.systemInstruction = { parts: [{ text: params.systemPrompt }] };
             }
 
             const controller = new AbortController();
@@ -741,6 +880,70 @@ class GoogleAdapter extends AbstractBYOKAdapter {
         });
     }
 
+    /**
+     * ✨ Google Gemini API용 Content 변환 메서드
+     * MessageContent → Google parts[] 형식으로 변환
+     *
+     * Google 형식:
+     * - Text: { text: 'content' }
+     * - Image (base64): { inlineData: { mimeType: 'image/jpeg', data: 'base64data' } }
+     *
+     * @param content - MessageContent (string | MessageContentPart[])
+     * @returns Google parts[] 형식 배열
+     */
+    private convertContentForGoogle(content: any): Array<{ text: string } | { inlineData: { mimeType: string, data: string } }> {
+        // 단순 문자열 (하위 호환)
+        if (typeof content === 'string') {
+            return [{ text: content }];
+        }
+
+        // MessageContentPart[] (이미지 포함)
+        if (Array.isArray(content)) {
+            const parts: Array<{ text: string } | { inlineData: { mimeType: string, data: string } }> = [];
+
+            for (const part of content) {
+                if (part.type === 'text') {
+                    // Text part → { text: '...' }
+                    parts.push({ text: part.text });
+                } else if (part.type === 'image_url') {
+                    // Image part → { inlineData: { mimeType: '...', data: '...' } }
+                    const url = part.image_url.url;
+
+                    // base64 URL 파싱: data:image/jpeg;base64,/9j/4AAQ...
+                    if (url.startsWith('data:')) {
+                        const matches = url.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+                        if (matches) {
+                            const mimeType = matches[1]; // image/jpeg, image/png 등
+                            const base64Data = matches[2];
+
+                            parts.push({
+                                inlineData: {
+                                    mimeType: mimeType,
+                                    data: base64Data
+                                }
+                            });
+                        } else {
+                            console.warn('[GoogleAdapter] Invalid base64 image URL format:', url.substring(0, 50));
+                        }
+                    } else if (url.startsWith('http://') || url.startsWith('https://')) {
+                        // ⚠️ Google Gemini는 HTTP URL을 직접 지원하지 않음
+                        // 클라이언트 측에서 base64로 변환 필요
+                        console.warn('[GoogleAdapter] HTTP/HTTPS image URLs are not natively supported by Google Gemini. Use base64 instead.');
+                        // Fallback: 에러 대신 경고만 출력하고 건너뜀
+                    } else {
+                        console.warn('[GoogleAdapter] Unknown image URL format:', url.substring(0, 50));
+                    }
+                }
+            }
+
+            return parts;
+        }
+
+        // Fallback (예상치 못한 타입)
+        console.warn('[GoogleAdapter] Unexpected content type:', typeof content);
+        return [{ text: String(content) }];
+    }
+
     async fetchModels(apiKey: string): Promise<BYOKModelVariant[]> {
         const { apiEndpoint } = this.providerConfig;
         const url = `${apiEndpoint}/models?key=${apiKey}`;
@@ -780,10 +983,236 @@ class GoogleAdapter extends AbstractBYOKAdapter {
 
 /**
  * OpenRouter Adapter
+ * ✅ Reasoning/Thinking 지원 (OpenRouter 통합 reasoning 파라미터)
+ * 문서: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
  */
 class OpenRouterAdapter extends OpenAICompatibleAdapter {
+    /**
+     * ✅ OpenRouter API 호출 (Reasoning + Cache 지원)
+     * - reasoning 파라미터로 thinking 활성화
+     * - reasoning_details 응답 파싱
+     * - Anthropic 모델 cache_control 지원
+     */
+    async callAPI(params: APICallParams): Promise<APIResponse> {
+        return withRetry(async () => {
+            const { apiEndpoint, headerFormat } = this.providerConfig;
+            const url = `${apiEndpoint}/chat/completions`;
+
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+            };
+
+            if (headerFormat.apiKeyPrefix) {
+                headers[headerFormat.apiKeyHeader] = `${headerFormat.apiKeyPrefix}${params.apiKey}`;
+            } else {
+                headers[headerFormat.apiKeyHeader] = params.apiKey;
+            }
+
+            // 명시적 캐싱이 필요한 모델 확인 (Anthropic, Google Gemini)
+            // Anthropic: cache_control 필수
+            // Gemini: Implicit Caching(2.5+)이 있지만, cache_control을 사용하면 더 확실한 제어 가능
+            const isExplicitCacheModel = params.variant.startsWith('anthropic/') ||
+                params.variant.includes('claude') ||
+                params.variant.startsWith('google/') ||
+                params.variant.includes('gemini');
+
+            // Reasoning 지원 모델 확인 (문서 기반)
+            const isReasoningModel = this.isReasoningCapableModel(params.variant);
+
+            // 메시지 구성
+            const messages: any[] = [];
+            const history = params.historyMessages || [];
+
+            if (history.length > 0) {
+                history.forEach((msg, index) => {
+                    const role = msg.role === 'assistant' ? 'assistant' : msg.role === 'system' ? 'system' : 'user';
+                    const isLastUserMessage = index === history.length - 1 && role === 'user';
+
+                    // 명시적 캐싱 모델이면 cache_control 적용
+                    if (isExplicitCacheModel && isLastUserMessage) {
+                        messages.push({
+                            role,
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+                                    cache_control: { type: 'ephemeral' }
+                                }
+                            ]
+                        });
+                    } else {
+                        messages.push({ role, content: msg.content });
+                    }
+                });
+            } else {
+                if (isExplicitCacheModel) {
+                    messages.push({
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'text',
+                                text: params.prompt,
+                                cache_control: { type: 'ephemeral' }
+                            }
+                        ]
+                    });
+                } else {
+                    messages.push({ role: 'user', content: params.prompt });
+                }
+            }
+
+            // 시스템 프롬프트
+            if (params.systemPrompt) {
+                const existingSystemIdx = messages.findIndex(m => m.role === 'system');
+                if (existingSystemIdx === -1) {
+                    if (isExplicitCacheModel) {
+                        messages.unshift({
+                            role: 'system',
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: params.systemPrompt,
+                                    cache_control: { type: 'ephemeral' }
+                                }
+                            ]
+                        });
+                    } else {
+                        messages.unshift({ role: 'system', content: params.systemPrompt });
+                    }
+                }
+            }
+
+            const body: any = {
+                model: params.variant,
+                messages,
+                stream: false
+            };
+
+            // 기본 파라미터
+            if (!isReasoningModel) {
+                body.temperature = params.temperature ?? this.providerConfig.defaultTemperature;
+                if (params.topP) body.top_p = params.topP;
+            }
+            if (params.maxTokens) body.max_tokens = params.maxTokens;
+
+            // ✅ OpenRouter Reasoning 파라미터 (통합 인터페이스)
+            // 문서: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+            if (isReasoningModel) {
+                body.reasoning = {};
+
+                // effort 기반 (OpenAI o1/o3, Grok)
+                if (params.reasoningEffort) {
+                    body.reasoning.effort = params.reasoningEffort;
+                }
+                // max_tokens 기반 (Anthropic, Qwen)
+                else if (params.thinkingBudget && params.thinkingBudget > 0) {
+                    body.reasoning.max_tokens = params.thinkingBudget;
+                }
+                // 기본 활성화 (명시적 설정 없으면)
+                else {
+                    body.reasoning.enabled = true; // medium effort 기본
+                }
+
+                // exclude: false → reasoning을 응답에 포함
+                body.reasoning.exclude = false;
+            }
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000); // 120초 (reasoning은 시간이 더 걸림)
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(body),
+                    signal: controller.signal
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    let errMsg = `HTTP ${response.status}`;
+                    try {
+                        const errJson = JSON.parse(errText);
+                        errMsg = errJson.error?.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
+
+                const data = await response.json();
+                const message = data.choices[0]?.message;
+
+                // ✅ OpenRouter 캐시 디스카운트 로깅
+                if (data.usage?.cache_discount) {
+                    console.log(`[BYOK] 💰 OpenRouter cache discount: ${data.usage.cache_discount}%`);
+                }
+
+                // ✅ Reasoning 응답 파싱
+                // 1. reasoning_details (OpenRouter 표준 - 배열)
+                // 2. reasoning (단순 텍스트 - DeepSeek R1 등)
+                // 3. reasoning_content (일부 모델)
+                const reasoningDetails = message?.reasoning_details as ReasoningDetail[] | undefined;
+                const reasoningText = message?.reasoning || message?.reasoning_content;
+
+                if (reasoningDetails && reasoningDetails.length > 0) {
+                    console.log(`[BYOK] 🧠 Received ${reasoningDetails.length} reasoning blocks`);
+                }
+
+                return {
+                    success: true,
+                    content: message?.content || '',
+                    reasoning: reasoningText,
+                    reasoningDetails: reasoningDetails,
+                    usage: {
+                        promptTokens: data.usage?.prompt_tokens || 0,
+                        completionTokens: data.usage?.completion_tokens || 0,
+                        totalTokens: data.usage?.total_tokens || 0
+                    }
+                };
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        });
+    }
+
+    /**
+     * Reasoning 지원 모델 여부 확인 (OpenRouter 문서 기반)
+     * https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+     */
+    private isReasoningCapableModel(modelId: string): boolean {
+        const lowerId = modelId.toLowerCase();
+
+        // OpenAI o1/o3 시리즈, GPT-5
+        if (lowerId.includes('o1') || lowerId.includes('o3') || lowerId.includes('gpt-5')) return true;
+
+        // Anthropic Claude 3.7+, Claude 4
+        if (lowerId.includes('claude-3-7') || lowerId.includes('claude-3.7') ||
+            lowerId.includes('claude-4') || lowerId.includes('claude-sonnet-4') ||
+            lowerId.includes('claude-4.1')) return true;
+
+        // DeepSeek R1
+        if (lowerId.includes('deepseek-r1') || lowerId.includes('deepseek/deepseek-r1')) return true;
+
+        // Gemini Thinking
+        if (lowerId.includes('gemini') && lowerId.includes('thinking')) return true;
+
+        // xAI Grok Reasoning
+        if (lowerId.includes('grok') && (lowerId.includes('reason') || lowerId.includes('thinking'))) return true;
+
+        // Qwen Thinking
+        if (lowerId.includes('qwen') && lowerId.includes('thinking')) return true;
+
+        // :thinking variant suffix
+        if (lowerId.endsWith(':thinking')) return true;
+
+        // MiniMax M2, Kimi K2 Thinking, INTELLECT-3
+        if (lowerId.includes('minimax-m2') || lowerId.includes('kimi-k2-thinking') ||
+            lowerId.includes('intellect-3')) return true;
+
+        return false;
+    }
+
     async fetchModels(apiKey: string): Promise<BYOKModelVariant[]> {
-        const url = 'https://openrouter.ai/api/v1/models';
+        const url = `${this.providerConfig.apiEndpoint}/models`;
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -801,14 +1230,26 @@ class OpenRouterAdapter extends OpenAICompatibleAdapter {
             const data = await response.json();
             return (data.data || []).map((m: any) => {
                 const inferred = this.inferCapabilities(m.id);
+                const promptPrice = parseFloat(m.pricing?.prompt || '0');
+                const completionPrice = parseFloat(m.pricing?.completion || '0');
+                // OpenRouter returns pricing as strings sometimes.
+                // We consider it free ONLY if:
+                // 1. Pricing is explicitly provided and both are 0
+                // 2. OR the model ID explicitly contains ":free" (OpenRouter convention)
+                // 3. OR the model Name explicitly contains "(free)" (Common naming convention)
+                const isFree = (m.pricing && promptPrice === 0 && completionPrice === 0) ||
+                    m.id.endsWith(':free') ||
+                    m.name.toLowerCase().includes('(free)');
+
                 return {
                     id: m.id,
                     name: m.name,
                     description: m.description || '',
                     contextWindow: m.context_length || 4096,
                     maxOutputTokens: m.top_provider?.max_completion_tokens || 4096,
-                    costPer1MInput: (m.pricing?.prompt || 0) * 1000000,
-                    costPer1MOutput: (m.pricing?.completion || 0) * 1000000,
+                    costPer1MInput: promptPrice * 1000000,
+                    costPer1MOutput: completionPrice * 1000000,
+                    isFree: isFree,
                     capabilities: inferred.capabilities,
                     supportsReasoningEffort: inferred.supportsReasoningEffort,
                     supportsThinkingBudget: inferred.supportsThinkingBudget,
@@ -824,11 +1265,19 @@ class OpenRouterAdapter extends OpenAICompatibleAdapter {
 // --- Service Facade ---
 
 export class BYOKAPIService {
+    private static instance: BYOKAPIService;
     private adapters: Map<BYOKProviderId, BYOKAdapter> = new Map();
 
-    constructor() {
+    private constructor() {
         this.adapters = new Map();
         this.initializeAdapters();
+    }
+
+    public static getInstance(): BYOKAPIService {
+        if (!BYOKAPIService.instance) {
+            BYOKAPIService.instance = new BYOKAPIService();
+        }
+        return BYOKAPIService.instance;
     }
 
     private initializeAdapters() {
@@ -1035,26 +1484,13 @@ export class BYOKAPIService {
      * 반환값: true (찾음) | false (못 찾음) | null (지원 안 함)
      */
     private async tryListModels(providerId: BYOKProviderId, apiKey: string, modelId: string): Promise<boolean | null> {
-        const listEndpoints: Record<string, string> = {
-            openai: 'https://api.openai.com/v1/models',
-            xai: 'https://api.x.ai/v1/models',
-            deepseek: 'https://api.deepseek.com/models',
-            mistral: 'https://api.mistral.ai/v1/models',
-            openrouter: 'https://openrouter.ai/api/v1/models',
-            anthropic: 'https://api.anthropic.com/v1/models',
-            google: 'https://generativelanguage.googleapis.com/v1beta/models',
-        };
+        // ✅ DRY 원칙: byokProviders.ts의 apiEndpoint를 단일 진실의 원천으로 사용
+        const config = BYOK_PROVIDERS[providerId];
+        let url = `${config.apiEndpoint}/models`;
 
-        const endpoint = listEndpoints[providerId];
-        if (!endpoint) {
-            return null; // List 미지원
-        }
-
-        let url = endpoint;
-
+        // Google은 URL 파라미터로 API 키 전달
         if (providerId === 'google') {
-            // Google requires API key in URL
-            url = `${endpoint}?key=${apiKey}`;
+            url = `${url}?key=${apiKey}`;
         }
 
         try {
@@ -1173,16 +1609,17 @@ export class BYOKAPIService {
     }
 
     /**
-     * Probe Call 설정 생성
+     * ✅ Probe Call 설정 생성 (리팩토링: DRY 원칙 적용)
+     * byokProviders.ts의 apiEndpoint를 단일 진실의 원천으로 사용
      */
     private getProbeConfig(providerId: BYOKProviderId, modelId: string): { endpoint: string; payload: any } | null {
-        // ✅ 중앙화된 정규화 로직 사용
         const targetId = this.normalizeModelId(providerId, modelId);
+        const config = BYOK_PROVIDERS[providerId];
 
-        // Google은 URL에 모델 ID가 포함되어야 하므로 별도 처리
+        // Google 특수 처리: URL에 모델 ID 포함
         if (providerId === 'google') {
             return {
-                endpoint: `https://generativelanguage.googleapis.com/v1beta/models/${targetId}:generateContent`,
+                endpoint: `${config.apiEndpoint}/models/${targetId}:generateContent`,
                 payload: {
                     contents: [{ parts: [{ text: 'ping' }] }],
                     generationConfig: { maxOutputTokens: 1 },
@@ -1190,86 +1627,27 @@ export class BYOKAPIService {
             };
         }
 
-        const configs: Record<string, { endpoint: string; payloadBuilder: (model: string) => any }> = {
-            // OpenAI 호환 (OpenAI, xAI, DeepSeek, Mistral, Qwen, Kimi)
-            openai: {
-                endpoint: 'https://api.openai.com/v1/chat/completions',
-                payloadBuilder: (model) => ({
-                    model, // 이미 정규화된 targetId가 전달됨
+        // Anthropic 특수 처리: /messages 엔드포인트 사용
+        if (providerId === 'anthropic') {
+            return {
+                endpoint: `${config.apiEndpoint}/messages`,
+                payload: {
+                    model: targetId,
                     messages: [{ role: 'user', content: 'ping' }],
                     max_tokens: 1,
-                    temperature: 0,
-                }),
-            },
-            xai: {
-                endpoint: 'https://api.x.ai/v1/chat/completions',
-                payloadBuilder: (model) => ({
-                    model,
-                    messages: [{ role: 'user', content: 'ping' }],
-                    max_tokens: 1,
-                    temperature: 0,
-                }),
-            },
-            deepseek: {
-                endpoint: 'https://api.deepseek.com/chat/completions',
-                payloadBuilder: (model) => ({
-                    model,
-                    messages: [{ role: 'user', content: 'ping' }],
-                    max_tokens: 1,
-                    temperature: 0,
-                }),
-            },
-            mistral: {
-                endpoint: 'https://api.mistral.ai/v1/chat/completions',
-                payloadBuilder: (model) => ({
-                    model,
-                    messages: [{ role: 'user', content: 'ping' }],
-                    max_tokens: 1,
-                    temperature: 0,
-                }),
-            },
-            qwen: {
-                endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-                payloadBuilder: (model) => ({
-                    model,
-                    messages: [{ role: 'user', content: 'ping' }],
-                    max_tokens: 1,
-                }),
-            },
-            kimi: {
-                endpoint: 'https://api.moonshot.cn/v1/chat/completions',
-                payloadBuilder: (model) => ({
-                    model,
-                    messages: [{ role: 'user', content: 'ping' }],
-                    max_tokens: 1,
-                }),
-            },
-            openrouter: {
-                endpoint: 'https://openrouter.ai/api/v1/chat/completions',
-                payloadBuilder: (model) => ({
-                    model,
-                    messages: [{ role: 'user', content: 'ping' }],
-                    max_tokens: 1,
-                }),
-            },
+                }
+            };
+        }
 
-            // Anthropic
-            anthropic: {
-                endpoint: 'https://api.anthropic.com/v1/messages',
-                payloadBuilder: (model) => ({
-                    model,
-                    messages: [{ role: 'user', content: 'ping' }],
-                    max_tokens: 1,
-                }),
-            },
-        };
-
-        const config = configs[providerId];
-        if (!config) return null;
-
+        // OpenAI 호환 (대부분의 Provider: OpenAI, xAI, DeepSeek, Mistral, Qwen, Kimi, OpenRouter)
         return {
-            endpoint: config.endpoint,
-            payload: config.payloadBuilder(targetId), // ✅ 정규화된 ID 전달
+            endpoint: `${config.apiEndpoint}/chat/completions`,
+            payload: {
+                model: targetId,
+                messages: [{ role: 'user', content: 'ping' }],
+                max_tokens: 1,
+                temperature: 0,
+            }
         };
     }
 
@@ -1439,13 +1817,28 @@ export class BYOKAPIService {
             // 메타데이터(가격, 설명 등) 찾기
             const metadata = metadataMap.get(id);
 
+            // raw 모델에 이미 isFree 정보가 있는지 확인 (OpenRouter 등)
+            const rawIsFree = (raw as any).isFree;
+            const rawCostInput = (raw as any).costPer1MInput;
+            const rawCostOutput = (raw as any).costPer1MOutput;
+
+            // ✅ 이중 검증: API에서 온 isFree, ID, 이름, 기존 메타데이터 중 하나라도 무료라면 무료로 간주
+            const isActuallyFree = (rawIsFree === true) ||
+                id.endsWith(':free') ||
+                (raw.name || '').toLowerCase().includes('(free)') ||
+                (metadata?.isFree === true);
+
             if (metadata) {
-                // 메타데이터가 있으면 그것을 베이스로 하되, API에서 온 최신 정보(created)로 덮어씀
+                // 메타데이터가 있으면 그것을 베이스로 하되, API에서 온 최신 정보로 덮어씀
                 return {
                     ...metadata,
                     id: id,
                     created: raw.created || metadata.created,
                     isNew: this.isRecentModel(raw.created),
+                    // API에서 가격/무료 정보를 가져왔다면 업데이트, 아니면 재검증된 값 사용
+                    isFree: isActuallyFree,
+                    costPer1MInput: rawCostInput !== undefined ? rawCostInput : metadata.costPer1MInput,
+                    costPer1MOutput: rawCostOutput !== undefined ? rawCostOutput : metadata.costPer1MOutput,
                 };
             }
 
@@ -1458,11 +1851,12 @@ export class BYOKAPIService {
                 maxOutputTokens: 4096,
                 inputPrice: 0,
                 outputPrice: 0,
-                costPer1MInput: 0,
-                costPer1MOutput: 0,
+                costPer1MInput: rawCostInput || 0,
+                costPer1MOutput: rawCostOutput || 0,
                 capabilities: [],
                 created: raw.created, // ✅ 정렬을 위한 핵심
                 isNew: this.isRecentModel(raw.created),
+                isFree: isActuallyFree, // 재검증된 값 사용
             };
         });
 
@@ -1655,4 +2049,28 @@ export async function shouldAutoRefresh(): Promise<boolean> {
     }
 
     return needsRefresh;
+}
+
+/**
+ * BYOK Variant 삭제
+ * @param providerId Provider ID
+ * @param variantId  삭제할 Variant ID
+ */
+export async function removeBYOKVariant(providerId: BYOKProviderId, variantId: string): Promise<void> {
+    const settings = await loadBYOKSettings();
+    const config = settings.providers[providerId];
+
+    if (!config || !config.selectedVariants) return;
+
+    // 배열에서 해당 variant 제거
+    const newVariants = config.selectedVariants.filter(id => id !== variantId);
+
+    // 업데이트된 설정 저장
+    settings.providers[providerId] = {
+        ...config,
+        selectedVariants: newVariants
+    };
+
+    await saveBYOKSettings(settings);
+    console.log(`[BYOK] Removed variant: ${providerId}/${variantId}`);
 }

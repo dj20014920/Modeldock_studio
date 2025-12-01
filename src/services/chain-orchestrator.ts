@@ -1,13 +1,14 @@
-import { ActiveModel, ModelId, BYOKProviderId } from '../types';
+import { ActiveModel, ModelId, BYOKProviderId, ChatMessage } from '../types';
 import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
 import { BYOKAPIService, loadBYOKSettings } from './byokService';
 
 export interface BrainFlowCallbacks {
     onPhaseStart: (phase: 1 | 2 | 3) => void;
-    onModelStart: (modelId: ModelId) => void;
-    onModelUpdate: (modelId: ModelId, text: string) => void;
-    onModelComplete: (modelId: ModelId, text: string) => void;
+    onModelStart: (modelId: ModelId, instanceId?: string) => void;
+    onModelUpdate: (modelId: ModelId, text: string, instanceId?: string) => void;
+    onModelComplete: (modelId: ModelId, text: string, instanceId?: string) => void;
     onError: (error: any) => void;
+    onConversationLink?: (instanceId: string, url: string, modelId?: ModelId) => void;
 }
 
 interface BrainFlowConfig {
@@ -155,13 +156,20 @@ export class ChainOrchestrator {
         this.pendingRequests.clear();
     }
 
-    private byokService: BYOKAPIService = new BYOKAPIService();
+    private byokService: BYOKAPIService = BYOKAPIService.getInstance();
 
     private async sendMessageToModel(
         model: ActiveModel,
         text: string,
         callbacks: BrainFlowCallbacks
     ): Promise<string> {
+        const withTailHistory = (messages: ChatMessage[] = []): ChatMessage[] => {
+            // 최대 20턴(40메시지)로 잘라서 전송, 최신이 앞쪽에 남도록 뒤에서 슬라이스
+            const limit = 40;
+            if (messages.length <= limit) return messages;
+            return messages.slice(-limit);
+        };
+
         // 1. Check BYOK configuration first
         try {
             const settings = await loadBYOKSettings();
@@ -169,14 +177,26 @@ export class ChainOrchestrator {
 
             if (settings.enabled && providerId && settings.providers[providerId]?.apiKey) {
                 console.log(`[BrainFlow] Using BYOK for ${model.modelId} (${providerId})`);
-                callbacks.onModelStart(model.modelId);
+                callbacks.onModelStart(model.modelId, model.instanceId);
 
                 const config = settings.providers[providerId]!;
+                const variant = config.selectedVariant || config.selectedVariants?.[0];
+
+                if (!variant) {
+                    throw new Error(`No BYOK model selected for provider: ${providerId}`);
+                }
+                const historyMessages = [...withTailHistory(model.messages || []), {
+                    role: 'user' as const,
+                    content: text,
+                    timestamp: Date.now()
+                }];
+
                 const response = await this.byokService.callAPI({
                     providerId,
-                    apiKey: config.apiKey,
-                    variant: config.selectedVariant,
+                    apiKey: config.apiKey.trim(),
+                    variant,
                     prompt: text,
+                    historyMessages,
                     temperature: config.customTemperature,
                     reasoningEffort: config.reasoningEffort,
                     thinkingBudget: config.thinkingBudget,
@@ -190,7 +210,7 @@ export class ChainOrchestrator {
                         // Append reasoning if available (or handle via callback if UI supports it)
                         finalText = `[Reasoning]\n${response.reasoning}\n\n[Answer]\n${finalText}`;
                     }
-                    callbacks.onModelComplete(model.modelId, finalText);
+                    callbacks.onModelComplete(model.modelId, finalText, model.instanceId);
                     return finalText;
                 } else {
                     console.warn(`[BrainFlow] BYOK call failed: ${response.error}. Falling back to standard mode.`);
@@ -321,7 +341,10 @@ export class ChainOrchestrator {
 
         const requestId = `bf-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-        callbacks.onModelStart(model.modelId);
+        callbacks.onModelStart(model.modelId, model.instanceId);
+        if (iframe?.src) {
+            callbacks.onConversationLink?.(model.instanceId, iframe.src, model.modelId);
+        }
 
         return new Promise((resolve) => {
             let responseText = '';
@@ -342,14 +365,17 @@ export class ChainOrchestrator {
                 if (data.type === 'MODEL_DOCK_RESPONSE_CHUNK' && data.payload?.requestId === requestId) {
                     responseText = data.payload.text;
                     lastActivityTime = Date.now();
-                    callbacks.onModelUpdate(model.modelId, responseText);
+                    callbacks.onModelUpdate(model.modelId, responseText, model.instanceId);
                 }
 
                 // Handle completion
                 if (data.type === 'MODEL_DOCK_RESPONSE_COMPLETE' && data.payload?.requestId === requestId) {
                     console.log(`[BrainFlow] Completion signal received from ${model.modelId}`);
                     responseText = data.payload.text;
-                    callbacks.onModelComplete(model.modelId, responseText);
+                    callbacks.onModelComplete(model.modelId, responseText, model.instanceId);
+                    if (iframe?.src) {
+                        callbacks.onConversationLink?.(model.instanceId, iframe.src, model.modelId);
+                    }
                     cleanup();
                     resolve(responseText);
                 }
@@ -365,7 +391,7 @@ export class ChainOrchestrator {
             // Store request control
             this.pendingRequests.set(requestId, {
                 resolve: (text) => {
-                    callbacks.onModelComplete(model.modelId, text);
+                    callbacks.onModelComplete(model.modelId, text, model.instanceId);
                     resolve(text);
                 },
                 cleanup,

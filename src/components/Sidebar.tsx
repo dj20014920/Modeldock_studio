@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ModelId, ActiveModel, SidebarView, ConversationMetadata, BYOKProviderId } from '../types';
+import { ModelId, ActiveModel, SidebarView, ConversationMetadata } from '../types';
 import { SUPPORTED_MODELS, NAV_ITEMS } from '../constants';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -8,7 +8,6 @@ import { Plus, Minus, MessageSquare, ArrowRight, Crown, Trash2, Edit2, Check, X 
 
 import { useTranslation } from 'react-i18next';
 import { loadBYOKSettings } from '../services/byokService';
-import { BYOK_PROVIDERS } from '../byokProviders';
 import { HistoryService } from '../services/historyService';
 
 interface SidebarProps {
@@ -37,7 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLoadHistory
 }) => {
   const { t } = useTranslation();
-  const [byokModels, setByokModels] = useState<{ id: string; name: string; providerId: string; iconColor: string }[]>([]);
+  const [byokModels, setByokModels] = useState<{ id: string; name: string; providerId: string; variantId?: string; iconColor: string }[]>([]);
 
   // History State
   const [historyList, setHistoryList] = useState<ConversationMetadata[]>([]);
@@ -53,20 +52,50 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return;
       }
 
+      // ✅ 멀티 선택: selectedVariants 배열을 펼쳐서 각각 표시
       const models = Object.entries(settings.providers)
-        .filter(([_, config]) => config.apiKey)
-        .map(([providerId, config]) => {
-          const provider = BYOK_PROVIDERS[providerId as BYOKProviderId];
-          const variant = config.selectedVariant || provider.name;
-          const modelName = variant.includes('/') ? variant.split('/').pop() : variant;
+        .filter(([_, config]) => {
+          // 하위 호환성: selectedVariant(구) 또는 selectedVariants(신) 둘 다 지원
+          const hasVariants = config.selectedVariants && config.selectedVariants.length > 0;
+          const hasLegacyVariant = (config as any).selectedVariant;
+          return config.apiKey && (hasVariants || hasLegacyVariant);
+        })
+        .flatMap(([providerId, config]) => {
+          console.log(`[Sidebar] Processing provider: ${providerId}`);
+          console.log(`[Sidebar] - selectedVariants:`, config.selectedVariants);
+          console.log(`[Sidebar] - legacy selectedVariant:`, (config as any).selectedVariant);
 
-          return {
-            id: `byok-${providerId}`,
-            name: modelName || provider.name,
-            providerId,
-            iconColor: 'bg-purple-500'
-          };
+          // 하위 호환성: 기존 selectedVariant를 selectedVariants로 변환
+          let variants = config.selectedVariants || [];
+          if (variants.length === 0 && (config as any).selectedVariant) {
+            variants = [(config as any).selectedVariant];
+          }
+
+          console.log(`[Sidebar] - Final variants array (length: ${variants.length}):`, variants);
+
+          // 각 variant를 별도 항목으로 펼침
+          const mappedModels = variants.map(variantId => {
+            // ✅ 모델명 추출: 'openai/gpt-4o' → 'gpt-4o', 'gpt-4o' → 'gpt-4o'
+            const modelName = variantId.includes('/') ? variantId.split('/').pop()! : variantId;
+
+            const modelItem = {
+              id: `byok-${providerId}-${variantId}`,  // 고유 ID
+              name: modelName,  // ✅ 모델명만 (회사명 제외)
+              providerId,
+              variantId,
+              iconColor: 'bg-purple-500'
+            };
+
+            console.log(`[Sidebar] - Mapped model:`, modelItem);
+            return modelItem;
+          });
+
+          console.log(`[Sidebar] - Total mapped models for ${providerId}:`, mappedModels.length);
+          return mappedModels;
         });
+
+      console.log(`[Sidebar] ===== FINAL BYOK MODELS (${models.length}) =====`);
+      console.log(models);
       setByokModels(models);
     };
     loadBYOK();
@@ -204,9 +233,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </div>
                     ) : (
                       <div className="flex items-start justify-between gap-2">
-                        <span className="text-sm font-medium text-slate-700 truncate flex-1">
-                          {item.title}
-                        </span>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <span className="text-sm font-medium text-slate-700 truncate">
+                            {item.title}
+                          </span>
+                          {item.mode && (
+                            <span className={clsx(
+                              "px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide",
+                              item.mode === 'brainflow'
+                                ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                                : item.mode === 'auto-routing'
+                                  ? "bg-indigo-50 text-indigo-600 border border-indigo-100"
+                                  : item.mode === 'byok'
+                                    ? "bg-purple-50 text-purple-600 border border-purple-100"
+                                    : "bg-slate-50 text-slate-500 border border-slate-100"
+                            )}>
+                              {item.mode === 'brainflow' ? 'Brain Flow' :
+                                item.mode === 'auto-routing' ? 'Auto Routing' :
+                                  item.mode === 'byok' ? 'BYOK' : 'Manual'}
+                            </span>
+                          )}
+                          {item.linkCount ? (
+                            <span className="px-1 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-semibold rounded border border-blue-100">
+                              Link
+                            </span>
+                          ) : null}
+                        </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={e => startEditing(e, item)}
@@ -324,7 +376,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       ? "bg-purple-50 border-purple-200 shadow-sm"
                       : "hover:bg-purple-50/50 opacity-80 hover:opacity-100 cursor-pointer"
                   )}
-                  onClick={() => !isActive && onAddModel(model.id as ModelId)}
+                  onClick={() => {
+                    if (!isActive) {
+                      // BYOK 모델 추가 시 확인 대화상자
+                      const confirmed = confirm(
+                        `🚀 ${model.name} 모델을 추가하시겠습니까 ?\n\n` +
+                        `새 대화를 시작하고 자유롭게, \n` +
+                        `${model.name}에서 상담받거나 뭔가를 요청하자.`
+                      );
+                      if (confirmed) {
+                        onAddModel(model.id as ModelId);
+                      }
+                    }
+                  }}
                 >
                   {/* Left: Icon & Name */}
                   <div className="flex items-center gap-3 min-w-0">
@@ -337,7 +401,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   </div>
 
-                  {/* Right: Counter Controls */}
+                  {/* Right: X Button (always visible) or Counter */}
                   {isActive ? (
                     <div className="flex items-center bg-white rounded-md border border-purple-100 shadow-sm overflow-hidden ml-2" onClick={(e) => e.stopPropagation()}>
                       <button
@@ -352,7 +416,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </div>
 
                       <button
-                        onClick={() => !isMaxed && onAddModel(model.id as ModelId)}
+                        onClick={() => {
+                          if (!isMaxed) {
+                            const confirmed = confirm(
+                              `🚀 ${model.name} 모델을 추가하시겠습니까 ?\n\n` +
+                              `새 대화를 시작하고 자유롭게, \n` +
+                              `${model.name}에서 상담받거나 뭔가를 요청하자.`
+                            );
+                            if (confirmed) {
+                              onAddModel(model.id as ModelId);
+                            }
+                          }
+                        }}
                         disabled={isMaxed}
                         className={clsx(
                           "p-1.5 transition-colors border-l border-purple-100",
@@ -365,8 +440,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </button>
                     </div>
                   ) : (
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Plus size={14} className="text-purple-400" />
+                    // ✅ Inactive: X 버튼 (설정에서 삭제)
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const confirmed = confirm(`❌ "${model.name}" 모델을 삭제하시겠습니까 ? `);
+                          if (confirmed) {
+                            const { removeBYOKVariant } = await import('../services/byokService');
+                            await removeBYOKVariant(model.providerId as any, model.variantId as string);
+                            // Reload to reflect changes
+                            window.location.reload();
+                          }
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                        title="삭제"
+                      >
+                        <X size={14} />
+                      </button>
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Plus size={14} className="text-purple-400" />
+                      </div>
                     </div>
                   )}
                 </div>

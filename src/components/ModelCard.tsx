@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2 } from 'lucide-react';
+import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2, Clock } from 'lucide-react';
 import { ModelConfig, ChatMessage } from '../types';
 import { clsx } from 'clsx';
 import { ModelFrame } from './ModelFrame';
 import { PerplexityChat } from './PerplexityChat';
 import { BYOKChat } from './BYOKChat';
+import { HistoryPopover } from './HistoryPopover';
 
 // Zoom 상태 영속화를 위한 localStorage 키
 const ZOOM_STORAGE_KEY = 'modeldock_zoom_levels_v2';
@@ -14,26 +15,39 @@ interface ModelCardProps {
   model: ModelConfig;
   instanceId?: string;
   isMainBrain?: boolean;
+  conversationUrl?: string;
   onSetMainBrain?: () => void;
   onRemoveMainBrain?: () => void;
   onClose?: () => void;
   status?: 'idle' | 'sending' | 'success' | 'error';
   messages?: ChatMessage[]; // Added for BYOK
   onSendMessage?: (message: string) => Promise<void>; // Added for BYOK individual sending
+  onLoadHistory?: (id: string) => void; // Added for Global History
+  onNewChat?: () => void; // Added for History
+  currentConversationId?: string | null; // Added for History
+  onLoadBYOKHistory?: (id: string) => void; // Added for BYOK History
+  byokHistoryId?: string; // Added for BYOK History
 }
 
 export const ModelCard: React.FC<ModelCardProps> = ({
   model,
   instanceId,
   isMainBrain = false,
+  conversationUrl,
   onSetMainBrain,
   onRemoveMainBrain,
   onClose,
   status = 'idle',
   messages = [],
-  onSendMessage
+  onSendMessage,
+  onLoadHistory,
+  onNewChat,
+  currentConversationId,
+  onLoadBYOKHistory,
+  byokHistoryId
 }) => {
   const { t } = useTranslation();
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false); // History Popover State
 
   // modelId 기반으로 zoom 저장
   const getZoomKey = useCallback(() => model.id, [model.id]);
@@ -99,6 +113,10 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   };
 
   const isBYOK = model.id.startsWith('byok-');
+  // byokProviderId: 'byok-openrouter-model/name' → 'openrouter' (첫 번째 부분만)
+  const byokProviderId = isBYOK 
+    ? model.id.replace('byok-', '').split('-')[0] 
+    : undefined;
 
   return (
     <div className={clsx(
@@ -187,6 +205,46 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             </button>
           )}
 
+          {/* BYOK History Button */}
+          {isBYOK && (
+            <div className="relative">
+              <button
+                onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+                className={clsx(
+                  "p-1.5 rounded-md transition-colors",
+                  isHistoryOpen ? "bg-indigo-100 text-indigo-600" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                )}
+                title="Conversation History"
+              >
+                <Clock size={14} />
+              </button>
+              {/* History Popover */}
+              {isHistoryOpen && (
+                <div className="absolute top-full right-0 mt-2 z-50">
+                  <HistoryPopover
+                    isOpen={isHistoryOpen}
+                    onClose={() => setIsHistoryOpen(false)}
+                    onLoadHistory={(id) => {
+                      if (isBYOK && onLoadBYOKHistory) {
+                        onLoadBYOKHistory(id);
+                      } else {
+                        onLoadHistory?.(id);
+                      }
+                      setIsHistoryOpen(false);
+                    }}
+                    onNewChat={() => {
+                      onNewChat?.();
+                      setIsHistoryOpen(false);
+                    }}
+                    currentConversationId={isBYOK ? (byokHistoryId || null) : (currentConversationId || null)}
+                    mode={isBYOK ? 'byok' : 'global'}
+                    providerId={byokProviderId as any}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="w-px h-4 bg-slate-200 mx-1" />
 
           {/* Main Brain Toggle */}
@@ -224,7 +282,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
           <ModelFrame
             modelId={model.id}
             instanceId={instanceId}
-            url={model.url}
+            url={conversationUrl || model.url}
             title={model.name}
             zoomLevel={zoomLevel}
             refreshKey={refreshKey}

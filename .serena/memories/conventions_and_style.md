@@ -1,0 +1,3 @@
+- React 함수형 컴포넌트 + TypeScript 사용; 상태 관리는 주로 useState/useEffect 및 커스텀 usePersistentState(localStorage 기반)로 지속.
+- 스타일은 Tailwind 클래스/clsx/tailwind-merge 조합, Lucide 아이콘 사용. 텍스트는 i18next `t()` 활용.
+- 확장/스토리지 연계 로직은 chrome.storage.local 사용(BYOK 설정·히스토리 등). API 키 등 민감 데이터는 trim 후 저장/전송.

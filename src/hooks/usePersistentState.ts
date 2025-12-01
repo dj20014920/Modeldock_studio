@@ -23,14 +23,17 @@ export function usePersistentState<T>(key: string, initialValue: T): [T, (value:
 
   // 2. Wrap setState to sync with localStorage
   const setValue = useCallback((value: T | ((val: T) => T)) => {
-    try {
-      const valueToStore = value instanceof Function ? value(state) : value;
-      setState(valueToStore);
-      localStorage.setItem(key, JSON.stringify(valueToStore));
-    } catch (error) {
-      console.error(`[usePersistentState] Error setting key "${key}":`, error);
-    }
-  }, [key, state]);
+    setState((prev) => {
+      try {
+        const valueToStore = value instanceof Function ? value(prev) : value;
+        localStorage.setItem(key, JSON.stringify(valueToStore));
+        return valueToStore;
+      } catch (error) {
+        console.error(`[usePersistentState] Error setting key "${key}":`, error);
+        return prev;
+      }
+    });
+  }, [key]);
 
   // 3. Optional: Listen for storage events (sync across tabs if needed)
   // omitted for simplicity in this extension context, but good for future scalability.

@@ -34,10 +34,77 @@ export interface ModelConfig {
   };
 }
 
+// --- Message Content Types ---
+// 이미지 첨부를 위한 확장된 Content 타입
+
+export interface TextContentPart {
+  type: 'text';
+  text: string;
+}
+
+export interface ImageContentPart {
+  type: 'image_url';
+  image_url: {
+    url: string; // base64 (data:image/...) 또는 HTTP/HTTPS URL
+    detail?: 'auto' | 'low' | 'high'; // OpenAI vision detail level (optional)
+  };
+}
+
+// TODO: Phase 2 - File Attachment Support
+// 파일 첨부 기능을 위한 타입 (향후 구현 예정)
+//
+// export interface FileContentPart {
+//   type: 'file';
+//   file: {
+//     id: string;          // Files API로부터 받은 file_id
+//     name: string;        // 원본 파일명
+//     mimeType: string;    // MIME type (application/pdf, text/csv 등)
+//     size?: number;       // 파일 크기 (bytes)
+//   };
+// }
+//
+// 사용 시나리오:
+// 1. 사용자가 PDF/문서 첨부 → BYOKChat의 파일 선택 버튼 클릭
+// 2. Provider별 Files API 호출하여 업로드:
+//    - OpenAI: POST /v1/files (purpose: 'assistants')
+//    - Anthropic: POST /v1/messages/batches (Files API beta)
+//    - Google: POST /upload/v1beta/files
+//    - DeepSeek: 파일 업로드 지원 (최대 50개, 100MB)
+//    - xAI: Files API 지원
+// 3. file_id 획득 후 메시지 content에 포함
+// 4. 히스토리 저장 시 file_id만 저장 (원본 파일은 Provider 서버에 저장됨)
+// 5. 불러오기 시 file_id로 참조 (재다운로드 불필요)
+//
+// 구현 시 고려사항:
+// - 업로드 진행률 표시 (UX)
+// - 파일 크기/형식 제한 체크 (Provider별 상이)
+// - 에러 핸들링 (타임아웃, 네트워크 오류, 용량 초과 등)
+// - 파일 삭제 API (불필요한 파일 정리)
+
+export type MessageContentPart = TextContentPart | ImageContentPart; // | FileContentPart (Phase 2)
+
+export type MessageContent = string | MessageContentPart[];
+
+// --- Reasoning/Thinking Types (OpenRouter, Anthropic, DeepSeek 등) ---
+export interface ReasoningDetail {
+  type: 'reasoning.summary' | 'reasoning.text' | 'reasoning.encrypted';
+  id?: string | null;
+  format?: 'unknown' | 'openai-responses-v1' | 'xai-responses-v1' | 'anthropic-claude-v1';
+  index?: number;
+  // type별 필드
+  summary?: string;     // reasoning.summary
+  text?: string;        // reasoning.text
+  signature?: string | null; // reasoning.text
+  data?: string;        // reasoning.encrypted
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  content: MessageContent; // ✨ string에서 확장 (하위 호환 유지)
   timestamp: number;
+  // Reasoning/Thinking 지원
+  reasoning?: string;           // 단순 텍스트 (DeepSeek R1 등)
+  reasoningDetails?: ReasoningDetail[]; // OpenRouter 표준 (OpenAI, Anthropic, Gemini 등)
 }
 
 // --- History Types ---
@@ -48,12 +115,18 @@ export interface ConversationMetadata {
   updatedAt: number;
   preview: string;
   modelCount: number;
+  mode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual';
+  linkCount?: number;
+  lastPrompt?: string;
 }
 
 export interface ConversationContent {
   id: string;
   activeModels: ActiveModel[];
   mainBrainId: string | null;
+  conversationLinks?: Record<string, string>;
+  mode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual';
+  lastPrompt?: string;
 }
 
 // New interface for managing multiple instances of the same model
@@ -62,6 +135,10 @@ export interface ActiveModel {
   instanceId: string; // Unique ID (e.g., 'gemini-1715234...')
   lastStatus?: 'idle' | 'sending' | 'success' | 'error';
   messages?: ChatMessage[]; // BYOK 모델을 위한 대화 내역
+  conversationUrl?: string; // Auto-routing/Brain Flow 결과 링크
+  historyMode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual';
+  lastPrompt?: string;
+  byokHistoryId?: string; // ID of the currently loaded BYOK history
 }
 
 export interface SidebarItemProps {
@@ -150,6 +227,7 @@ export interface BYOKModelVariant {
   popularity?: number; // OpenRouter ranking/popularity score
   architecture?: string | null; // Model architecture info
   topProvider?: string | null; // Top provider name
+  isFree?: boolean; // Explicitly marks the model as free
 }
 
 export interface BYOKProvider {
@@ -181,7 +259,8 @@ export interface BYOKSettings {
   providers: {
     [key in BYOKProviderId]?: {
       apiKey: string;
-      selectedVariant: string;
+      selectedVariant?: string;    // ✅ 현재 단일 선택 기준
+      selectedVariants?: string[]; // 🚧 멀티 선택(미사용 시 무시)
       customTemperature?: number;
       reasoningEffort?: ReasoningEffort;
       thinkingBudget?: number;
@@ -226,5 +305,3 @@ export interface ModelConfigWithBYOK extends ModelConfig {
     byokOnly?: boolean;
   };
 }
-
-

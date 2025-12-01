@@ -1,0 +1,3 @@
+- `npm install`: 의존성 설치.
+- `npm run dev`: Vite 개발 서버(주로 UI 개발용; 실제 확장 테스트는 빌드 후 크롬 로드 필요).
+- `npm run build`: 타입체크(tsc) 후 Vite 프로덕션 빌드(dist 생성). 빌드 후 dist를 chrome://extensions에서 Load unpacked로 로드.

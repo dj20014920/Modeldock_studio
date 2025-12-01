@@ -6,11 +6,13 @@ import { ChatMessageInput } from './components/ChatMessageInput';
 import { PromptLibrary } from './components/PromptLibrary';
 import { ModelCard } from './components/ModelCard';
 import { SettingsModal } from './components/SettingsModal';
-import { ModelId, ActiveModel, SidebarView, ChatMessage } from './types';
+import { ModelId, ActiveModel, SidebarView, ChatMessage, ImageContentPart, MessageContentPart, BYOKProviderId } from './types';
 import { SUPPORTED_MODELS } from './constants';
 import { X } from 'lucide-react';
 import { usePersistentState } from './hooks/usePersistentState';
 import { HistoryService } from './services/historyService';
+import { BYOKHistoryService } from './services/byokHistoryService';
+import { BYOKAPIService as BYOKService, loadBYOKSettings } from './services/byokService';
 
 export const App: React.FC = () => {
   // --- State ---
@@ -53,14 +55,31 @@ export const App: React.FC = () => {
   // --- Auto-Save History Logic ---
   useEffect(() => {
     const saveTimer = setTimeout(async () => {
-      // Don't save if empty or no messages
       const hasMessages = activeModels.some(m => m.messages && m.messages.length > 0);
-      if (!hasMessages) return;
+      const linkMap = activeModels.reduce<Record<string, string>>((acc, m) => {
+        if (m.conversationUrl) acc[m.instanceId] = m.conversationUrl;
+        return acc;
+      }, {});
+      const hasLinks = Object.keys(linkMap).length > 0;
+      if (!hasMessages && !hasLinks) return;
+
+      const historyMode = (() => {
+        if (activeModels.some(m => m.historyMode === 'brainflow')) return 'brainflow' as const;
+        if (activeModels.some(m => m.historyMode === 'auto-routing')) return 'auto-routing' as const;
+        if (activeModels.some(m => m.historyMode === 'byok')) return 'byok' as const;
+        if (activeModels.some(m => m.historyMode === 'manual')) return 'manual' as const;
+        return undefined;
+      })();
 
       const newId = await HistoryService.getInstance().saveConversation(
         currentConversationId,
         activeModels,
-        mainBrainInstanceId
+        mainBrainInstanceId,
+        {
+          mode: historyMode,
+          links: linkMap,
+          force: hasLinks
+        }
       );
 
       if (newId !== currentConversationId) {
@@ -75,7 +94,20 @@ export const App: React.FC = () => {
   const handleLoadHistory = async (id: string) => {
     const content = await HistoryService.getInstance().loadConversation(id);
     if (content) {
-      setActiveModels(content.activeModels);
+      let loadedModels = content.activeModels;
+      if (content.conversationLinks) {
+        loadedModels = loadedModels.map(m => {
+          const link = content.conversationLinks?.[m.instanceId];
+          return link && !m.conversationUrl ? { ...m, conversationUrl: link } : m;
+        });
+      }
+      if (content.mode) {
+        loadedModels = loadedModels.map(m => m.historyMode ? m : { ...m, historyMode: content.mode! });
+      }
+      if (content.lastPrompt) {
+        loadedModels = loadedModels.map(m => m.lastPrompt ? m : { ...m, lastPrompt: content.lastPrompt! });
+      }
+      setActiveModels(loadedModels);
       setMainBrainInstanceId(content.mainBrainId);
       setCurrentConversationId(content.id);
       setSidebarView('chats'); // Switch back to chats view
@@ -126,11 +158,20 @@ export const App: React.FC = () => {
     }
 
     // BYOK model check
+    // 모델 ID 형식: byok-{providerId}-{variantId} 또는 레거시: byok-{providerId}
     if (modelId.startsWith('byok-')) {
-      const providerId = modelId.replace('byok-', '');
+      const parts = modelId.replace('byok-', '').split('-');
+      const providerId = parts[0];
+      const variantId = parts.length > 1 ? parts.slice(1).join('-') : undefined;
+      
+      // 표시 이름: variantId가 있으면 모델명만 추출 (openai/gpt-4o → gpt-4o)
+      const displayName = variantId 
+        ? (variantId.includes('/') ? variantId.split('/').pop()! : variantId)
+        : (providerId.charAt(0).toUpperCase() + providerId.slice(1));
+      
       return {
         id: modelId as ModelId,
-        name: providerId.charAt(0).toUpperCase() + providerId.slice(1), // openai -> Openai
+        name: displayName,
         url: '',
         iconColor: 'bg-purple-500',
         themeColor: 'border-purple-300',
@@ -172,6 +213,10 @@ export const App: React.FC = () => {
     }));
   };
 
+  const handleModelMetadataUpdate = useCallback((instanceId: string, metadata: { conversationUrl?: string; historyMode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual'; lastPrompt?: string }) => {
+    setActiveModels(prev => prev.map(m => m.instanceId === instanceId ? { ...m, ...metadata } : m));
+  }, []);
+
   const handleRemoveModel = (modelId: ModelId) => {
     setActiveModels(prev => {
       const modelsToRemove = prev.filter(m => m.modelId === modelId);
@@ -200,53 +245,126 @@ export const App: React.FC = () => {
     setInjectedPromptText(content);
   };
 
-  // BYOK 개별 전송 핸들러 (인스턴스별)
-  const handleSendBYOKMessage = useCallback(async (instanceId: string, message: string) => {
-    const model = activeModels.find(m => m.instanceId === instanceId);
-    if (!model || !model.modelId.startsWith('byok-')) {
-      console.error('[App] Invalid BYOK model instance:', instanceId);
-      return;
-    }
+  // BYOK 모델 개별 메시지 전송 핸들러
+  const handleSendBYOKMessage = useCallback(async (instanceId: string, message: string, images?: ImageContentPart[]) => {
+    const targetModel = activeModels.find(m => m.instanceId === instanceId);
+    if (!targetModel) return;
 
-    // 1. User 메시지 추가
+    // 1. 사용자 메시지 추가 (이미지 포함 처리)
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: (() => {
+        // 이미지가 있으면 MessageContentPart[] 형태로 변환
+        if (images && images.length > 0) {
+          const parts: MessageContentPart[] = [];
+
+          // 텍스트가 있으면 먼저 추가
+          if (message.trim()) {
+            parts.push({ type: 'text', text: message });
+          }
+
+          // 이미지들 추가
+          parts.push(...images);
+
+          return parts;
+        }
+
+        // 이미지가 없으면 단순 문자열 (하위 호환)
+        return message;
+      })(),
+      timestamp: Date.now()
+    };
+    const newMessages = [...(targetModel.messages || []), userMessage];
+
     setActiveModels(prev => prev.map(m =>
       m.instanceId === instanceId
-        ? { ...m, messages: [...(m.messages || []), { role: 'user', content: message, timestamp: Date.now() }], lastStatus: 'sending' }
+        ? { ...m, messages: newMessages, lastStatus: 'sending' }
         : m
     ));
 
     try {
-      // 2. ChainOrchestrator를 통해 API 호출
-      const { ChainOrchestrator } = await import('./services/chain-orchestrator');
-      const response = await ChainOrchestrator.getInstance().sendMessage(model, message);
+      // 2. BYOK 서비스 호출
+      // 모델 ID 형식: byok-{providerId}-{variantId} (예: byok-openrouter-openai/gpt-4o)
+      // 또는 레거시: byok-{providerId} (예: byok-openrouter)
+      const modelIdParts = targetModel.modelId.replace('byok-', '').split('-');
+      const providerId = modelIdParts[0] as BYOKProviderId;
 
-      // 3. Assistant 메시지 추가
+      // ✅ chrome.storage.local에 저장된 최신 설정 불러오기 (BYOKModal과 일관)
+      const settings = await loadBYOKSettings();
+      const config = settings.providers?.[providerId];
+
+      if (!settings.enabled || !config?.apiKey) {
+        throw new Error('API key가 설정되어 있지 않습니다. Settings → BYOK에서 활성화 및 키를 저장해주세요.');
+      }
+
+      const apiKey = config.apiKey.trim();
+      
+      // ✅ 모델 ID에서 variant 추출 (byok-providerId-variantId 형식)
+      // 예: byok-openrouter-openai/gpt-4o → variantId = openai/gpt-4o
+      // 첫 번째 부분(providerId)을 제외한 나머지를 '-'로 다시 연결
+      let variant: string | undefined;
+      if (modelIdParts.length > 1) {
+        // 새 형식: byok-providerId-variantId
+        variant = modelIdParts.slice(1).join('-');
+      } else {
+        // 레거시 형식: byok-providerId (설정에서 variant 가져옴)
+        variant = config.selectedVariants?.[0] || (config as any).selectedVariant;
+      }
+
+      if (!variant) {
+        throw new Error('모델이 선택되지 않았습니다. BYOK 설정에서 모델을 선택해주세요.');
+      }
+
+      // 2. BYOK API 호출
+      const apiResponse = await BYOKService.getInstance().callAPI({
+        providerId,
+        apiKey,
+        variant,
+        prompt: '', // 빈 문자열 (historyMessages로 전체 대화 전달)
+        historyMessages: newMessages, // ✨ 이미지 포함 메시지 배열
+        temperature: config.customTemperature,
+        maxTokens: config.maxTokens,
+        reasoningEffort: config.reasoningEffort,
+        thinkingBudget: config.thinkingBudget,
+        thinkingLevel: config.thinkingLevel,
+        enableThinking: config.enableThinking
+      });
+
+      if (!apiResponse.success) {
+        throw new Error(apiResponse.error || 'API call failed');
+      }
+
+      // 3. 응답 메시지 추가 (✨ reasoning 데이터 포함)
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: apiResponse.content || '',
+        timestamp: Date.now(),
+        reasoning: apiResponse.reasoning,           // ✨ DeepSeek R1 등 단순 텍스트
+        reasoningDetails: apiResponse.reasoningDetails  // ✨ OpenRouter 표준 reasoning_details
+      };
+      const finalMessages = [...newMessages, assistantMessage];
+
+      // 4. 히스토리 저장
+      const savedId = await BYOKHistoryService.getInstance().saveConversation(
+        targetModel.byokHistoryId || null,
+        providerId,
+        variant,
+        finalMessages
+      );
+
       setActiveModels(prev => prev.map(m =>
         m.instanceId === instanceId
-          ? {
-            ...m,
-            messages: [...(m.messages || []), { role: 'assistant', content: response, timestamp: Date.now() }],
-            lastStatus: 'success'
-          }
+          ? { ...m, messages: finalMessages, lastStatus: 'success', byokHistoryId: savedId }
           : m
       ));
 
-      // 4. 잠시 후 상태 초기화
-      setTimeout(() => {
-        setActiveModels(prev => prev.map(m =>
-          m.instanceId === instanceId ? { ...m, lastStatus: 'idle' } : m
-        ));
-      }, 2000);
-
     } catch (error) {
-      console.error('[App] BYOK send failed:', error);
-
-      // 에러 메시지 추가
+      console.error('BYOK Send Error:', error);
       setActiveModels(prev => prev.map(m =>
         m.instanceId === instanceId
           ? {
             ...m,
-            messages: [...(m.messages || []), {
+            messages: [...newMessages, {
               role: 'assistant',
               content: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}`,
               timestamp: Date.now()
@@ -264,6 +382,82 @@ export const App: React.FC = () => {
     }
   }, [activeModels]);
 
+
+  // BYOK 개별 채팅 초기화 (New Chat)
+  const handleNewChat = async (instanceId: string) => {
+    const targetModel = activeModels.find(m => m.instanceId === instanceId);
+    if (!targetModel) return;
+
+    // 현재 대화가 있는지 확인
+    const hasMessages = targetModel.messages && targetModel.messages.length > 0;
+
+    if (hasMessages) {
+      // 확인 모달 표시
+      const confirmed = confirm(
+        '💬 새 대화를 시작하시겠습니까?\n\n' +
+        '현재 대화는 자동으로 저장되며,\n' +
+        '히스토리에서 언제든지 다시 불러올 수 있습니다.'
+      );
+
+      if (!confirmed) return;
+
+      // 현재 대화 저장 (메시지가 있을 때만) - 저장 완료까지 대기
+      try {
+        // 모델 ID 형식: byok-{providerId}-{variantId}
+        const modelIdParts = targetModel.modelId.replace('byok-', '').split('-');
+        const providerId = modelIdParts[0] as BYOKProviderId;
+        
+        // variant 추출: 모델 ID에서 직접 추출 (설정 로드 불필요)
+        const variant = modelIdParts.length > 1 
+          ? modelIdParts.slice(1).join('-') 
+          : 'default';
+
+        const messagesToSave = targetModel.messages!; // hasMessages 검사 후이므로 안전
+
+        console.log('[handleNewChat] Saving conversation before reset...', {
+          providerId,
+          variant,
+          messageCount: messagesToSave.length,
+          existingHistoryId: targetModel.byokHistoryId
+        });
+
+        const savedId = await BYOKHistoryService.getInstance().saveConversation(
+          targetModel.byokHistoryId || null,
+          providerId,
+          variant,
+          messagesToSave
+        );
+
+        console.log('[handleNewChat] Conversation saved successfully:', savedId);
+      } catch (error) {
+        console.error('[handleNewChat] Failed to save conversation:', error);
+        // 저장 실패해도 새 대화 시작은 진행 (사용자 경험 우선)
+      }
+    }
+
+    // 새 대화 시작 (메시지 초기화 + byokHistoryId 해제)
+    setActiveModels(prev => prev.map(m =>
+      m.instanceId === instanceId
+        ? { ...m, messages: [], lastStatus: 'idle', byokHistoryId: undefined }
+        : m
+    ));
+  };
+
+  // BYOK 히스토리 로드
+  const handleLoadBYOKHistory = async (historyId: string, targetInstanceId: string) => {
+    try {
+      const history = await BYOKHistoryService.getInstance().getConversation(historyId);
+      if (history) {
+        setActiveModels(prev => prev.map(m =>
+          m.instanceId === targetInstanceId
+            ? { ...m, messages: history.messages, byokHistoryId: history.id }
+            : m
+        ));
+      }
+    } catch (error) {
+      console.error('Failed to load BYOK history:', error);
+    }
+  };
 
   // --- Derived State ---
   const mainBrainModel = activeModels.find(m => m.instanceId === mainBrainInstanceId);
@@ -316,12 +510,18 @@ export const App: React.FC = () => {
                       model={getModelConfig(mainBrainModel.modelId)}
                       instanceId={mainBrainModel.instanceId}
                       isMainBrain={true}
+                      conversationUrl={mainBrainModel.conversationUrl}
                       onSetMainBrain={() => { }}
                       onRemoveMainBrain={() => setMainBrainInstanceId(null)}
                       onClose={() => handleCloseSpecificInstance(mainBrainModel.instanceId)}
                       status={mainBrainModel.lastStatus}
                       messages={mainBrainModel.messages}
                       onSendMessage={async (msg) => handleSendBYOKMessage(mainBrainModel.instanceId, msg)}
+                      onLoadHistory={handleLoadHistory}
+                      onNewChat={() => handleNewChat(mainBrainModel.instanceId)}
+                      currentConversationId={currentConversationId}
+                      onLoadBYOKHistory={(id) => handleLoadBYOKHistory(id, mainBrainModel.instanceId)}
+                      byokHistoryId={mainBrainModel.byokHistoryId}
                     />
                   </div>
                 </div>
@@ -334,6 +534,10 @@ export const App: React.FC = () => {
                     onSetMainBrain={setMainBrainInstanceId}
                     onCloseInstance={handleCloseSpecificInstance}
                     onSendMessage={handleSendBYOKMessage}
+                    onLoadHistory={handleLoadHistory}
+                    onNewChat={handleNewChat}
+                    currentConversationId={currentConversationId}
+                    onLoadBYOKHistory={handleLoadBYOKHistory}
                   />
                 </div>
               </div>
@@ -346,6 +550,10 @@ export const App: React.FC = () => {
                   onSetMainBrain={setMainBrainInstanceId}
                   onCloseInstance={handleCloseSpecificInstance}
                   onSendMessage={handleSendBYOKMessage}
+                  onLoadHistory={handleLoadHistory}
+                  onNewChat={handleNewChat}
+                  currentConversationId={currentConversationId}
+                  onLoadBYOKHistory={handleLoadBYOKHistory}
                 />
               </div>
             )}
@@ -359,6 +567,7 @@ export const App: React.FC = () => {
             onInputHandled={() => setInjectedPromptText(null)}
             onStatusUpdate={handleStatusUpdate}
             onMessageUpdate={handleMessageUpdate}
+            onModelMetadataUpdate={handleModelMetadataUpdate}
           />
         </main>
       </div>

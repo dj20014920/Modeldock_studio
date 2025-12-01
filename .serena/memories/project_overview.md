@@ -1,0 +1,4 @@
+- Chrome 확장 프로그램 "ModelDock"; 여러 AI 모델을 동시에 사용하는 워크스페이스 UI(React+TypeScript, Vite, Tailwind, Lucide).
+- 주요 기능: 사이드바 모델 추가/제거, 메인 브레인 & 그리드 뷰, Brain Flow 자동 오케스트레이션, BYOK(BRING YOUR OWN KEY) 모델 설정/채팅, 프롬프트 라이브러리, 히스토리 저장.
+- 저장소 구조: src/components(모달/챗/그리드/프롬프트 등), src/services(BYOK/BrainFlow/perplexity/history), src/hooks(usePersistentState), src/utils, src/locales, 설정 파일(tailwind.config.js, vite.config.ts), 확장용 index.html/public.
+- BYOK 설정 및 히스토리 등은 chrome.storage.local에 저장; 일부 동적 모델 리스트는 프록시/사용자 키로 로드.

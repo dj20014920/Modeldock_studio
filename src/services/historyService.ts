@@ -48,14 +48,29 @@ export class HistoryService {
     public async saveConversation(
         id: string | null,
         activeModels: ActiveModel[],
-        mainBrainId: string | null
+        mainBrainId: string | null,
+        options?: {
+            mode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual';
+            links?: Record<string, string>;
+            titleOverride?: string;
+            previewOverride?: string;
+            force?: boolean;
+            prompt?: string;
+        }
     ): Promise<string> {
         // 1. Validate content
         if (activeModels.length === 0) return id || this.generateId(); // Don't save empty sessions
 
         // Check if there are any messages
         const hasMessages = activeModels.some(m => m.messages && m.messages.length > 0);
-        if (!hasMessages) return id || this.generateId(); // Don't save empty chats
+
+        const linkMap = options?.links || this.extractLinks(activeModels);
+        const hasLinks = Object.keys(linkMap).length > 0;
+
+        if (!options?.force && !hasMessages && !hasLinks) {
+            // Don't save empty chats unless forced or links exist
+            return id || this.generateId();
+        }
 
         const historyList = await this.getHistoryList();
         const now = Date.now();
@@ -69,21 +84,28 @@ export class HistoryService {
         }
 
         // Generate Title from the first user message of the first model
-        let title = 'New Conversation';
+        let title = options?.titleOverride || 'New Conversation';
         const firstModelWithMsg = activeModels.find(m => m.messages && m.messages.length > 0);
-        if (firstModelWithMsg && firstModelWithMsg.messages && firstModelWithMsg.messages.length > 0) {
+        if (!options?.titleOverride && firstModelWithMsg && firstModelWithMsg.messages && firstModelWithMsg.messages.length > 0) {
             const firstMsg = firstModelWithMsg.messages.find(m => m.role === 'user');
             if (firstMsg) {
-                title = firstMsg.content.slice(0, 30) + (firstMsg.content.length > 30 ? '...' : '');
+                // ✨ 이미지 포함 content 처리 (extractTextFromContent 사용)
+                const text = this.extractTextFromContent(firstMsg.content);
+                title = text.slice(0, 30) + (text.length > 30 ? '...' : '');
             }
         }
 
         // Generate Preview (last message)
-        let preview = 'No messages';
-        if (firstModelWithMsg && firstModelWithMsg.messages && firstModelWithMsg.messages.length > 0) {
+        let preview = options?.previewOverride || 'No messages';
+        if (!options?.previewOverride && firstModelWithMsg && firstModelWithMsg.messages && firstModelWithMsg.messages.length > 0) {
             const lastMsg = firstModelWithMsg.messages[firstModelWithMsg.messages.length - 1];
-            preview = lastMsg.content.slice(0, 50) + (lastMsg.content.length > 50 ? '...' : '');
+            // ✨ 이미지 포함 content 처리 (extractTextFromContent 사용)
+            const text = this.extractTextFromContent(lastMsg.content);
+            preview = text.slice(0, 50) + (text.length > 50 ? '...' : '');
         }
+
+        const mode = options?.mode || this.deriveMode(activeModels);
+        const lastPrompt = options?.prompt || this.pickLastPrompt(activeModels);
 
         // 3. Update Metadata
         const metadata: ConversationMetadata = {
@@ -92,7 +114,10 @@ export class HistoryService {
             createdAt: isNew ? now : (historyList.find(h => h.id === conversationId)?.createdAt || now),
             updatedAt: now,
             preview,
-            modelCount: activeModels.length
+            modelCount: activeModels.length,
+            mode,
+            linkCount: Object.keys(linkMap).length || undefined,
+            lastPrompt
         };
 
         const updatedList = [
@@ -104,7 +129,10 @@ export class HistoryService {
         const content: ConversationContent = {
             id: conversationId,
             activeModels,
-            mainBrainId
+            mainBrainId,
+            conversationLinks: linkMap,
+            mode,
+            lastPrompt
         };
 
         await chrome.storage.local.set({
@@ -146,5 +174,70 @@ export class HistoryService {
         keysToRemove.push(METADATA_KEY);
 
         await chrome.storage.local.remove(keysToRemove);
+    }
+
+    private extractLinks(activeModels: ActiveModel[]): Record<string, string> {
+        const links: Record<string, string> = {};
+        activeModels.forEach(m => {
+            if (m.conversationUrl) {
+                links[m.instanceId] = m.conversationUrl;
+            }
+        });
+        return links;
+    }
+
+    private deriveMode(activeModels: ActiveModel[]): ConversationMetadata['mode'] {
+        const modes = activeModels.map(m => m.historyMode).filter(Boolean) as ConversationMetadata['mode'][];
+        if (modes.includes('brainflow')) return 'brainflow';
+        if (modes.includes('auto-routing')) return 'auto-routing';
+        if (modes.includes('byok')) return 'byok';
+        if (modes.includes('manual')) return 'manual';
+        return undefined;
+    }
+
+    /**
+     * ✨ MessageContent에서 텍스트만 추출하는 헬퍼 함수
+     * 이미지 포함 메시지를 히스토리 메타데이터(title, preview)에 표시하기 위해 사용
+     *
+     * @param content - MessageContent (string | MessageContentPart[])
+     * @returns 추출된 텍스트 (이미지는 "[이미지]"로 표시)
+     */
+    private extractTextFromContent(content: any): string {
+        // 단순 문자열 (하위 호환)
+        if (typeof content === 'string') {
+            return content;
+        }
+
+        // MessageContentPart[] (이미지 포함)
+        if (Array.isArray(content)) {
+            const parts: string[] = [];
+
+            for (const part of content) {
+                if (part.type === 'text') {
+                    parts.push(part.text);
+                } else if (part.type === 'image_url') {
+                    // 이미지는 "[이미지]" 텍스트로 표시
+                    parts.push('[이미지]');
+                }
+            }
+
+            return parts.join(' ');
+        }
+
+        // Fallback (예상치 못한 타입)
+        return String(content);
+    }
+
+    private pickLastPrompt(activeModels: ActiveModel[]): string | undefined {
+        for (const model of activeModels) {
+            if (model.lastPrompt) return model.lastPrompt;
+            const userMessages = (model.messages || []).filter(m => m.role === 'user');
+            if (userMessages.length > 0) {
+                const last = userMessages[userMessages.length - 1];
+                const text = this.extractTextFromContent(last.content);
+                return text.slice(0, 200);
+            }
+        }
+        return undefined;
     }
 }
