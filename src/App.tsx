@@ -284,12 +284,10 @@ export const App: React.FC = () => {
 
     try {
       // 2. BYOK 서비스 호출
-      // 모델 ID 형식: byok-{providerId}-{variantId} (예: byok-openrouter-openai/gpt-4o)
-      // 또는 레거시: byok-{providerId} (예: byok-openrouter)
       const modelIdParts = targetModel.modelId.replace('byok-', '').split('-');
       const providerId = modelIdParts[0] as BYOKProviderId;
 
-      // ✅ chrome.storage.local에 저장된 최신 설정 불러오기 (BYOKModal과 일관)
+      // ✅ chrome.storage.local에 저장된 최신 설정 불러오기
       const settings = await loadBYOKSettings();
       const config = settings.providers?.[providerId];
 
@@ -299,15 +297,11 @@ export const App: React.FC = () => {
 
       const apiKey = config.apiKey.trim();
 
-      // ✅ 모델 ID에서 variant 추출 (byok-providerId-variantId 형식)
-      // 예: byok-openrouter-openai/gpt-4o → variantId = openai/gpt-4o
-      // 첫 번째 부분(providerId)을 제외한 나머지를 '-'로 다시 연결
+      // ✅ 모델 ID에서 variant 추출
       let variant: string | undefined;
       if (modelIdParts.length > 1) {
-        // 새 형식: byok-providerId-variantId
         variant = modelIdParts.slice(1).join('-');
       } else {
-        // 레거시 형식: byok-providerId (설정에서 variant 가져옴)
         variant = config.selectedVariants?.[0] || (config as any).selectedVariant;
       }
 
@@ -315,15 +309,13 @@ export const App: React.FC = () => {
         throw new Error('모델이 선택되지 않았습니다. BYOK 설정에서 모델을 선택해주세요.');
       }
 
-      // 2. BYOK API 호출
-      // ✅ 설정 병합 및 OpenRouter variant suffix 처리는 BYOKAPIService.callAPI에서 자동 처리됨
       const apiResponse = await BYOKService.getInstance().callAPI({
         providerId,
         apiKey,
-        variant, // ✅ base variant만 전달 (suffix 처리는 callAPI 내부에서)
-        prompt: '', // 빈 문자열 (historyMessages로 전체 대화 전달)
-        historyMessages: newMessages, // ✨ 이미지 포함 메시지 배열
-        // Provider 기본 설정 전달 (modelOverrides 우선 적용은 callAPI에서)
+        variant,
+        prompt: '',
+        historyMessages: newMessages,
+        // Provider 기본 설정
         temperature: config.customTemperature,
         maxTokens: config.maxTokens,
         topP: config.topP,
@@ -334,19 +326,22 @@ export const App: React.FC = () => {
         enableThinking: config.enableThinking,
         frequencyPenalty: config.frequencyPenalty,
         presencePenalty: config.presencePenalty,
+        // 스트리밍 비활성화 (파서 이슈로 인해 보류)
+        // TODO: streamUtils.ts의 addChunk 로직 수정 후 재활성화
+        stream: false,
       });
 
       if (!apiResponse.success) {
         throw new Error(apiResponse.error || 'API call failed');
       }
 
-      // 3. 응답 메시지 추가 (✨ reasoning 데이터 포함)
+      // 3. 최종 메시지 구성 (스트리밍 완료 후)
       const assistantMessage: ChatMessage = {
         role: 'assistant',
         content: apiResponse.content || '',
         timestamp: Date.now(),
-        reasoning: apiResponse.reasoning,           // ✨ DeepSeek R1 등 단순 텍스트
-        reasoningDetails: apiResponse.reasoningDetails  // ✨ OpenRouter 표준 reasoning_details
+        reasoning: apiResponse.reasoning,
+        reasoningDetails: apiResponse.reasoningDetails
       };
       const finalMessages = [...newMessages, assistantMessage];
 
@@ -498,7 +493,7 @@ export const App: React.FC = () => {
                 {/* Resizable Main Brain Panel */}
                 <div
                   className="relative h-full flex-shrink-0 transition-all duration-75 ease-out"
-                  style={{ width: `${gridWidthPercent}%` }}
+                  style={{ width: `${gridWidthPercent} % ` }}
                 >
                   {/* Drag Handle */}
                   <div

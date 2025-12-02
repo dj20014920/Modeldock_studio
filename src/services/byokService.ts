@@ -30,6 +30,17 @@ interface BYOKRawModel {
     description?: string; // 🆕 Description
 }
 
+// 🆕 스트리밍 청크 타입 (실시간 업데이트용)
+interface StreamChunk {
+    content?: string;              // 누적된 content
+    reasoning?: string;            // 누적된 reasoning
+    reasoningDetails?: ReasoningDetail[]; // 누적된 reasoning_details
+    isDone: boolean;               // 스트림 완료 여부
+}
+
+// 🆕 스트리밍 콜백 타입
+type StreamCallback = (chunk: StreamChunk) => void;
+
 interface APICallParams {
     providerId: BYOKProviderId;
     apiKey: string;
@@ -70,6 +81,10 @@ interface APICallParams {
     logprobs?: boolean;
     topLogprobs?: number;
     verbosity?: 'low' | 'medium' | 'high';
+
+    // 🆕 Streaming Support
+    stream?: boolean;              // 스트리밍 모드 활성화
+    onStreamChunk?: StreamCallback; // 실시간 청크 콜백
 
     // Injected dynamically by the service facade
     mergedVariant?: BYOKModelVariant;
@@ -271,7 +286,7 @@ class OpenAICompatibleAdapter extends AbstractBYOKAdapter {
             const body: any = {
                 model: params.variant,
                 messages,
-                stream: false
+                stream: params.stream ?? false // 🆕 스트리밍 모드 설정
             };
 
             // --- Parameter Handling Strategy ---
@@ -337,7 +352,7 @@ class OpenAICompatibleAdapter extends AbstractBYOKAdapter {
             }
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+            const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout (reasoning takes longer)
 
             try {
                 const response = await fetch(url, {
@@ -357,6 +372,12 @@ class OpenAICompatibleAdapter extends AbstractBYOKAdapter {
                     throw new Error(errMsg);
                 }
 
+                // 🆕 스트리밍 모드 처리
+                if (params.stream && params.onStreamChunk) {
+                    return await this.handleStreamResponse(response, params.onStreamChunk);
+                }
+
+                // 비스트리밍 모드 (기존 로직)
                 const data = await response.json();
                 return {
                     success: true,
@@ -372,6 +393,79 @@ class OpenAICompatibleAdapter extends AbstractBYOKAdapter {
                 clearTimeout(timeoutId);
             }
         });
+    }
+
+    /**
+     * 🆕 스트리밍 응답 처리
+     */
+    private async handleStreamResponse(
+        response: Response,
+        onStreamChunk: StreamCallback
+    ): Promise<APIResponse> {
+        const { parseSSEStream, StreamAccumulator } = await import('./streamUtils');
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error('Response body is not readable');
+        }
+
+        const accumulator = new StreamAccumulator();
+        let lastUsage: any = null;
+
+        await parseSSEStream(
+            reader,
+            (chunk) => {
+                accumulator.addChunk(chunk);
+                const accumulated = accumulator.getAccumulated();
+
+                // 실시간 콜백 호출
+                onStreamChunk({
+                    content: accumulated.content,
+                    reasoning: accumulated.reasoning,
+                    reasoningDetails: accumulated.reasoningDetails,
+                    isDone: false,
+                });
+
+                if (chunk.usage) {
+                    lastUsage = chunk.usage;
+                }
+            },
+            () => {
+                // 스트림 완료
+                const final = accumulator.getAccumulated();
+                onStreamChunk({
+                    content: final.content,
+                    reasoning: final.reasoning,
+                    reasoningDetails: final.reasoningDetails,
+                    isDone: true,
+                });
+            },
+            (error) => {
+                console.error('[BYOK Stream] Error:', error);
+                // 에러 발생 시 현재까지 누적된 내용을 isDone: true로 전달
+                const final = accumulator.getAccumulated();
+                onStreamChunk({
+                    content: final.content,
+                    reasoning: final.reasoning,
+                    reasoningDetails: final.reasoningDetails,
+                    isDone: true,
+                });
+            }
+        );
+
+        // 최종 응답 반환
+        const final = accumulator.getAccumulated();
+        return {
+            success: true,
+            content: final.content,
+            reasoning: final.reasoning,
+            reasoningDetails: final.reasoningDetails,
+            usage: lastUsage ? {
+                promptTokens: lastUsage.prompt_tokens || 0,
+                completionTokens: lastUsage.completion_tokens || 0,
+                totalTokens: lastUsage.total_tokens || 0,
+            } : undefined,
+        };
     }
 
     // 🆕 실제 API를 통해 모델 리스트 가져오기
@@ -1085,7 +1179,7 @@ class OpenRouterAdapter extends OpenAICompatibleAdapter {
             const body: any = {
                 model: params.variant,
                 messages,
-                stream: false
+                stream: params.stream ?? false // 🆕 스트리밍 모드 설정
             };
 
             // 기본 파라미터
@@ -1138,6 +1232,12 @@ class OpenRouterAdapter extends OpenAICompatibleAdapter {
                     throw new Error(errMsg);
                 }
 
+                // 🆕 스트리밍 모드 처리 (부모 클래스 메서드 재사용)
+                if (params.stream && params.onStreamChunk) {
+                    return await (this as any).handleStreamResponse(response, params.onStreamChunk);
+                }
+
+                // 비스트리밍 모드 (기존 로직)
                 const data = await response.json();
                 const message = data.choices[0]?.message;
 

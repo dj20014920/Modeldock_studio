@@ -20,31 +20,48 @@ export default {
         ok: '確定',
         yes: '是',
         no: '否',
+        confirmDelete: '確定要刪除這個對話嗎？',
+        deleteConfirm: '確定要刪除嗎？',
     },
     sidebar: {
         chats: '對話',
+        history: '歷史',
         models: '模型',
+        prompts: '提示詞',
         settings: '設定',
-        noActiveChats: '暫無活躍對話',
+        noActiveChats: '開始一段新對話吧。',
         createNewChat: '建立新對話',
+        activeSessions: '活躍會話',
         availableModels: '可用模型',
         maxInstancesHint: '每個模型限3個',
         proUser: '專業版使用者',
         versionLabel: 'ModelDock V1',
+        byokModels: 'BYOK模型',
+        standardModels: '標準模型',
+        conversationHistory: '對話歷史',
+        today: '今天',
+        yesterday: '昨天',
+        previous7Days: '過去7天',
+        older: '更早',
+        noHistory: '暫無對話歷史',
+        brainFlow: 'Brain Flow',
+        autoRouting: '自動路由',
+        manual: '手動',
+        link: '連結',
     },
     modelGrid: {
-        allInMainBrain: '所有活躍模型都在主腦視圖中',
+        allInMainBrain: '暫無活躍模型。請從側邊欄選擇模型新增。',
         noModels: '暫無可用模型',
     },
     chatInput: {
         manualMode: '手動',
         autoMode: '自動',
-        placeholder: '輸入訊息...',
+        placeholder: '向AI模型提問...',
         send: '傳送',
         copyToClipboard: '複製到剪貼簿',
         dispatchToAll: '傳送給所有模型',
-        consentTitle: '⚡️ 自動路由同意',
-        consentMessage: 'ModelDock將自動把您的訊息注入到活躍的模型iframe中並模擬提交。這是安全的，並且完全在您的瀏覽器本地執行。',
+        consentTitle: '⚡️ 自動路由同意（風險提示）',
+        consentMessage: 'ModelDock會在您的瀏覽器中自動向活躍的模型發送訊息。⚠️ 警告：部分AI服務（ChatGPT、Claude等）可能將自動化存取視為違反服務條款，這可能導致帳戶警告、暫時封鎖或永久停用。使用此功能的所有責任由使用者自行承擔。',
         iUnderstand: '我明白了',
         sentSuccess: '傳送成功！',
         errorNoTargets: '未找到有效目標',
@@ -159,34 +176,187 @@ export default {
         academic: '學術',
     },
 
+    // === 模型卡片 ===
+    modelCard: {
+        refresh: '重新整理',
+        openInNewTab: '在新分頁開啟',
+        removeMainBrain: '取消主腦',
+        setAsMainBrain: '設為主腦',
+        syncing: '會話同步中...',
+        synced: '同步完成！',
+        syncFailed: '同步失敗',
+        syncSession: '會話同步',
+        mainBrain: '主腦',
+    },
+
+    // === Brain Flow ===
+    brainFlow: {
+        phase1: `# 角色
+你是「主腦」 - 一個將專業子任務分配給從屬AI模型的任務協調者。
+你不直接回答用戶的問題。你唯一的工作是為每個從屬創建最優提示詞。
+
+# 從屬模型列表
+{{slaves}}
+
+# 用戶目標
+{{goal}}
+
+# 必須遵守的規則（MUST）
+1. 為上述列表中的每個從屬創建恰好一個[SLAVE:id]區塊 - 無例外
+2. 從屬並行運行，無法看到彼此的輸出
+3. 不要在[SLAVE:...][/SLAVE]區塊外包含任何文字
+4. 使用列表中提供的確切從屬ID（例如：[SLAVE:gemini-1]、[SLAVE:grok-2]）
+
+# 輸出格式
+[SLAVE:model-id]
+此從屬的具體任務提示詞...
+[/SLAVE]
+
+# 提示詞設計策略
+根據目標為每個從屬分配不同的角色：
+- 分析師：數據分析、模式識別、統計
+- 批評家：風險評估、反駁論點、邊緣案例
+- 創作者：解決方案、創意、執行計畫
+- 驗證者：事實核查、來源驗證、邏輯審查
+- 綜合者：摘要、關鍵洞察、行動項目
+
+# 從屬提示詞模板
+每個提示詞應包含：
+1. 角色：「你是[具體專家角色]...」
+2. 任務：使用具體動詞的清晰可執行指令
+3. 焦點：要分析的具體方面（避免與其他從屬重疊）
+4. 格式：期望的輸出結構（要點、編號列表、章節）
+5. 語言：使用與用戶目標相同的語言回覆
+
+# 反模式（禁止）
+❌ 向多個從屬提出相同問題
+❌ 創建從屬間的依賴關係（如：「基於模型A的輸出...」）
+❌ 在區塊外寫元評論或解釋
+❌ 遺漏列表中的任何從屬
+❌ 使用通用提示詞 - 針對每個從屬的優勢定制`,
+        phase3: `# 角色
+你是「主腦」綜合者。你的工作是將多個AI回覆合併成一個最優答案。
+
+# 用戶的原始目標
+{{goal}}
+
+# 從屬回覆
+{{responses}}
+
+# 綜合方法論（4步）
+
+## 第1步：提取（EXTRACT）
+- 列出每個回覆的關鍵點
+- 記錄只有一個模型提供的獨特見解
+- 識別重疊的結論（共識）
+
+## 第2步：驗證（VALIDATE）
+- 交叉核查多個來源提到的事實
+- 標記回覆之間的矛盾
+- 評估置信度：高（3+模型同意）/ 中（2個同意）/ 低（僅1個）
+
+## 第3步：解決衝突（RESOLVE）
+當模型意見不一致時：
+- 優先選擇有具體證據/數據的回覆而非觀點
+- 考慮每個模型的專業領域
+- 如無法解決，同時呈現兩種觀點及其優缺點
+
+## 第4步：綜合（SYNTHESIZE）
+創建統一答案：
+- 直接回應用戶的原始目標
+- 結合所有回覆的最佳元素
+- 消除冗餘和矛盾
+- 保持邏輯流暢和連貫
+
+# 輸出格式
+按以下結構回覆：
+
+### 📋 執行摘要
+[2-3句話概述綜合答案]
+
+### 🔍 關鍵發現
+[帶置信度的主要結論要點]
+
+### ⚠️ 重要注意事項
+[風險、警告或值得注意的少數意見]
+
+### ✅ 建議行動/答案
+[滿足用戶目標的清晰可執行結論]
+
+# 語言
+使用與用戶原始目標相同的語言回覆。`,
+    },
+
     brainFlowModal: {
         title: '🧠 Brain Flow',
-        subtitle: '主腦溫柔協調 {{count}} 個輔助 Bot',
+        subtitle: '主腦協調 {{count}} 個輔助Bot',
         goalLabel: '請輸入你的目標',
         goalPlaceholder: '例：請分析這些資料、萃取洞察並制定執行計畫……',
-        tip: '提示：目標越清晰，結果越柔和貼心。',
-        previewButton: '預覽並輕柔調整主提示詞',
+        tip: '提示：目標越清晰，結果越精準。',
+        startButton: '開始Brain Flow',
+        errorNoMainBrain: '請先指定一個主腦。',
+        errorNoSlaves: '需要至少一個其他模型才能運行Brain Flow。',
+        errorNotSupported: '選中的主腦（{modelName}）不支援Brain Flow。（如Vibe Coding工具）',
+        warningExcludedModels: '部分模型因不支援Brain Flow而被排除。',
+        excludedMessage: '以下模型將從Brain Flow中排除: {{models}}',
+        previewButton: '預覽並調整主提示詞',
         previewShow: '展開',
         previewHide: '收起',
-        previewTitle: '主腦提示詞預覽（目標/機器人將自動填入）',
+        previewTitle: '主腦提示詞預覽',
         previewFilledLabel: '以當前目標的預覽',
-        warningKeepBlocks: '請保留 [SLAVE:…]、{{slaves}}、{{goal}} 不變——僅輕柔調整周圍文字。',
-        persistNote: '已保存。後續 Brain Flow 也會使用這個調整後的提示詞。',
-        previewGoalPlaceholder: '告訴我你想達成的事，我會溫柔帶領整個團隊……',
-        synthesisPreviewButton: '預覽並輕柔調整彙總提示詞',
-        synthesisPreviewTitle: '彙總提示詞預覽（目標/回應將自動填入）',
+        warningKeepBlocks: '請保留 [SLAVE:…]、{{slaves}}、{{goal}} 不變。',
+        persistNote: '已儲存。後續 Brain Flow 也會使用這個提示詞。',
+        previewGoalPlaceholder: '告訴我你想達成的目標...',
+        synthesisPreviewButton: '預覽並調整彙總提示詞',
+        synthesisPreviewTitle: '彙總提示詞預覽',
         synthesisPreviewFilledLabel: '以示例回應的預覽',
-        synthesisWarningKeepBlocks: '請保留 {{goal}} 和 {{responses}} 不變——此提示用於最終彙總。',
+        synthesisWarningKeepBlocks: '請保留 {{goal}} 和 {{responses}} 不變。',
     },
 
     // === BYOK ===
     byok: {
+        title: 'BYOK設定',
+        subtitle: '使用自己的API金鑰存取AI模型',
+        systemActive: '系統活躍',
+        systemDisabled: '系統停用',
+        refreshAll: '全部重新整理',
+        refreshing: '重新整理中...',
+        saveChanges: '儲存變更',
+        saving: '儲存中...',
+        providerName: '提供商',
+        modelsCount: '{{count}}個模型',
+        getApiKey: '取得API金鑰',
+        documentation: '文件',
+        apiCredentials: 'API憑證',
+        validate: '驗證',
+        validating: '驗證中...',
+        valid: '有效',
+        invalid: '無效',
+        modelSelection: '模型選擇',
+        available: '可用',
+        searchModels: '搜尋模型...',
+        sortBy: '排序',
+        sortPopular: '按熱門',
+        sortLatest: '按最新',
+        allModels: '全部模型',
+        reasoning: '推理',
+        coding: '編程',
+        vision: '視覺',
+        realtime: '即時',
+        contextWindow: '上下文視窗',
+        pricing: '價格',
+        pricingVaries: '價格變動',
+        noModelsFound: '未找到符合條件的模型。',
+        refreshSuccess: '模型清單已成功重新整理。',
+        refreshError: '重新整理模型清單失敗。',
+        validationSuccess: 'API金鑰有效。',
+        validationError: 'API金鑰驗證失敗。',
+        saveSuccess: '設定已儲存。',
         validation: {
             title: '需要API金鑰驗證',
             unverifiedProvidersMessage: '以下提供商尚未驗證:',
             autoVerifyPrompt: '是否立即自動驗證?',
             cancelNote: '(取消將不儲存並返回)',
-
             unavailableTitle: '無法儲存',
             unavailableMessage: '以下提供商的API金鑰或模型不可用:',
             modelLabel: '模型',
@@ -196,12 +366,147 @@ export default {
             solution1: '1. 重新檢查您的API金鑰',
             solution2: '2. 嘗試選擇其他模型',
             solution3: '3. 在提供商網站驗證權限',
-
             uncertainTitle: '警告: 驗證不確定',
             uncertainMessage: '部分提供商無法驗證:',
             uncertainReason: '驗證不確定 (網路錯誤或速率限制)',
             proceedQuestion: '仍要儲存嗎?',
             recommendation: '建議: 按「取消」並使用「驗證」按鈕重試。',
         },
+        cacheAge: '{{minutes}}分鐘前更新',
+        cached: '已快取',
+        studioTitle: 'BYOK Studio',
+        studioSubtitle: '配置您的AI基礎設施',
+        openRouterNote: '※模型資訊基於OpenRouter。實際可用性可能因提供商金鑰而異。',
+        aiProviders: 'AI提供商',
+        selectProvider: '選擇要配置的提供商',
+        allSystemsOperational: '所有系統運作正常',
+        lastUpdated: '最後更新: {{time}}',
+        notYetRefreshed: '尚未重新整理',
+        refreshModels: '重新整理模型',
+        variants: {
+            default: '預設配置',
+            free: '免費版（$0，有速率限制）',
+            extended: '擴展上下文視窗',
+            thinking: '擴展推理（Chain-of-Thought）',
+            online: '即時網路搜尋（Exa.ai）',
+            nitro: '最快提供商優先',
+            floor: '最便宜提供商優先',
+        },
+        status: {
+            available: '可用',
+            unavailable: '不可用',
+            uncertain: '已驗證（跳過模型檢查）',
+            notVerified: '未驗證',
+            checking: '檢查中...',
+            verified: '已驗證',
+        },
+        advanced: {
+            title: '進階設定',
+            topP: 'Top P',
+            topK: 'Top K',
+            frequencyPenalty: '頻率懲罰',
+            presencePenalty: '存在懲罰',
+            seed: '隨機種子',
+            random: '隨機',
+            responseFormat: '回應格式',
+            text: '文字',
+            jsonObject: 'JSON物件',
+        },
+        modelCard: {
+            settings: '設定',
+            customSettings: '自訂設定',
+            ctx: 'ctx',
+            free: '免費',
+        },
+        tooltips: {
+            modelAvailable: '✅ 模型可用於此API金鑰',
+            modelUnavailable: '❌ 模型不可用（請檢查API金鑰或模型存取權限）',
+            modelUncertain: 'API金鑰有效，但無法確認具體模型可用性。可能可用。',
+            clickToVerify: '點擊驗證模型可用性',
+        },
+    },
+
+    // === BYOK Chat ===
+    byokChat: {
+        noMessages: '暫無訊息',
+        startConversation: '開始與此BYOK模型對話',
+        attachImage: '附加圖片',
+        imageTooLarge: '圖片「{{name}}」太大（最大20MB）',
+        sending: '傳送中...',
+        receiving: '接收中...',
+        imagesSelected: '已選擇{{count}}張圖片',
+        pressEnterToSend: '按Enter傳送',
+        sendMessage: '向此模型傳送訊息...',
+        attachedImage: '附加圖片',
+        preview: '預覽 {{index}}',
+    },
+
+    // === Brain Flow Progress ===
+    brainFlowProgress: {
+        phase1Title: '規劃階段',
+        phase2Title: '執行階段',
+        phase3Title: '整合階段',
+        waiting: '等待中',
+        done: '完成',
+        processing: '處理中...',
+        skipWaiting: '跳過等待',
+    },
+
+    // === History Popover ===
+    historyPopover: {
+        title: '歷史',
+        modelHistory: '模型歷史',
+        newChat: '新對話',
+        searchPlaceholder: '搜尋對話...',
+        loading: '載入中...',
+        noConversations: '未找到對話',
+        startNewChat: '開始新對話後將在此顯示',
+        untitledConversation: '無標題對話',
+        noPreview: '無預覽',
+        deleteConversation: '刪除對話',
+        conversationsStored: '已儲存{{count}}個對話',
+        daysAgo: '{{days}}天前',
+    },
+
+    // === Model Settings Dropdown ===
+    modelSettings: {
+        title: '模型設定',
+        useDefaultSettings: '使用預設設定',
+        applyGlobalSettings: '套用全域BYOK設定',
+        unsaved: '未儲存',
+        resetToDefaults: '重設為預設',
+        modelVariant: '模型變體',
+        enableThinking: '啟用思考',
+        noCustomSettings: '此模型沒有自訂設定。',
+    },
+
+    // === Settings Modal (additional) ===
+    settingsModal: {
+        byokTitle: 'API金鑰設定',
+        byokDescription: '直接使用OpenAI、Claude、Gemini',
+        openSettings: '開啟設定',
+    },
+
+    // === Confirm Dialogs ===
+    confirmDialogs: {
+        addModel: '🚀 要新增 {{name}} 模型嗎？\n\n開始新對話，\n向 {{name}} 諮詢或請求幫助。',
+        deleteModel: '❌ 要刪除「{{name}}」模型嗎？',
+        newChat: '💬 要開始新對話嗎？\n\n目前對話將自動儲存，\n可隨時從歷史記錄恢復。',
+        apiKeyNotSet: 'API金鑰未設定。請在設定→BYOK中啟用並儲存金鑰。',
+        modelNotSelected: '未選擇模型。請在BYOK設定中選擇模型。',
+    },
+
+    // === Thinking Process ===
+    thinking: {
+        processTitle: '思考過程',
+        showProcess: '顯示思考過程',
+        hideProcess: '隱藏思考過程',
+        summary: '摘要',
+    },
+
+    // === Header ===
+    header: {
+        title: 'modeldock',
+        conversationHistory: '對話歷史',
     },
 };

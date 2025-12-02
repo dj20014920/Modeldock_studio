@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Dark background -->
+  <rect width="512" height="512" rx="120" fill="#0f172a" />
+  <!-- Bright blue M logo using filled paths instead of strokes -->
+  <g fill="#38bdf8">
+    <!-- Left vertical line -->
+    <rect x="140" y="152" width="48" height="208" rx="24" />
+    <!-- Right vertical line -->
+    <rect x="324" y="152" width="48" height="208" rx="24" />
+    <!-- Left diagonal -->
+    <path d="M 164 152 L 256 244 L 232 268 L 140 176 Z" />
+    <!-- Right diagonal -->
+    <path d="M 348 152 L 256 244 L 280 268 L 372 176 Z" />
+    <!-- Center v -->
+    <circle cx="256" cy="268" r="28" />
+  </g>
+</svg>

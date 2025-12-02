@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChatMessage, MessageContent, ImageContentPart, ReasoningDetail } from '../types';
-import { Bot, User, Send, Loader2, Image as ImageIcon, X, ChevronDown, ChevronUp, Brain } from 'lucide-react';
+import { ChatMessage, MessageContent, ImageContentPart } from '../types';
+import { Bot, User, Send, Loader2, Image as ImageIcon, X } from 'lucide-react';
 import { clsx } from 'clsx';
+import { AnimatedChatMessage } from './AnimatedChatMessage';
 
 interface BYOKChatProps {
     messages: ChatMessage[];
     isStreaming?: boolean;
-    onSendMessage?: (message: string, images?: ImageContentPart[]) => Promise<void>; // ✨ 이미지 파라미터 추가
+    onSendMessage?: (message: string, images?: ImageContentPart[]) => Promise<void>;
 }
 
 export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSendMessage }) => {
@@ -15,17 +16,15 @@ export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSen
     const [displayMessages, setDisplayMessages] = useState<ChatMessage[]>(messages || []);
     const [input, setInput] = useState('');
     const [isSending, setIsSending] = useState(false);
-    const [selectedImages, setSelectedImages] = useState<ImageContentPart[]>([]); // ✨ 선택된 이미지들
-    const [expandedThinking, setExpandedThinking] = useState<Record<number, boolean>>({}); // ✨ Thinking 블록 펼침 상태
+    const [selectedImages, setSelectedImages] = useState<ImageContentPart[]>([]);
 
     // 부모 messages prop과 displayMessages 동기화
-    // 부모에서 명시적으로 빈 배열을 전달하면 즉시 초기화됨
     useEffect(() => {
         const incoming = messages || [];
-        // 직접 동기화 - 부모 상태를 신뢰함
         setDisplayMessages(incoming);
     }, [messages]);
 
+    // 자동 스크롤
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -41,16 +40,13 @@ export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSen
         let processedCount = 0;
 
         Array.from(files).forEach((file) => {
-            // 이미지 파일만 허용
             if (!file.type.startsWith('image/')) {
                 console.warn('[BYOKChat] Non-image file ignored:', file.name);
                 processedCount++;
                 return;
             }
 
-            // 파일 크기 제한 (20MB)
             if (file.size > 20 * 1024 * 1024) {
-                console.warn('[BYOKChat] Image too large (>20MB):', file.name);
                 alert(`이미지 "${file.name}"가 너무 큽니다 (최대 20MB)`);
                 processedCount++;
                 return;
@@ -69,20 +65,14 @@ export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSen
                     setSelectedImages(prev => [...prev, ...newImages]);
                 }
             };
-            reader.onerror = () => {
-                console.error('[BYOKChat] Failed to read image:', file.name);
-                processedCount++;
-            };
             reader.readAsDataURL(file);
         });
 
-        // Reset file input
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     };
 
-    // 이미지 제거 핸들러
     const handleRemoveImage = (index: number) => {
         setSelectedImages(prev => prev.filter((_, i) => i !== index));
     };
@@ -94,7 +84,7 @@ export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSen
         try {
             await onSendMessage(input.trim(), selectedImages.length > 0 ? selectedImages : undefined);
             setInput('');
-            setSelectedImages([]); // 전송 후 이미지 초기화
+            setSelectedImages([]);
         } catch (error) {
             console.error('[BYOKChat] Failed to send message:', error);
         } finally {
@@ -109,110 +99,16 @@ export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSen
         }
     };
 
-    // Thinking 블록 토글
-    const toggleThinking = (msgIdx: number) => {
-        setExpandedThinking(prev => ({
-            ...prev,
-            [msgIdx]: !prev[msgIdx]
-        }));
-    };
-
-    // ✨ Thinking/Reasoning 블록 렌더링
-    const renderThinkingBlock = (msg: ChatMessage, msgIdx: number) => {
-        // reasoning 또는 reasoningDetails가 있는 경우에만 렌더링
-        const hasReasoning = msg.reasoning || (msg.reasoningDetails && msg.reasoningDetails.length > 0);
-        if (!hasReasoning || msg.role !== 'assistant') return null;
-
-        const isExpanded = expandedThinking[msgIdx] ?? false;
-
-        // reasoning 텍스트 추출
-        let thinkingContent = '';
-        if (msg.reasoning) {
-            thinkingContent = msg.reasoning;
-        } else if (msg.reasoningDetails) {
-            // reasoningDetails에서 텍스트 추출
-            thinkingContent = msg.reasoningDetails
-                .map((detail: ReasoningDetail) => {
-                    if (detail.type === 'reasoning.text' && detail.text) {
-                        return detail.text;
-                    } else if (detail.type === 'reasoning.summary' && detail.summary) {
-                        return `[Summary] ${detail.summary}`;
-                    } else if (detail.type === 'reasoning.encrypted') {
-                        return '[Encrypted reasoning - not viewable]';
-                    }
-                    return '';
-                })
-                .filter(Boolean)
-                .join('\n\n');
-        }
-
-        if (!thinkingContent) return null;
-
-        // 미리보기 텍스트 (첫 100자)
-        const previewText = thinkingContent.length > 100
-            ? thinkingContent.slice(0, 100) + '...'
-            : thinkingContent;
-
-        return (
-            <div className="mb-2">
-                <button
-                    onClick={() => toggleThinking(msgIdx)}
-                    className={clsx(
-                        "flex items-center gap-2 w-full px-3 py-2 rounded-xl text-left text-xs transition-all",
-                        isExpanded
-                            ? "bg-purple-50 border border-purple-200"
-                            : "bg-slate-50 border border-slate-200 hover:bg-purple-50 hover:border-purple-200"
-                    )}
-                >
-                    <Brain size={14} className={clsx(
-                        "shrink-0 transition-colors",
-                        isExpanded ? "text-purple-500" : "text-slate-400"
-                    )} />
-                    <span className={clsx(
-                        "font-medium",
-                        isExpanded ? "text-purple-700" : "text-slate-600"
-                    )}>
-                        {isExpanded ? 'Thinking Process' : 'Show Thinking'}
-                    </span>
-                    {isExpanded ? (
-                        <ChevronUp size={14} className="ml-auto text-purple-400" />
-                    ) : (
-                        <ChevronDown size={14} className="ml-auto text-slate-400" />
-                    )}
-                </button>
-
-                {isExpanded && (
-                    <div className="mt-2 px-3 py-3 bg-purple-50/50 border border-purple-100 rounded-xl text-xs text-slate-600 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
-                        {thinkingContent}
-                    </div>
-                )}
-
-                {!isExpanded && (
-                    <div className="mt-1 px-3 py-1 text-xs text-slate-400 italic truncate">
-                        {previewText}
-                    </div>
-                )}
-            </div>
-        );
-    };
-
-    // 메시지 content를 렌더링하는 헬퍼 함수
+    // 메시지 content 렌더링 헬퍼 (AnimatedChatMessage에 전달)
     const renderMessageContent = (content: MessageContent) => {
-        // 단순 문자열 (하위 호환)
         if (typeof content === 'string') {
             return <div className="whitespace-pre-wrap break-words">{content}</div>;
         }
-
-        // MessageContentPart[] (이미지 포함)
         return (
             <div className="flex flex-col gap-2">
                 {content.map((part, idx) => {
                     if (part.type === 'text') {
-                        return (
-                            <div key={idx} className="whitespace-pre-wrap break-words">
-                                {part.text}
-                            </div>
-                        );
+                        return <div key={idx} className="whitespace-pre-wrap break-words">{part.text}</div>;
                     } else if (part.type === 'image_url') {
                         return (
                             <img
@@ -246,43 +142,53 @@ export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSen
                     </div>
                 ) : (
                     <>
-                        {displayMessages.map((msg, idx) => (
-                            <div key={idx} className={clsx(
-                                "flex gap-4 max-w-full group",
-                                msg.role === 'user' ? "flex-row-reverse" : "flex-row"
-                            )}>
-                                <div className={clsx(
-                                    "w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-sm mt-1 transition-transform group-hover:scale-105",
-                                    msg.role === 'user' ? "bg-slate-100 border border-slate-200" : "bg-purple-50 border border-purple-100 text-purple-600"
-                                )}>
-                                    {msg.role === 'user' ? <User size={16} className="text-slate-500" /> : <Bot size={18} />}
-                                </div>
+                        {displayMessages.map((msg, idx) => {
+                            const isLastMessage = idx === displayMessages.length - 1;
+                            // 마지막 메시지이고 스트리밍 중일 때만 애니메이션 활성화 신호를 보냄
+                            // AnimatedChatMessage 내부에서 이 신호를 받으면 애니메이션을 시작하고, 
+                            // 신호가 끊겨도(스트리밍 종료) 애니메이션을 끝까지 수행함
+                            const messageIsStreaming = isLastMessage && isStreaming;
 
-                                <div className={clsx(
-                                    "flex flex-col gap-1 max-w-[85%]",
-                                    msg.role === 'user' ? "items-end" : "items-start"
+                            return (
+                                <div key={idx} className={clsx(
+                                    "flex gap-4 max-w-full group",
+                                    msg.role === 'user' ? "flex-row-reverse" : "flex-row"
                                 )}>
-                                    {/* ✨ Thinking/Reasoning 블록 (assistant 메시지만) */}
-                                    {msg.role === 'assistant' && renderThinkingBlock(msg, idx)}
-                                    
                                     <div className={clsx(
-                                        "rounded-2xl px-5 py-3 text-sm leading-relaxed shadow-sm",
-                                        msg.role === 'user'
-                                            ? "bg-slate-800 text-white rounded-tr-none"
-                                            : "bg-white border border-slate-100 text-slate-800 rounded-tl-none"
+                                        "w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-sm mt-1 transition-transform group-hover:scale-105",
+                                        msg.role === 'user' ? "bg-slate-100 border border-slate-200" : "bg-purple-50 border border-purple-100 text-purple-600"
                                     )}>
-                                        {renderMessageContent(msg.content)}
+                                        {msg.role === 'user' ? <User size={16} className="text-slate-500" /> : <Bot size={18} />}
+                                    </div>
+
+                                    <div className={clsx(
+                                        "flex flex-col gap-1 max-w-[85%]",
+                                        msg.role === 'user' ? "items-end" : "items-start w-full"
+                                    )}>
+                                        {msg.role === 'user' ? (
+                                            <div className="rounded-2xl px-5 py-3 text-sm leading-relaxed shadow-sm bg-slate-800 text-white rounded-tr-none">
+                                                {renderMessageContent(msg.content)}
+                                            </div>
+                                        ) : (
+                                            <AnimatedChatMessage
+                                                message={msg}
+                                                isStreaming={!!messageIsStreaming}
+                                                renderContent={renderMessageContent}
+                                            />
+                                        )}
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
+
+                        {/* Streaming Indicator */}
                         {isStreaming && (
                             <div className="flex gap-4 max-w-full">
                                 <div className="w-8 h-8 rounded-full bg-purple-50 border border-purple-100 text-purple-600 flex items-center justify-center shrink-0 shadow-sm mt-1">
                                     <Bot size={18} />
                                 </div>
-                                <div className="bg-white border border-purple-100 rounded-2xl rounded-tl-none px-3 py-2 shadow-sm w-fit">
-                                    <div className="flex space-x-1 h-4 items-center">
+                                <div className="bg-white border border-purple-100 rounded-2xl rounded-tl-none px-4 py-3 shadow-sm w-fit">
+                                    <div className="flex space-x-1.5 h-4 items-center">
                                         <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
                                         <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
                                         <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce"></div>
@@ -339,7 +245,6 @@ export const BYOKChat: React.FC<BYOKChatProps> = ({ messages, isStreaming, onSen
 
                     <div className="flex items-center justify-between pt-1">
                         <div className="flex items-center gap-2">
-                            {/* 이미지 선택 버튼 */}
                             <input
                                 ref={fileInputRef}
                                 type="file"

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ModelDock - Unified AI Workspace",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "Multitask with Gemini, Claude, ChatGPT and more in a unified side-by-side interface.",
   "permissions": [
     "declarativeNetRequest",
@@ -16,6 +16,12 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "action": {
     "default_title": "Open ModelDock",
     "default_icon": "icon.png"

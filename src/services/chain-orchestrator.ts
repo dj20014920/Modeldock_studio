@@ -26,6 +26,10 @@ export class ChainOrchestrator {
     private static instance: ChainOrchestrator;
     private activeListeners: Map<string, (e: MessageEvent) => void> = new Map();
     private pendingRequests: Map<string, { resolve: (value: string) => void, cleanup: () => void, getCurrentText: () => string }> = new Map();
+    
+    // Skip 기능을 위한 상태 관리
+    private skipRequested: boolean = false;
+    private collectedSlaveResponses: Map<string, { slave: ActiveModel, response: string }> = new Map();
 
     private constructor() { }
 
@@ -51,6 +55,10 @@ export class ChainOrchestrator {
 
     public async runBrainFlow(config: BrainFlowConfig): Promise<void> {
         const { mainBrain, slaves, goal, prompts, callbacks } = config;
+
+        // 새 BrainFlow 시작 시 상태 초기화
+        this.skipRequested = false;
+        this.collectedSlaveResponses.clear();
 
         try {
             // === Phase 1: Main Brain Planning ===
@@ -97,35 +105,50 @@ export class ChainOrchestrator {
                 console.log(`[BrainFlow] ${displayId} (${slave.instanceId}): ${found ? 'FOUND ✓' : 'NOT FOUND ✗'}`);
             });
 
+            // 슬레이브 실행 - Skip 요청 시 현재까지의 응답 수집
             const slavePromises = slaves.map(async (slave) => {
-                const displayId = slaveIdMap.get(slave.instanceId);
+                const displayId = slaveIdMap.get(slave.instanceId)!;
                 // Try multiple matching strategies
-                let prompt = slavePrompts.get(displayId!) // Priority 1: grok-1
+                let prompt = slavePrompts.get(displayId) // Priority 1: grok-1
                     || slavePrompts.get(slave.instanceId) // Priority 2: instanceId (fallback)
                     || slavePrompts.get(slave.modelId);   // Priority 3: modelId (legacy)
 
                 if (!prompt) {
                     console.error(`[BrainFlow] ❌ CRITICAL: No prompt found for ${displayId}`);
                     console.error(`[BrainFlow] Available keys:`, Array.from(slavePrompts.keys()));
-                    return { slave, response: '(Error: No instruction provided by Main Brain)' };
+                    const result = { slave, response: '(Error: No instruction provided by Main Brain)' };
+                    this.collectedSlaveResponses.set(slave.instanceId, result);
+                    return result;
                 }
 
                 try {
                     console.log(`[BrainFlow] ✓ Sending to ${displayId}:`, prompt.substring(0, 100) + '...');
                     const response = await this.sendMessageToModel(slave, prompt, callbacks);
-                    return { slave, response };
+                    const result = { slave, response };
+                    // 응답 완료 시 수집 (Skip 여부와 관계없이)
+                    this.collectedSlaveResponses.set(slave.instanceId, result);
+                    return result;
                 } catch (err: any) {
                     console.error(`[BrainFlow] Slave ${displayId} failed:`, err);
-                    return { slave, response: `(Error: ${err.message || 'Unknown error'})` };
+                    const result = { slave, response: `(Error: ${err.message || 'Unknown error'})` };
+                    this.collectedSlaveResponses.set(slave.instanceId, result);
+                    return result;
                 }
             });
 
             const slaveResults = await Promise.all(slavePromises);
 
+            // Skip이 요청되었을 경우, 수집된 응답들로 결과 구성
+            const finalResults = this.skipRequested 
+                ? Array.from(this.collectedSlaveResponses.values())
+                : slaveResults;
+
+            console.log(`[BrainFlow] Phase 2 완료 - Skip: ${this.skipRequested}, 수집된 응답: ${finalResults.length}개`);
+
             // === Phase 3: Synthesis ===
             callbacks.onPhaseStart(3);
 
-            const responsesText = slaveResults.map(r =>
+            const responsesText = finalResults.map(r =>
                 `[${slaveIdMap.get(r.slave.instanceId)} Response]\n${r.response}\n`
             ).join('\n\n');
 
@@ -142,15 +165,27 @@ export class ChainOrchestrator {
         } catch (error) {
             console.error('[BrainFlow] Error:', error);
             callbacks.onError(error);
+        } finally {
+            // 정리
+            this.skipRequested = false;
+            this.collectedSlaveResponses.clear();
         }
     }
 
+    /**
+     * Skip 버튼 클릭 시 호출 - 현재 Phase를 강제 완료하고 다음으로 진행
+     * 미완료된 슬레이브 모델들의 현재까지 응답도 수집하여 Phase 3에 전달
+     */
     public skipCurrentPhase() {
         console.log('[BrainFlow] Skipping current phase...');
+        this.skipRequested = true;
+        
+        // 모든 pending request에서 현재까지의 텍스트 수집 후 강제 완료
         this.pendingRequests.forEach((request, requestId) => {
             console.log(`[BrainFlow] Forcing completion for request ${requestId}`);
-            const text = request.getCurrentText();
-            request.resolve(text);
+            const currentText = request.getCurrentText();
+            console.log(`[BrainFlow] Collected text length: ${currentText.length} chars`);
+            request.resolve(currentText);
             request.cleanup();
         });
         this.pendingRequests.clear();

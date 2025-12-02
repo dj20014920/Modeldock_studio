@@ -21,19 +21,36 @@ export default {
         ok: '확인',
         yes: '예',
         no: '아니오',
+        confirmDelete: '이 대화를 삭제하시겠습니까?',
+        deleteConfirm: '정말 삭제하시겠습니까?',
     },
 
     // === 사이드바 ===
     sidebar: {
         chats: '대화',
+        history: '기록',
         models: '모델',
+        prompts: '프롬프트',
         settings: '설정',
         noActiveChats: '새로운 대화를 시작해보세요.',
         createNewChat: '새 대화 만들기',
+        activeSessions: '활성 세션',
         availableModels: '사용 가능한 모델',
         maxInstancesHint: '모델당 최대 3개',
         proUser: 'Pro 사용자',
         versionLabel: 'ModelDock V1',
+        byokModels: 'BYOK 모델',
+        standardModels: '표준 모델',
+        conversationHistory: '대화 기록',
+        today: '오늘',
+        yesterday: '어제',
+        previous7Days: '지난 7일',
+        older: '이전',
+        noHistory: '대화 기록이 없습니다',
+        brainFlow: 'Brain Flow',
+        autoRouting: '자동 라우팅',
+        manual: '수동',
+        link: '링크',
     },
 
     // === 모델 그리드 ===
@@ -50,8 +67,8 @@ export default {
         send: '전송',
         copyToClipboard: '클립보드에 복사',
         dispatchToAll: '모든 모델에 전송',
-        consentTitle: '⚡️ 자동 전송 동의',
-        consentMessage: 'ModelDock은 활성 모델 iframe에 자동으로 메시지를 주입하고 전송을 시뮬레이션합니다. 이 기능은 안전하며 브라우저 내에서 로컬로 작동합니다.',
+        consentTitle: '⚡️ 자동 전송 동의 (위험성 고지)',
+        consentMessage: 'ModelDock은 브라우저 내에서 활성 모델에 자동으로 메시지를 전송합니다. ⚠️ 주의: 일부 AI 서비스(ChatGPT, Claude 등)는 자동화된 접근을 약관 위반으로 간주할 수 있으며, 이로 인해 계정 경고, 일시 차단, 또는 영구 정지될 수 있습니다. 이 기능 사용에 따른 모든 책임은 사용자에게 있습니다.',
         iUnderstand: '이해했습니다',
         sentSuccess: '전송 완료!',
         errorNoTargets: '유효한 타겟을 찾을 수 없습니다',
@@ -214,56 +231,99 @@ export default {
 
     // === Brain Flow ===
     brainFlow: {
-        phase1: `당신은 슬레이브 봇들을 총괄 관리하고 지시하는 "메인 브레인"입니다. 각 슬레이브 끼리는 소통하지 않으며 당신과 슬레이브 봇들의 1:다 식으로 대화가 진행됩니다.
-슬레이브 봇 목록:
+        phase1: `# 역할
+당신은 "메인 브레인" - 전문적인 세부 작업들을 슬레이브 AI 모델들에게 배분하는 작업 조정 전문가입니다.
+당신이 직접 사용자의 질문에 답하는 것이 아닙니다. 당신의 유일한 역할은 각 슬레이브마다 최적의 작업 지시를 만드는 것입니다.
+
+# 슬레이브 모델 목록
 {{slaves}}
 
-[목적]
+# 사용자의 목표
 {{goal}}
 
-[역할]
-각 슬레이브 봇들의 특성과 장점을 고려하여 최적 프롬프트를 설계하고, 후속 응답을 종합해 팩트 체크/검증/문제점 분석 후 사용자의 목적에 도달할 수 있도록 최적 솔루션을 제시해야 합니다.
+# 반드시 지켜야 할 규칙 (MUST)
+1. 위 목록의 모든 슬레이브마다 정확히 1개의 [SLAVE:id] 블록 만들기 - 절대 빼먹지 말 것
+2. 슬레이브들은 동시에 실행되고 서로의 결과를 볼 수 없음
+3. [SLAVE:...][/SLAVE] 블록 밖에는 절대 텍스트 금지
+4. 목록에서 정확히 제공된 슬레이브 ID 사용 (예: [SLAVE:gemini-1], [SLAVE:grok-2])
 
-[출력 형식 규칙 - 반드시 준수]
-1) 슬레이브마다 정확히 1개 블록, 목록 순서 유지
-2) 헤더: [SLAVE:모델ID-번호] (예: [SLAVE:gemini-1], [SLAVE:grok-2])
-   ※ 중요: 위 목록에 제공된 ID를 정확히 사용하세요!
-3) 블록 내부엔 실행할 프롬프트만 (설명/메타 텍스트 금지)
-4) 닫기: [/SLAVE]
-5) SLAVE 블록 외 텍스트 금지
-6) 체인/순차 의존 금지: 어떤 슬레이브도 다른 슬레이브 출력을 참조하지 않는다. 모두 독립적으로 같은 시점에 실행된다고 가정한다.
-7) 슬레이브 목록의 모든 항목에 대해 블록을 빠짐없이 작성해야 한다. 하나라도 누락되면 작업 품질이 크게 저하된다.
-
-[슬레이브 지시 작성 가이드]
-0. 페르소나: 모델의 정확한 역할을 지정하라
-1. 명령(Instruction): 구체적 동사로 명확히 지시하라
-2. 맥락(Context): 필요한 배경 정보를 충분히 제공하라
-3. 입력 데이터(Input Data): 처리할 데이터를 정확히 제공하라
-4. 출력 형식(Output Format): 원하는 결과물 형식을 구체적으로 지정하라
-- 모델 특성별 역할/목표/출력형식/제약사항 명시
-- 중복 질문 금지, 서로 다른 관점/전략 분배
-- 사용자의 주 언어에 맞춰 응답하도록 구성하라
-
-[예시 형식]
-[SLAVE:gemini-1]
-페르소나: 당신은 시장 분석 전문가입니다.
-명령: 다음 질문에 대해 데이터 기반으로 답변하세요...
+# 출력 형식
+[SLAVE:모델-id]
+이 슬레이브를 위한 구체적인 작업 지시문...
 [/SLAVE]
 
-[SLAVE:claude]
-페르소나: 당신은 기술 분석 전문가입니다.
-명령: 다음 항목을 분석하세요...
-[/SLAVE]`,
-        phase3: `아래는 당신의 지시에 따른 슬레이브 봇들의 응답입니다.
-형식: [모델명(ID) 응답: 내용...]
+# 프롬프트 설계 전략
+각 슬레이브에게 목표에 맞는 서로 다른 역할 할당하기:
+- 분석가(Analyst): 데이터 분석, 패턴 찾기, 통계
+- 비판가(Critic): 위험요소, 반대 의견, 문제점 찾기
+- 창작가(Creator): 해결책, 아이디어, 실행 계획
+- 검증가(Validator): 사실 확인, 출처 확인, 논리 점검
+- 요약가(Synthesizer): 핵심 정리, 주요 인사이트, 실행 항목
 
-[사용자의 원래 목적] - 잘다시 상기하세요
+# 각 슬레이브 프롬프트 작성 방법
+1. 역할(ROLE): "당신은 [특정 전문가 역할]입니다..."
+2. 작업(TASK): 명확하고 실행 가능한 지시 (구체적인 동사 사용)
+3. 초점(FOCUS): 분석할 구체적 항목 (다른 슬레이브와 중복 피하기)
+4. 형식(FORMAT): 원하는 결과 형태 (글머리, 번호 목록, 섹션)
+5. 언어(LANGUAGE): 사용자 목표와 같은 언어로 답변
+
+# 하면 안 되는 것들 (DO NOT)
+❌ 여러 슬레이브에게 같은 질문하기
+❌ 슬레이브 간 의존성 만들기 (예: "모델 A의 결과를 바탕으로...")
+❌ 블록 밖에 설명이나 메모 쓰기
+❌ 목록에서 슬레이브 빼먹기
+❌ 일반적인 프롬프트 - 각 슬레이브 특성에 맞게 구체적으로`,
+        phase3: `# 역할
+당신은 "메인 브레인" 종합가입니다. 여러 AI의 답변들을 하나의 최적의 답변으로 만드는 것이 당신의 역할입니다.
+
+# 사용자가 처음에 한 요청
 {{goal}}
-[슬레이브 응답 데이터]
+
+# 슬레이브들의 답변
 {{responses}}
 
-[최종 지시]
-위 응답들을 파싱하고 종합하여 팩트 체크, 검증, 문제점 분석을 수행한 뒤, 사용자의 원래 목적에 부합하는 최적의 솔루션을 제시하세요.`,
+# 종합 방법론 (4단계)
+
+## 1단계: 추출 (EXTRACT)
+- 각 답변에서 핵심 내용 찾기
+- 한 모델만 제시한 독특한 아이디어 찾기
+- 여러 모델이 같은 결론을 낸 부분 찾기 (합의점)
+
+## 2단계: 검증 (VALIDATE)
+- 여러 모델이 언급한 사실 교차 확인하기
+- 모델들이 서로 다른 의견 찾기
+- 신뢰도 평가: 높음(3개 이상 동의) / 중간(2개 동의) / 낮음(1개만)
+
+## 3단계: 충돌 해결 (RESOLVE)
+모델들이 다른 의견일 때:
+- 구체적인 증거/데이터가 있는 답변 우선
+- 각 모델의 전문 분야 고려
+- 해결이 안 되면, 양쪽 다 제시하되 장단점 설명
+
+## 4단계: 종합 (SYNTHESIZE)
+최종 답변 만들기:
+- 사용자의 원래 목표에 정확히 답하기
+- 모든 답변의 최고 부분들 합치기
+- 중복과 모순 제거하기
+- 논리적으로 흐르게 만들기
+
+# 출력 형식
+다음 구조로 답변하세요:
+
+### 📋 핵심 요약
+[2~3문장으로 종합된 답변 요약]
+
+### 🔍 주요 내용
+[핵심 결론들을 글머리로 정리, 신뢰도 표시]
+
+### ⚠️ 주의할 점
+[위험요소, 예외사항, 소수 의견 등]
+
+### ✅ 최종 답변 / 실행 계획
+[사용자의 목표를 명확하게 해결하는 최종 답]
+
+# 언어
+사용자가 처음에 한 요청과 같은 언어로 답변하세요.`,
     },
 
     // === Brain Flow Modal ===
@@ -401,5 +461,151 @@ export default {
         // Cache Info
         cacheAge: '{{minutes}}분 전 갱신',
         cached: '캐시됨',
+
+        // BYOK Modal UI (추가)
+        studioTitle: 'BYOK Studio',
+        studioSubtitle: 'AI 인프라 구성하기',
+        openRouterNote: '* 모델 정보는 OpenRouter 기준이며, 실제 제공사 키로 사용 가능 여부는 상이할 수 있습니다.',
+        aiProviders: 'AI 제공자',
+        selectProvider: '설정할 제공자를 선택하세요',
+        allSystemsOperational: '모든 시스템 정상 작동 중',
+        lastUpdated: '마지막 업데이트: {{time}}',
+        notYetRefreshed: '아직 갱신되지 않음',
+        refreshModels: '모델 새로고침',
+
+        // Model Variants
+        variants: {
+            default: '기본 설정',
+            free: '무료 버전 ($0, 속도 제한 적용)',
+            extended: '확장 컨텍스트 윈도우',
+            thinking: '확장 추론 (Chain-of-Thought)',
+            online: '실시간 웹 검색 (Exa.ai 연동)',
+            nitro: '최고 속도 Provider 우선',
+            floor: '최저가 Provider 우선',
+        },
+
+        // Status
+        status: {
+            available: '사용 가능',
+            unavailable: '사용 불가',
+            uncertain: '검증됨 (모델 확인 생략)',
+            notVerified: '미검증',
+            checking: '확인 중...',
+            verified: '검증됨',
+        },
+
+        // Advanced Settings
+        advanced: {
+            title: '고급 설정',
+            topP: 'Top P',
+            topK: 'Top K',
+            frequencyPenalty: '빈도 페널티',
+            presencePenalty: '존재 페널티',
+            seed: '시드',
+            random: '랜덤',
+            responseFormat: '응답 형식',
+            text: '텍스트',
+            jsonObject: 'JSON 객체',
+        },
+
+        // Model Card UI
+        modelCard: {
+            settings: '설정',
+            customSettings: '사용자 정의 설정',
+            ctx: '컨텍스트',
+            free: '무료',
+        },
+
+        // Tooltips
+        tooltips: {
+            modelAvailable: '✅ API 키로 모델 사용 가능',
+            modelUnavailable: '❌ 모델 사용 불가 (API 키 또는 모델 접근 확인 필요)',
+            modelUncertain: 'API 키는 유효하지만, 특정 모델의 가용성을 확인할 수 없습니다. 아마 사용 가능할 것입니다.',
+            clickToVerify: '모델 가용성을 확인하려면 클릭하세요',
+        },
+    },
+
+    // === BYOK Chat ===
+    byokChat: {
+        noMessages: '메시지가 없습니다',
+        startConversation: '이 BYOK 모델과 대화를 시작하세요',
+        attachImage: '이미지 첨부',
+        imageTooLarge: '이미지 "{{name}}"가 너무 큽니다 (최대 20MB)',
+        sending: '전송 중...',
+        receiving: '수신 중...',
+        imagesSelected: '{{count}}개의 이미지가 선택됨',
+        pressEnterToSend: 'Enter를 눌러 전송',
+        sendMessage: '이 모델에 메시지를 보내세요...',
+        attachedImage: '첨부된 이미지',
+        preview: '미리보기 {{index}}',
+    },
+
+    // === Brain Flow Progress ===
+    brainFlowProgress: {
+        phase1Title: '계획 단계',
+        phase2Title: '실행 단계',
+        phase3Title: '종합 단계',
+        waiting: '대기 중',
+        done: '완료',
+        processing: '처리 중...',
+        skipWaiting: '대기 건너뛰기',
+    },
+
+    // === History Popover ===
+    historyPopover: {
+        title: '기록',
+        modelHistory: '모델 기록',
+        newChat: '새 대화',
+        searchPlaceholder: '대화 검색...',
+        loading: '로딩 중...',
+        noConversations: '대화를 찾을 수 없습니다',
+        startNewChat: '새 대화를 시작하면 여기에 표시됩니다',
+        untitledConversation: '제목 없는 대화',
+        noPreview: '미리보기 없음',
+        deleteConversation: '대화 삭제',
+        conversationsStored: '{{count}}개의 대화가 저장됨',
+        daysAgo: '{{days}}일 전',
+    },
+
+    // === Model Settings Dropdown ===
+    modelSettings: {
+        title: '모델 설정',
+        useDefaultSettings: '기본 설정 사용',
+        applyGlobalSettings: '글로벌 BYOK 설정 적용',
+        unsaved: '저장되지 않음',
+        resetToDefaults: '기본값으로 재설정',
+        modelVariant: '모델 변형',
+        enableThinking: '사고 활성화',
+        noCustomSettings: '이 모델에 대한 사용자 정의 설정이 없습니다.',
+    },
+
+    // === Settings Modal (추가) ===
+    settingsModal: {
+        byokTitle: 'API 키 설정',
+        byokDescription: 'OpenAI, Claude, Gemini 등 직접 사용',
+        openSettings: '설정 열기',
+    },
+
+    // === App Confirm Dialogs ===
+    confirmDialogs: {
+        addModel: '🚀 {{name}} 모델을 추가하시겠습니까?\n\n새 대화를 시작하고 자유롭게,\n{{name}}에서 상담받거나 뭔가를 요청하세요.',
+        deleteModel: '❌ "{{name}}" 모델을 삭제하시겠습니까?',
+        newChat: '💬 새 대화를 시작하시겠습니까?\n\n현재 대화는 자동으로 저장되며,\n히스토리에서 언제든지 다시 불러올 수 있습니다.',
+        apiKeyNotSet: 'API key가 설정되어 있지 않습니다. Settings → BYOK에서 활성화 및 키를 저장해주세요.',
+        modelNotSelected: '모델이 선택되지 않았습니다. BYOK 설정에서 모델을 선택해주세요.',
+    },
+
+    // === Thinking Process (AnimatedChatMessage) ===
+    thinking: {
+        processTitle: '사고 과정',
+        showProcess: '사고 과정 보기',
+        hideProcess: '사고 과정 숨기기',
+        summary: '요약',
+    },
+
+    // === Header ===
+    header: {
+        title: 'modeldock',
+        conversationHistory: '대화 기록',
     },
 };
