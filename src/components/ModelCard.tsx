@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2, Clock } from 'lucide-react';
-import { ModelConfig, ChatMessage } from '../types';
+import { ModelConfig, ChatMessage, BYOKProviderId } from '../types';
 import { clsx } from 'clsx';
 import { ModelFrame } from './ModelFrame';
 import { PerplexityChat } from './PerplexityChat';
 import { BYOKChat } from './BYOKChat';
 import { HistoryPopover } from './HistoryPopover';
+import { ModelSettingsDropdown } from './ModelSettingsDropdown';
 
 // Zoom 상태 영속화를 위한 localStorage 키
 const ZOOM_STORAGE_KEY = 'modeldock_zoom_levels_v2';
@@ -48,6 +49,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 }) => {
   const { t } = useTranslation();
   const [isHistoryOpen, setIsHistoryOpen] = useState(false); // History Popover State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false); // ✨ Settings Dropdown State
 
   // modelId 기반으로 zoom 저장
   const getZoomKey = useCallback(() => model.id, [model.id]);
@@ -116,6 +118,11 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   // byokProviderId: 'byok-openrouter-model/name' → 'openrouter' (첫 번째 부분만)
   const byokProviderId = isBYOK 
     ? model.id.replace('byok-', '').split('-')[0] 
+    : undefined;
+  
+  // ✨ 모델별 설정 키: "openrouter-meta-llama/llama-3.2-3b-instruct" 형식
+  const byokModelKey = isBYOK 
+    ? model.id.replace('byok-', '') 
     : undefined;
 
   return (
@@ -242,6 +249,19 @@ export const ModelCard: React.FC<ModelCardProps> = ({
                   />
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ✨ BYOK Settings Button */}
+          {isBYOK && byokModelKey && byokProviderId && (
+            <div className="relative">
+              <ModelSettingsDropdown
+                modelId={byokModelKey}
+                providerId={byokProviderId as BYOKProviderId}
+                isOpen={isSettingsOpen}
+                onToggle={() => setIsSettingsOpen(!isSettingsOpen)}
+                onClose={() => setIsSettingsOpen(false)}
+              />
             </div>
           )}
 

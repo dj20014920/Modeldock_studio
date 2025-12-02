@@ -194,6 +194,17 @@ export type ReasoningEffort = 'low' | 'medium' | 'high';
 export type ThinkingLevel = 'low' | 'high';
 export type ThinkingMode = 'quick' | 'extended';
 
+// OpenRouter Model Variants (suffix로 붙음)
+// 문서: https://openrouter.ai/docs/guides/routing/model-variants
+export type OpenRouterVariant = 
+  | 'default'   // 기본 (suffix 없음)
+  | 'free'      // :free - 무료 버전
+  | 'extended'  // :extended - 확장 컨텍스트
+  | 'thinking'  // :thinking - 추론 확장
+  | 'online'    // :online - 실시간 웹 검색
+  | 'nitro'     // :nitro - 빠른 응답
+  | 'floor';    // :floor - 최저가 provider
+
 export type ModelCapability =
   | 'reasoning'   // o1, o3, DeepSeek-R1
   | 'coding'      // Codex, Claude 3.5 Sonnet, Mistral Large
@@ -296,6 +307,46 @@ export interface BYOKSettings {
     [key in BYOKProviderId]?: BYOKModelVariant[];
   };
   lastRefreshTimestamp?: number; // Unix timestamp (ms) of last model refresh
+  
+  // ✨ 모델별 개별 설정 오버라이드
+  // 키: 모델 전체 ID (예: "openrouter-meta-llama/llama-3.2-3b-instruct")
+  // 설정 우선순위: modelOverrides[modelId] > providers[providerId] (기본 설정)
+  modelOverrides?: {
+    [modelId: string]: ModelOverrideSettings;
+  };
+}
+
+// ✨ 모델별 개별 설정 (기본 설정을 오버라이드)
+export interface ModelOverrideSettings {
+  // OpenRouter Model Variant (:free, :thinking 등)
+  openRouterVariant?: OpenRouterVariant;
+  
+  // Basic Sampling
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  topK?: number;
+  
+  // Reasoning/Thinking
+  reasoningEffort?: ReasoningEffort;
+  thinkingBudget?: number;
+  thinkingLevel?: ThinkingLevel;
+  enableThinking?: boolean;
+  
+  // Advanced Sampling
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  repetitionPenalty?: number;
+  minP?: number;
+  topA?: number;
+  seed?: number;
+  
+  // Output Control
+  stopSequences?: string[];
+  responseFormat?: 'text' | 'json_object' | 'json_schema';
+  
+  // 기본 설정 사용 여부 (true면 이 오버라이드 무시)
+  useDefaults?: boolean;
 }
 
 export interface ModelConfigWithBYOK extends ModelConfig {

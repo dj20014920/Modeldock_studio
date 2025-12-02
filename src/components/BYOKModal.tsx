@@ -6,7 +6,8 @@ import {
     MessageSquare, Layers, Activity, RefreshCw,
     ChevronDown, ChevronUp, Sliders, CheckCircle2, XCircle
 } from 'lucide-react';
-import { BYOKProviderId, BYOKSettings, ReasoningEffort, BYOKModelVariant, VerificationResult } from '../types';
+import { ProviderSettingsPanel } from './ProviderSettingsPanel';
+import { BYOKProviderId, BYOKSettings, ReasoningEffort, BYOKModelVariant, VerificationResult, ModelOverrideSettings } from '../types';
 import { BYOK_PROVIDERS, REASONING_EFFORT_LABELS } from '../byokProviders';
 import {
     loadBYOKSettings,
@@ -604,6 +605,7 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
                                 providerId={selectedProvider}
                                 settings={settings}
                                 onUpdate={updateProviderSettings}
+                                onSettingsChange={setSettings}
                                 onValidate={handleValidateAPIKey}
                                 showApiKey={showApiKey[selectedProvider]}
                                 toggleShowApiKey={() => setShowApiKey(prev => ({ ...prev, [selectedProvider]: !prev[selectedProvider] }))}
@@ -684,6 +686,7 @@ interface ProviderConfigProps {
     providerId: BYOKProviderId;
     settings: BYOKSettings;
     onUpdate: (providerId: BYOKProviderId, updates: any) => void;
+    onSettingsChange: (newSettings: BYOKSettings) => void; // ✅ 추가
     onValidate: (providerId: BYOKProviderId) => void;
     showApiKey: boolean;
     toggleShowApiKey: () => void;
@@ -703,6 +706,7 @@ function ProviderConfig({
     providerId,
     settings,
     onUpdate,
+    onSettingsChange,
     onValidate,
     showApiKey,
     toggleShowApiKey,
@@ -970,75 +974,35 @@ function ProviderConfig({
                 {/* Variant Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
                     {filteredVariants.map((variant) => (
-                        <button
+                        <ModelVariantCard
                             key={variant.id}
-                            onClick={() => {
-                                // ✅ 멀티 선택 토글: 체크박스처럼 동작
+                            variant={variant}
+                            providerId={providerId}
+                            isSelected={isVariantSelected(variant.id)}
+                            onToggleSelect={() => {
                                 const currentSelected = config?.selectedVariants || [];
                                 const newSelected = currentSelected.includes(variant.id)
-                                    ? currentSelected.filter(id => id !== variant.id)  // 제거
-                                    : [...currentSelected, variant.id];  // 추가
+                                    ? currentSelected.filter(id => id !== variant.id)
+                                    : [...currentSelected, variant.id];
                                 onUpdate(providerId, { selectedVariants: newSelected });
                             }}
-                            className={`relative p-4 rounded-xl border-2 text-left transition-all duration-200 group ${isVariantSelected(variant.id)
-                                ? 'border-indigo-500 bg-indigo-50/50 shadow-md'
-                                : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm'
-                                }`}
-                        >
-                            <div className="flex justify-between items-start mb-2">
-                                <div className="flex items-center gap-1.5 min-w-0 pr-2">
-                                    <span className="font-bold text-gray-900 group-hover:text-indigo-700 transition-colors truncate">
-                                        {variant.name}
-                                    </span>
-                                    {providerId === 'openrouter' && (
-                                        <a
-                                            href={`https://openrouter.ai/${variant.id}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="text-gray-400 hover:text-indigo-600 transition-colors flex-shrink-0 p-0.5 hover:bg-indigo-50 rounded"
-                                            title="View on OpenRouter"
-                                        >
-                                            <ExternalLink className="w-3.5 h-3.5" />
-                                        </a>
-                                    )}
-                                </div>
-                                <div className="flex gap-1 flex-shrink-0">
-                                    {variant.isNew && (
-                                        <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase rounded-full tracking-wide">NEW</span>
-                                    )}
-                                    {(variant as any).isRecommended && (
-                                        <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full tracking-wide">TOP</span>
-                                    )}
-                                </div>
-                            </div>
-                            <p className="text-xs text-gray-500 line-clamp-2 h-8 mb-3">{variant.description}</p>
+                            settings={settings}
+                            onUpdateSettings={async (newSettings) => {
+                                // modelOverrides 업데이트
+                                const modelKey = `${providerId}-${variant.id}`;
+                                const updatedOverrides = {
+                                    ...settings.modelOverrides,
+                                    [modelKey]: newSettings,
+                                };
+                                const updatedSettings = { ...settings, modelOverrides: updatedOverrides };
 
-                            {/* Capabilities Badges */}
-                            <div className="flex flex-wrap gap-1 mb-3">
-                                {variant.capabilities?.map(cap => (
-                                    <span key={cap} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded uppercase font-medium border border-gray-200">
-                                        {cap}
-                                    </span>
-                                ))}
-                            </div>
+                                // ✅ 로컬 상태 먼저 업데이트 (즉시 UI 반영)
+                                onSettingsChange(updatedSettings);
 
-                            <div className="flex items-center justify-between text-[10px] font-medium text-gray-400">
-                                <span className="bg-gray-100 px-2 py-1 rounded-md">
-                                    {variant.contextWindow.toLocaleString()} ctx
-                                </span>
-                                {variant.isFree ? (
-                                    <span className="text-green-600 font-bold">Free</span>
-                                ) : variant.costPer1MInput > 0 || variant.costPer1MOutput > 0 ? (
-                                    <span>
-                                        ${variant.costPer1MInput.toFixed(2)}/${variant.costPer1MOutput.toFixed(2)}
-                                    </span>
-                                ) : (
-                                    <span className="text-gray-400 italic">Pricing varies</span>
-                                )}
-                            </div>
-                            {/* ✅ 체크박스 제거: 기존 border/bg 선택 UI만 사용 */}
-                        </button>
+                                // Storage에 저장
+                                await saveBYOKSettings(updatedSettings);
+                            }}
+                        />
                     ))}
                     {filteredVariants.length === 0 && (
                         <div className="col-span-2 py-8 text-center text-gray-400 text-sm">
@@ -1237,6 +1201,146 @@ function ProviderConfig({
                         </div>
                     )}
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// ✨ 모델 카드 컴포넌트 (Settings 드롭다운 포함)
+// OpenRouter Variants는 이제 src/config/providerSettingsConfig.ts에서 관리됩니다
+interface ModelVariantCardProps {
+    variant: BYOKModelVariant;
+    providerId: BYOKProviderId;
+    isSelected: boolean;
+    onToggleSelect: () => void;
+    settings: BYOKSettings;
+    onUpdateSettings: (newSettings: ModelOverrideSettings) => Promise<void>;
+}
+
+function ModelVariantCard({ variant, providerId, isSelected, onToggleSelect, settings, onUpdateSettings }: ModelVariantCardProps) {
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const modelKey = `${providerId}-${variant.id}`;
+    const modelOverride = settings.modelOverrides?.[modelKey] || { useDefaults: true };
+    const defaultConfig = settings.providers?.[providerId];
+
+    const hasCustomSettings = modelOverride && !modelOverride.useDefaults;
+
+    const handleSettingChange = async <K extends keyof ModelOverrideSettings>(key: K, value: ModelOverrideSettings[K]) => {
+        const newSettings = { ...modelOverride, [key]: value };
+        await onUpdateSettings(newSettings);
+    };
+
+    return (
+        <div className={`relative rounded-xl border-2 transition-all duration-200 group ${isSelected
+                ? 'border-indigo-500 bg-indigo-50/50 shadow-md'
+                : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm'
+            }`}>
+            {/* 메인 카드 영역 (클릭 시 선택/해제) */}
+            <button
+                onClick={onToggleSelect}
+                className="w-full p-4 text-left"
+            >
+                <div className="flex justify-between items-start mb-2">
+                    <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                        <span className="font-bold text-gray-900 group-hover:text-indigo-700 transition-colors truncate">
+                            {variant.name}
+                        </span>
+                        {providerId === 'openrouter' && (
+                            <a
+                                href={`https://openrouter.ai/${variant.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-gray-400 hover:text-indigo-600 transition-colors flex-shrink-0 p-0.5 hover:bg-indigo-50 rounded"
+                                title="View on OpenRouter"
+                            >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                        )}
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0">
+                        {variant.isNew && (
+                            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase rounded-full tracking-wide">NEW</span>
+                        )}
+                        {(variant as any).isRecommended && (
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full tracking-wide">TOP</span>
+                        )}
+                    </div>
+                </div>
+                <p className="text-xs text-gray-500 line-clamp-2 h-8 mb-3">{variant.description}</p>
+
+                {/* Capabilities Badges */}
+                <div className="flex flex-wrap gap-1 mb-3">
+                    {variant.capabilities?.map(cap => (
+                        <span key={cap} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded uppercase font-medium border border-gray-200">
+                            {cap}
+                        </span>
+                    ))}
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] font-medium text-gray-400">
+                    <span className="bg-gray-100 px-2 py-1 rounded-md">
+                        {variant.contextWindow.toLocaleString()} ctx
+                    </span>
+                    {variant.isFree ? (
+                        <span className="text-green-600 font-bold">Free</span>
+                    ) : variant.costPer1MInput > 0 || variant.costPer1MOutput > 0 ? (
+                        <span>
+                            ${variant.costPer1MInput.toFixed(2)}/${variant.costPer1MOutput.toFixed(2)}
+                        </span>
+                    ) : (
+                        <span className="text-gray-400 italic">Pricing varies</span>
+                    )}
+                </div>
+            </button>
+
+            {/* Settings 버튼 (카드 하단) */}
+            <div className="px-4 pb-3 pt-0">
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setIsSettingsOpen(!isSettingsOpen);
+                    }}
+                    className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all ${isSettingsOpen || hasCustomSettings
+                            ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                            : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200'
+                        }`}
+                >
+                    <Sliders className="w-3.5 h-3.5" />
+                    {hasCustomSettings ? 'Custom Settings' : 'Settings'}
+                    {isSettingsOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+
+                {/* Settings 드롭다운 */}
+                {isSettingsOpen && (
+                    <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-3" onClick={(e) => e.stopPropagation()}>
+                        {/* Use Defaults Toggle - ON이면 기본값 사용, OFF면 커스텀 설정 사용 */}
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-gray-700">Use Default Settings</span>
+                            <button
+                                onClick={() => handleSettingChange('useDefaults', !modelOverride.useDefaults)}
+                                className={`w-9 h-5 rounded-full transition-colors relative ${modelOverride.useDefaults ? 'bg-purple-500' : 'bg-gray-300'
+                                    }`}
+                            >
+                                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${modelOverride.useDefaults ? 'translate-x-4' : 'translate-x-0.5'
+                                    }`} />
+                            </button>
+                        </div>
+
+                        {/* Custom Settings (useDefaults가 OFF일 때 = 커스텀 설정 모드) */}
+                        {/* ProviderSettingsPanel로 회사별 동적 UI 렌더링 */}
+                        {modelOverride.useDefaults === false && (
+                            <ProviderSettingsPanel
+                                providerId={providerId}
+                                modelId={variant.id}
+                                capabilities={variant.capabilities}
+                                settings={modelOverride}
+                                defaultSettings={defaultConfig}
+                                onSettingChange={handleSettingChange}
+                            />
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );

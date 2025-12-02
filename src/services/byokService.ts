@@ -1403,28 +1403,104 @@ export class BYOKAPIService {
      * Main Entry Point: Call API
      */
     async callAPI(params: APICallParams): Promise<APIResponse> {
-        // 1. Load Dynamic Config to merge capabilities
-        const providerWithDynamics = await this.getProviderWithDynamicModels(params.providerId);
+        // 1. Load Settings to apply modelOverrides
+        const settings = await loadBYOKSettings();
+        const modelKey = `${params.providerId}-${params.variant}`;
+        const modelOverride = settings.modelOverrides?.[modelKey];
 
-        // 2. Find the specific variant to inject capabilities
-        let mergedVariant: BYOKModelVariant | undefined;
-        if (providerWithDynamics) {
-            mergedVariant = providerWithDynamics.variants.find(v => v.id === params.variant);
+        // 2. Apply Model-Specific Overrides (if useDefaults is false)
+        let enhancedParams = { ...params };
+        if (modelOverride && modelOverride.useDefaults === false) {
+            // Temperature
+            if (modelOverride.temperature !== undefined) {
+                enhancedParams.temperature = modelOverride.temperature;
+            }
+
+            // Max Tokens
+            if (modelOverride.maxTokens !== undefined) {
+                enhancedParams.maxTokens = modelOverride.maxTokens;
+            }
+
+            // Top-P, Top-K
+            if (modelOverride.topP !== undefined) {
+                enhancedParams.topP = modelOverride.topP;
+            }
+            if (modelOverride.topK !== undefined) {
+                enhancedParams.topK = modelOverride.topK;
+            }
+
+            // Reasoning/Thinking
+            if (modelOverride.reasoningEffort !== undefined) {
+                enhancedParams.reasoningEffort = modelOverride.reasoningEffort;
+            }
+            if (modelOverride.thinkingBudget !== undefined) {
+                enhancedParams.thinkingBudget = modelOverride.thinkingBudget;
+            }
+            if (modelOverride.thinkingLevel !== undefined) {
+                enhancedParams.thinkingLevel = modelOverride.thinkingLevel;
+            }
+            if (modelOverride.enableThinking !== undefined) {
+                enhancedParams.enableThinking = modelOverride.enableThinking;
+            }
+
+            // Advanced Sampling
+            if (modelOverride.frequencyPenalty !== undefined) {
+                enhancedParams.frequencyPenalty = modelOverride.frequencyPenalty;
+            }
+            if (modelOverride.presencePenalty !== undefined) {
+                enhancedParams.presencePenalty = modelOverride.presencePenalty;
+            }
+            if (modelOverride.repetitionPenalty !== undefined) {
+                enhancedParams.repetitionPenalty = modelOverride.repetitionPenalty;
+            }
+            if (modelOverride.minP !== undefined) {
+                enhancedParams.minP = modelOverride.minP;
+            }
+            if (modelOverride.topA !== undefined) {
+                enhancedParams.topA = modelOverride.topA;
+            }
+            if (modelOverride.seed !== undefined) {
+                enhancedParams.seed = modelOverride.seed;
+            }
+
+            // Output Control
+            if (modelOverride.stopSequences !== undefined) {
+                enhancedParams.stopSequences = modelOverride.stopSequences;
+            }
+            if (modelOverride.responseFormat !== undefined) {
+                enhancedParams.responseFormat = modelOverride.responseFormat;
+            }
+
+            // ✅ OpenRouter Variant Suffix (: free, :thinking, etc.)
+            if (params.providerId === 'openrouter' && modelOverride.openRouterVariant && modelOverride.openRouterVariant !== 'default') {
+                // Append suffix to variant ID
+                // Example: anthropic/claude-3-opus + free → anthropic/claude-3-opus:free
+                enhancedParams.variant = `${params.variant}:${modelOverride.openRouterVariant}`;
+            }
         }
 
-        // 3. Normalize Model ID for the specific provider
-        const normalizedVariant = this.normalizeModelId(params.providerId, params.variant);
+        // 3. Load Dynamic Config to merge capabilities
+        const providerWithDynamics = await this.getProviderWithDynamicModels(enhancedParams.providerId);
 
-        // 4. Inject merged variant into params
-        const enhancedParams = {
-            ...params,
+        // 4. Find the specific variant to inject capabilities
+        let mergedVariant: BYOKModelVariant | undefined;
+        if (providerWithDynamics) {
+            mergedVariant = providerWithDynamics.variants.find(v => v.id === enhancedParams.variant);
+        }
+
+        // 5. Normalize Model ID for the specific provider
+        const normalizedVariant = this.normalizeModelId(enhancedParams.providerId, enhancedParams.variant);
+
+        // 6. Inject merged variant into params
+        const finalParams = {
+            ...enhancedParams,
             variant: normalizedVariant, // ✅ 정규화된 ID 사용
             mergedVariant
         };
 
-        // 5. Get Adapter & Execute
-        const adapter = this.getAdapter(params.providerId);
-        return adapter.callAPI(enhancedParams);
+        // 7. Get Adapter & Execute
+        const adapter = this.getAdapter(enhancedParams.providerId);
+        return adapter.callAPI(finalParams);
     }
 
 

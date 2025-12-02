@@ -163,12 +163,12 @@ export const App: React.FC = () => {
       const parts = modelId.replace('byok-', '').split('-');
       const providerId = parts[0];
       const variantId = parts.length > 1 ? parts.slice(1).join('-') : undefined;
-      
+
       // 표시 이름: variantId가 있으면 모델명만 추출 (openai/gpt-4o → gpt-4o)
-      const displayName = variantId 
+      const displayName = variantId
         ? (variantId.includes('/') ? variantId.split('/').pop()! : variantId)
         : (providerId.charAt(0).toUpperCase() + providerId.slice(1));
-      
+
       return {
         id: modelId as ModelId,
         name: displayName,
@@ -298,7 +298,7 @@ export const App: React.FC = () => {
       }
 
       const apiKey = config.apiKey.trim();
-      
+
       // ✅ 모델 ID에서 variant 추출 (byok-providerId-variantId 형식)
       // 예: byok-openrouter-openai/gpt-4o → variantId = openai/gpt-4o
       // 첫 번째 부분(providerId)을 제외한 나머지를 '-'로 다시 연결
@@ -316,18 +316,24 @@ export const App: React.FC = () => {
       }
 
       // 2. BYOK API 호출
+      // ✅ 설정 병합 및 OpenRouter variant suffix 처리는 BYOKAPIService.callAPI에서 자동 처리됨
       const apiResponse = await BYOKService.getInstance().callAPI({
         providerId,
         apiKey,
-        variant,
+        variant, // ✅ base variant만 전달 (suffix 처리는 callAPI 내부에서)
         prompt: '', // 빈 문자열 (historyMessages로 전체 대화 전달)
         historyMessages: newMessages, // ✨ 이미지 포함 메시지 배열
+        // Provider 기본 설정 전달 (modelOverrides 우선 적용은 callAPI에서)
         temperature: config.customTemperature,
         maxTokens: config.maxTokens,
+        topP: config.topP,
+        topK: config.topK,
         reasoningEffort: config.reasoningEffort,
         thinkingBudget: config.thinkingBudget,
         thinkingLevel: config.thinkingLevel,
-        enableThinking: config.enableThinking
+        enableThinking: config.enableThinking,
+        frequencyPenalty: config.frequencyPenalty,
+        presencePenalty: config.presencePenalty,
       });
 
       if (!apiResponse.success) {
@@ -406,10 +412,10 @@ export const App: React.FC = () => {
         // 모델 ID 형식: byok-{providerId}-{variantId}
         const modelIdParts = targetModel.modelId.replace('byok-', '').split('-');
         const providerId = modelIdParts[0] as BYOKProviderId;
-        
+
         // variant 추출: 모델 ID에서 직접 추출 (설정 로드 불필요)
-        const variant = modelIdParts.length > 1 
-          ? modelIdParts.slice(1).join('-') 
+        const variant = modelIdParts.length > 1
+          ? modelIdParts.slice(1).join('-')
           : 'default';
 
         const messagesToSave = targetModel.messages!; // hasMessages 검사 후이므로 안전
