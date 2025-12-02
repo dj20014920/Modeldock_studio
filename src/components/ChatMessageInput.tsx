@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { BrainFlowModal } from './BrainFlowModal';
 import { BrainFlowProgress } from './BrainFlowProgress';
 import { ChainOrchestrator } from '../services/chain-orchestrator';
+import { getIframeActualUrlWithRetry } from '../utils/iframeUrlUtils';
 
 interface ChatMessageInputProps {
   activeModels: ActiveModel[];
@@ -192,7 +193,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       // ✅ BYOK 모델이 이미 처리되었으면 에러가 아님
       // iframe 기반 모델이 없어도 BYOK 모델이 있으면 정상 작동
       const hasBYOKModels = byokModels.length > 0;
-      
+
       if (activeSelectorEntries.length === 0 && !hasBYOKModels && !isPerplexityActive) {
         setErrorMessage(t('chatInput.errorNoTargets'));
         setLastActionStatus('error');
@@ -325,9 +326,15 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
             updateStatusFor(modelId, 'success');
             setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);
             successfulAutoInstances.add(instanceId);
-            if (targetFrame?.src) {
+
+            // 🔧 CRITICAL: Get actual conversation URL with retry (3 attempts for auto-routing)
+            if (targetFrame) {
+              const modelConfig = getModelConfig(modelId);
+              const initialUrl = modelConfig?.url || targetFrame.src;
+              const actualUrl = await getIframeActualUrlWithRetry(targetFrame, initialUrl, 3, 500);
+
               onModelMetadataUpdate?.(instanceId, {
-                conversationUrl: targetFrame.src,
+                conversationUrl: actualUrl || targetFrame.src || undefined,
                 historyMode: 'auto-routing',
                 lastPrompt: input
               });

@@ -21,72 +21,70 @@ export const BrainFlowProgress: React.FC<BrainFlowProgressProps> = ({
     if (phase === 0) return null;
 
     return (
-        <div className="absolute bottom-full left-0 w-full mb-2 px-4 animate-in slide-in-from-bottom-2 fade-in duration-300 z-40">
-            <div className="bg-white/90 backdrop-blur-md border border-indigo-100 shadow-lg rounded-xl p-4 flex items-center justify-between gap-4">
-
-                <div className="flex items-center gap-4 flex-1">
-                    {/* Phase Indicator */}
+        <div className="fixed bottom-4 right-4 z-50 animate-in slide-in-from-right-2 fade-in duration-300">
+            <div className="bg-white/95 backdrop-blur-md border border-indigo-200 shadow-xl rounded-xl p-3 min-w-[280px]">
+                {/* Compact Header */}
+                <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                        <div className={clsx(
-                            "w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm",
-                            phase === 1 ? "bg-indigo-100 text-indigo-600" : "bg-indigo-600 text-white"
-                        )}>
-                            1
-                        </div>
-                        <div className="w-4 h-0.5 bg-slate-200" />
-                        <div className={clsx(
-                            "w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm",
-                            phase === 2 ? "bg-indigo-600 text-white animate-pulse" : phase > 2 ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400"
-                        )}>
-                            2
-                        </div>
-                        <div className="w-4 h-0.5 bg-slate-200" />
-                        <div className={clsx(
-                            "w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm",
-                            phase === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-400"
-                        )}>
-                            3
-                        </div>
+                        <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                        <span className="font-semibold text-slate-800 text-sm">
+                            {phase === 1 && t('brainFlow.phase1Title', 'Planning')}
+                            {phase === 2 && t('brainFlow.phase2Title', 'Executing')}
+                            {phase === 3 && t('brainFlow.phase3Title', 'Synthesizing')}
+                        </span>
                     </div>
-
-                    <div className="h-8 w-px bg-slate-200 mx-2" />
-
-                    {/* Status Text */}
-                    <div className="flex-1">
-                        <h4 className="font-semibold text-slate-800 text-sm">
-                            {phase === 1 && t('brainFlow.phase1Title', 'Planning Phase')}
-                            {phase === 2 && t('brainFlow.phase2Title', 'Execution Phase')}
-                            {phase === 3 && t('brainFlow.phase3Title', 'Synthesis Phase')}
-                        </h4>
-                        <p className="text-xs text-slate-500 flex items-center gap-2">
-                            {phase === 2 && (
-                                <>
-                                    <span className="flex items-center gap-1 text-amber-600">
-                                        <Loader2 size={10} className="animate-spin" />
-                                        Waiting: {waitingModels.join(', ')}
-                                    </span>
-                                    {completedModels.length > 0 && (
-                                        <span className="flex items-center gap-1 text-emerald-600">
-                                            <CheckCircle2 size={10} />
-                                            Done: {completedModels.join(', ')}
-                                        </span>
-                                    )}
-                                </>
-                            )}
-                            {phase !== 2 && t('brainFlow.processing', 'Processing...')}
-                        </p>
+                    {/* Phase Steps */}
+                    <div className="flex items-center gap-1">
+                        {[1, 2, 3].map(step => (
+                            <div
+                                key={step}
+                                className={clsx(
+                                    "w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold",
+                                    phase === step ? "bg-indigo-600 text-white" :
+                                    phase > step ? "bg-indigo-200 text-indigo-700" :
+                                    "bg-slate-100 text-slate-400"
+                                )}
+                            >
+                                {step}
+                            </div>
+                        ))}
                     </div>
                 </div>
 
-                {/* Skip Button (Only visible in Phase 2) */}
+                {/* Status */}
+                <div className="text-xs text-slate-500 mb-2">
+                    {phase === 2 && (
+                        <div className="space-y-1">
+                            {waitingModels.length > 0 && (
+                                <div className="flex items-center gap-1 text-amber-600">
+                                    <Loader2 size={10} className="animate-spin" />
+                                    <span>Waiting: {waitingModels.slice(0, 3).join(', ')}{waitingModels.length > 3 ? '...' : ''}</span>
+                                </div>
+                            )}
+                            {completedModels.length > 0 && (
+                                <div className="flex items-center gap-1 text-emerald-600">
+                                    <CheckCircle2 size={10} />
+                                    <span>Done: {completedModels.length}</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {phase !== 2 && (
+                        <span className="flex items-center gap-1">
+                            <Loader2 size={10} className="animate-spin" />
+                            {t('brainFlow.processing', 'Processing...')}
+                        </span>
+                    )}
+                </div>
+
+                {/* Skip Button */}
                 {phase === 2 && (
                     <button
                         onClick={onSkip}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium rounded-lg transition-colors shadow-sm hover:text-indigo-600 hover:border-indigo-200"
-                        title="Force proceed with current responses"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 text-xs font-medium rounded-lg transition-colors"
                     >
-                        <FastForward size={14} />
-                        Skip Waiting
+                        <FastForward size={12} />
+                        Skip & Continue
                     </button>
                 )}
             </div>

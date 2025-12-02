@@ -20,48 +20,31 @@ export default {
         ok: 'OK',
         yes: 'Oui',
         no: 'Non',
-        confirmDelete: 'Êtes-vous sûr de vouloir supprimer cette conversation ?',
-        deleteConfirm: 'Êtes-vous sûr de vouloir supprimer ?',
     },
     sidebar: {
         chats: 'Discussions',
-        history: 'Historique',
         models: 'Modèles',
-        prompts: 'Prompts',
         settings: 'Paramètres',
-        noActiveChats: 'Commencez une nouvelle conversation.',
+        noActiveChats: 'Aucune discussion active.',
         createNewChat: 'Nouvelle discussion',
-        activeSessions: 'Sessions actives',
         availableModels: 'Modèles disponibles',
         maxInstancesHint: 'Max 3 / modèle',
         proUser: 'Utilisateur Pro',
         versionLabel: 'ModelDock V1',
-        byokModels: 'Modèles BYOK',
-        standardModels: 'Modèles standard',
-        conversationHistory: 'Historique des conversations',
-        today: 'Aujourd\'hui',
-        yesterday: 'Hier',
-        previous7Days: '7 derniers jours',
-        older: 'Plus ancien',
-        noHistory: 'Aucun historique de conversation',
-        brainFlow: 'Brain Flow',
-        autoRouting: 'Routage auto',
-        manual: 'Manuel',
-        link: 'Lien',
     },
     modelGrid: {
-        allInMainBrain: 'Aucun modèle actif. Sélectionnez des modèles depuis la barre latérale.',
+        allInMainBrain: 'Tous les modèles actifs sont dans la vue principale',
         noModels: 'Aucun modèle disponible',
     },
     chatInput: {
         manualMode: 'Manuel',
         autoMode: 'Auto',
-        placeholder: 'Posez une question au modèle IA...',
+        placeholder: 'Tapez votre message...',
         send: 'Envoyer',
         copyToClipboard: 'Copier dans le presse-papiers',
         dispatchToAll: 'Envoyer à tous les modèles',
-        consentTitle: '⚡️ Consentement de routage auto (Avertissement de risque)',
-        consentMessage: 'ModelDock envoie automatiquement votre message aux modèles actifs dans votre navigateur. ⚠️ Attention: Certains services d\'IA (ChatGPT, Claude, etc.) peuvent considérer l\'accès automatisé comme une violation de leurs Conditions d\'Utilisation, ce qui pourrait entraîner des avertissements de compte, des blocages temporaires ou une suspension permanente. Vous assumez l\'entière responsabilité de l\'utilisation de cette fonctionnalité.',
+        consentTitle: '⚡️ Consentement de routage auto',
+        consentMessage: 'ModelDock injectera automatiquement votre message dans les iframes des modèles actifs et simulera l\'envoi. C\'est sécurisé et fonctionne localement dans votre navigateur.',
         iUnderstand: 'Je comprends',
         sentSuccess: 'Envoyé !',
         errorNoTargets: 'Aucune cible valide trouvée',
@@ -176,19 +159,6 @@ export default {
         academic: 'Académique',
     },
 
-    // === Carte de Modèle ===
-    modelCard: {
-        refresh: 'Actualiser',
-        openInNewTab: 'Ouvrir dans un nouvel onglet',
-        removeMainBrain: 'Retirer le Main Brain',
-        setAsMainBrain: 'Définir comme Main Brain',
-        syncing: 'Synchronisation de la session...',
-        synced: 'Synchronisé !',
-        syncFailed: 'Échec de synchronisation',
-        syncSession: 'Synchroniser la session',
-        mainBrain: 'Main Brain',
-    },
-
     brainFlowModal: {
         title: '🧠 Brain Flow',
         subtitle: 'Le Main Brain orchestre {{count}} bots esclaves',
@@ -202,305 +172,30 @@ export default {
         previewFilledLabel: 'Aperçu avec ton objectif actuel',
         warningKeepBlocks: 'Garde intacts les blocs [SLAVE:…], {{slaves}} et {{goal}} — ajuste seulement le reste en douceur.',
         persistNote: 'Enregistré. Nous réutiliserons ce prompt ajusté pour les prochains Brain Flow.',
-        previewGoalPlaceholder: "Dis-moi ton objectif, je guiderai toute l'équipe…",
+        previewGoalPlaceholder: 'Dis-moi ton objectif, je guiderai toute l’équipe…',
         synthesisPreviewButton: 'Prévisualiser et ajuster en douceur le prompt de synthèse',
         synthesisPreviewTitle: 'Aperçu du prompt de synthèse (objectif/réponses se remplissent automatiquement)',
-        synthesisPreviewFilledLabel: "Aperçu avec des réponses d'exemple",
+        synthesisPreviewFilledLabel: 'Aperçu avec des réponses d’exemple',
         synthesisWarningKeepBlocks: 'Garde {{goal}} et {{responses}} tels quels — ce prompt pilote la synthèse finale.',
     },
-
-    // === Brain Flow ===
-    brainFlow: {
-        phase1: `# RÔLE
-Vous êtes le "Main Brain" - un orchestrateur de tâches qui distribue des sous-tâches spécialisées aux modèles IA esclaves.
-Vous ne répondez PAS directement à la question de l'utilisateur. Votre SEUL travail est de créer des prompts optimaux pour chaque esclave.
-
-# MODÈLES ESCLAVES
-{{slaves}}
-
-# OBJECTIF DE L'UTILISATEUR
-{{goal}}
-
-# RÈGLES CRITIQUES (À SUIVRE IMPÉRATIVEMENT)
-1. Créez EXACTEMENT UN bloc [SLAVE:id] pour CHAQUE esclave listé ci-dessus - sans exception
-2. Les esclaves s'exécutent EN PARALLÈLE et NE PEUVENT PAS voir les sorties des autres
-3. N'incluez AUCUN texte en dehors des blocs [SLAVE:...][/SLAVE]
-4. Utilisez l'ID EXACT de l'esclave de la liste (ex: [SLAVE:gemini-1], [SLAVE:grok-2])
-
-# FORMAT DE SORTIE
-[SLAVE:model-id]
-Votre prompt de tâche spécifique ici...
-[/SLAVE]
-
-# STRATÉGIE DE CONCEPTION DES PROMPTS
-Pour chaque esclave, attribuez un rôle DISTINCT basé sur l'objectif:
-- Analyste: Analyse de données, reconnaissance de motifs, statistiques
-- Critique: Évaluation des risques, contre-arguments, cas limites
-- Créateur: Solutions, idées, plans d'implémentation
-- Validateur: Vérification des faits, vérification des sources, revue logique
-- Synthétiseur: Résumés, insights clés, points d'action
-
-# MODÈLE DE PROMPT ESCLAVE
-Chaque prompt doit inclure:
-1. RÔLE: "Vous êtes un [rôle d'expert spécifique]..."
-2. TÂCHE: Instruction claire et actionnable avec des verbes spécifiques
-3. FOCUS: Quel aspect spécifique analyser (éviter le chevauchement avec d'autres esclaves)
-4. FORMAT: Structure de sortie souhaitée (puces, liste numérotée, sections)
-5. LANGUE: Répondre dans la même langue que l'objectif de l'utilisateur
-
-# ANTI-PATTERNS (À NE PAS FAIRE)
-❌ Poser la même question à plusieurs esclaves
-❌ Créer des dépendances entre esclaves (ex: "basé sur la sortie du Modèle A...")
-❌ Écrire des méta-commentaires ou explications en dehors des blocs
-❌ Omettre un esclave de la liste
-❌ Utiliser des prompts génériques - soyez spécifique aux forces de chaque esclave`,
-        phase3: `# RÔLE
-Vous êtes le synthétiseur "Main Brain". Votre travail est de fusionner plusieurs réponses IA en UNE réponse optimale.
-
-# OBJECTIF ORIGINAL DE L'UTILISATEUR
-{{goal}}
-
-# RÉPONSES DES ESCLAVES
-{{responses}}
-
-# MÉTHODOLOGIE DE SYNTHÈSE
-Suivez ce processus:
-
-## Étape 1: EXTRAIRE
-- Listez les points clés de chaque réponse
-- Notez les insights uniques fournis par un seul modèle
-- Identifiez les conclusions qui se chevauchent (consensus)
-
-## Étape 2: VALIDER
-- Vérifiez les faits mentionnés par plusieurs sources
-- Signalez les contradictions entre les réponses
-- Évaluez la confiance: Haute (3+ modèles d'accord) / Moyenne (2 d'accord) / Basse (1 seul)
-
-## Étape 3: RÉSOUDRE LES CONFLITS
-Quand les modèles ne sont pas d'accord:
-- Préférez les réponses avec des preuves/données spécifiques aux opinions
-- Considérez l'expertise de domaine de chaque modèle
-- Si insoluble, présentez les deux vues avec avantages/inconvénients
-
-## Étape 4: SYNTHÉTISER
-Créez une réponse unifiée qui:
-- Répond directement à l'objectif original de l'utilisateur
-- Combine les meilleurs éléments de toutes les réponses
-- Élimine la redondance et les contradictions
-- Maintient un flux logique et une cohérence
-
-# FORMAT DE SORTIE
-Structurez votre réponse ainsi:
-
-### 📋 Résumé Exécutif
-[Aperçu en 2-3 phrases de la réponse synthétisée]
-
-### 🔍 Conclusions Clés
-[Points à puces des conclusions principales avec niveaux de confiance]
-
-### ⚠️ Considérations Importantes
-[Risques, mises en garde ou opinions minoritaires à noter]
-
-### ✅ Action Recommandée / Réponse
-[Conclusion claire et actionnable qui répond à l'objectif de l'utilisateur]
-
-# LANGUE
-Répondez dans la même langue que l'objectif original de l'utilisateur.`,
-    },
-
     byok: {
-        title: 'Configuration BYOK',
-        subtitle: 'Utilisez vos propres clés API avec les modèles IA',
-        systemActive: 'Système actif',
-        systemDisabled: 'Système désactivé',
-        refreshAll: 'Tout actualiser',
-        refreshing: 'Actualisation...',
-        saveChanges: 'Enregistrer les modifications',
-        saving: 'Enregistrement...',
-        providerName: 'Fournisseur',
-        modelsCount: '{{count}} modèles',
-        getApiKey: 'Obtenir une clé API',
-        documentation: 'Documentation',
-        apiCredentials: 'Identifiants API',
-        validate: 'Valider',
-        validating: 'Validation...',
-        valid: 'Valide',
-        invalid: 'Invalide',
-        modelSelection: 'Sélection du modèle',
-        available: 'Disponible',
-        searchModels: 'Rechercher des modèles...',
-        sortBy: 'Trier par',
-        sortPopular: 'Populaire',
-        sortLatest: 'Plus récent',
-        allModels: 'Tous les modèles',
-        reasoning: 'Raisonnement',
-        coding: 'Codage',
-        vision: 'Vision',
-        realtime: 'Temps réel',
-        contextWindow: 'Fenêtre de contexte',
-        pricing: 'Tarification',
-        pricingVaries: 'Prix variable',
-        noModelsFound: 'Aucun modèle correspondant trouvé.',
-        refreshSuccess: 'Liste des modèles actualisée avec succès.',
-        refreshError: 'Échec de l\'actualisation de la liste des modèles.',
-        validationSuccess: 'Clé API valide.',
-        validationError: 'Échec de la validation de la clé API.',
-        saveSuccess: 'Configuration enregistrée.',
-        validation: {
-            title: 'Vérification de la clé API requise',
-            unverifiedProvidersMessage: 'Les fournisseurs suivants n\'ont pas été vérifiés:',
-            autoVerifyPrompt: 'Voulez-vous les vérifier automatiquement maintenant?',
-            cancelNote: '(Annuler pour revenir sans sauvegarder)',
-            unavailableTitle: 'Impossible de sauvegarder',
-            unavailableMessage: 'Les clés API ou les modèles des fournisseurs suivants ne sont pas disponibles:',
-            modelLabel: 'Modèle',
-            reasonLabel: 'Raison',
-            reasonInvalidKey: 'La clé API est invalide ou le modèle n\'est pas accessible.',
-            solutionsTitle: 'Solutions:',
-            solution1: '1. Vérifiez à nouveau votre clé API',
-            solution2: '2. Essayez de sélectionner un modèle différent',
-            solution3: '3. Vérifiez les autorisations sur le site du fournisseur',
-            uncertainTitle: 'Avertissement: Vérification incertaine',
-            uncertainMessage: 'Certains fournisseurs n\'ont pas pu être vérifiés:',
-            uncertainReason: 'Vérification incertaine (erreur réseau ou limite de débit)',
-            proceedQuestion: 'Voulez-vous quand même sauvegarder?',
-            recommendation: 'Recommandation: Appuyez sur "Annuler" et réessayez avec le bouton "Vérifier".',
-        },
-        cacheAge: 'Mis à jour il y a {{minutes}} min',
-        cached: 'En cache',
-        studioTitle: 'BYOK Studio',
-        studioSubtitle: 'Configurez votre infrastructure IA',
-        openRouterNote: '※Les informations du modèle sont basées sur OpenRouter. La disponibilité réelle peut varier selon la clé du fournisseur.',
-        aiProviders: 'Fournisseurs IA',
-        selectProvider: 'Sélectionnez un fournisseur à configurer',
-        allSystemsOperational: 'Tous les systèmes opérationnels',
-        lastUpdated: 'Dernière mise à jour: {{time}}',
-        notYetRefreshed: 'Pas encore actualisé',
-        refreshModels: 'Actualiser les modèles',
-        variants: {
-            default: 'Configuration par défaut',
-            free: 'Version gratuite ($0, avec limites)',
-            extended: 'Fenêtre de contexte étendue',
-            thinking: 'Raisonnement étendu (Chain-of-Thought)',
-            online: 'Recherche web en temps réel (Exa.ai)',
-            nitro: 'Prioriser le fournisseur le plus rapide',
-            floor: 'Prioriser le fournisseur le moins cher',
-        },
-        status: {
-            available: 'Disponible',
-            unavailable: 'Indisponible',
-            uncertain: 'Vérifié (vérification du modèle ignorée)',
-            notVerified: 'Non vérifié',
-            checking: 'Vérification...',
-            verified: 'Vérifié',
-        },
-        advanced: {
-            title: 'Configuration avancée',
-            topP: 'Top P',
-            topK: 'Top K',
-            frequencyPenalty: 'Pénalité de fréquence',
-            presencePenalty: 'Pénalité de présence',
-            seed: 'Graine',
-            random: 'Aléatoire',
-            responseFormat: 'Format de réponse',
-            text: 'Texte',
-            jsonObject: 'Objet JSON',
-        },
-        modelCard: {
-            settings: 'Paramètres',
-            customSettings: 'Configuration personnalisée',
-            ctx: 'ctx',
-            free: 'Gratuit',
-        },
-        tooltips: {
-            modelAvailable: '✅ Modèle disponible pour cette clé API',
-            modelUnavailable: '❌ Modèle indisponible (vérifiez la clé API ou l\'accès au modèle)',
-            modelUncertain: 'Clé API valide, mais impossible de confirmer la disponibilité du modèle. Probablement fonctionnel.',
-            clickToVerify: 'Cliquez pour vérifier la disponibilité du modèle',
-        },
-    },
-
-    // === BYOK Chat ===
-    byokChat: {
-        noMessages: 'Aucun message',
-        startConversation: 'Commencez une conversation avec ce modèle BYOK',
-        attachImage: 'Joindre une image',
-        imageTooLarge: 'L\'image "{{name}}" est trop grande (max 20Mo)',
-        sending: 'Envoi...',
-        receiving: 'Réception...',
-        imagesSelected: '{{count}} images sélectionnées',
-        pressEnterToSend: 'Appuyez sur Entrée pour envoyer',
-        sendMessage: 'Envoyez un message à ce modèle...',
-        attachedImage: 'Image jointe',
-        preview: 'Aperçu {{index}}',
-    },
-
-    // === Brain Flow Progress ===
-    brainFlowProgress: {
-        phase1Title: 'Phase de planification',
-        phase2Title: 'Phase d\'exécution',
-        phase3Title: 'Phase d\'intégration',
-        waiting: 'En attente',
-        done: 'Terminé',
-        processing: 'Traitement...',
-        skipWaiting: 'Passer l\'attente',
-    },
-
-    // === History Popover ===
-    historyPopover: {
-        title: 'Historique',
-        modelHistory: 'Historique du modèle',
-        newChat: 'Nouvelle discussion',
-        searchPlaceholder: 'Rechercher des conversations...',
-        loading: 'Chargement...',
-        noConversations: 'Aucune conversation trouvée',
-        startNewChat: 'Commencez une nouvelle discussion et elle apparaîtra ici',
-        untitledConversation: 'Conversation sans titre',
-        noPreview: 'Pas d\'aperçu',
-        deleteConversation: 'Supprimer la conversation',
-        conversationsStored: '{{count}} conversations stockées',
-        daysAgo: 'il y a {{days}} jours',
-    },
-
-    // === Model Settings Dropdown ===
-    modelSettings: {
-        title: 'Paramètres du modèle',
-        useDefaultSettings: 'Utiliser les paramètres par défaut',
-        applyGlobalSettings: 'Appliquer la configuration BYOK globale',
-        unsaved: 'Non enregistré',
-        resetToDefaults: 'Réinitialiser aux valeurs par défaut',
-        modelVariant: 'Variante du modèle',
-        enableThinking: 'Activer la réflexion',
-        noCustomSettings: 'Ce modèle n\'a pas de configuration personnalisée.',
-    },
-
-    // === Settings Modal (additional) ===
-    settingsModal: {
-        byokTitle: 'Configuration des clés API',
-        byokDescription: 'Utilisez OpenAI, Claude, Gemini directement',
-        openSettings: 'Ouvrir les paramètres',
-    },
-
-    // === Confirm Dialogs ===
-    confirmDialogs: {
-        addModel: '🚀 Ajouter le modèle {{name}} ?\n\nCommencez une nouvelle conversation et\nconsultez ou demandez de l\'aide à {{name}}.',
-        deleteModel: '❌ Supprimer le modèle "{{name}}" ?',
-        newChat: '💬 Commencer une nouvelle conversation ?\n\nLa conversation actuelle sera automatiquement enregistrée,\nvous pouvez la restaurer depuis l\'historique à tout moment.',
-        apiKeyNotSet: 'Clé API non configurée. Activez et enregistrez la clé dans Paramètres → BYOK.',
-        modelNotSelected: 'Modèle non sélectionné. Sélectionnez un modèle dans la configuration BYOK.',
-    },
-
-    // === Thinking Process ===
-    thinking: {
-        processTitle: 'Processus de réflexion',
-        showProcess: 'Afficher le processus de réflexion',
-        hideProcess: 'Masquer le processus de réflexion',
-        summary: 'Résumé',
-    },
-
-    // === Header ===
-    header: {
-        title: 'modeldock',
-        conversationHistory: 'Historique des conversations',
+        title: 'Vérification de la clé API requise',
+        unverifiedProvidersMessage: 'Les fournisseurs suivants n\'ont pas été vérifiés:',
+        autoVerifyPrompt: 'Voulez-vous les vérifier automatiquement maintenant?',
+        cancelNote: '(Annuler pour revenir sans sauvegarder)',
+        unavailableTitle: 'Impossible de sauvegarder',
+        unavailableMessage: 'Les clés API ou les modèles des fournisseurs suivants ne sont pas disponibles:',
+        modelLabel: 'Modèle',
+        reasonLabel: 'Raison',
+        reasonInvalidKey: 'La clé API est invalide ou le modèle n\'est pas accessible.',
+        solutionsTitle: 'Solutions:',
+        solution1: '1. Vérifiez à nouveau votre clé API',
+        solution2: '2. Essayez de sélectionner un modèle différent',
+        solution3: '3. Vérifiez les autorisations sur le site du fournisseur',
+        uncertainTitle: 'Avertissement: Vérification incertaine',
+        uncertainMessage: 'Certains fournisseurs n\'ont pas pu être vérifiés:',
+        uncertainReason: 'Vérification incertaine (erreur réseau ou limite de débit)',
+        proceedQuestion: 'Voulez-vous quand même sauvegarder?',
+        recommendation: 'Recommandation: Appuyez sur "Annuler" et réessayez avec le bouton "Vérifier".',
     },
 };

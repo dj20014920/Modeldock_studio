@@ -21,36 +21,19 @@ export default {
         ok: 'OK',
         yes: 'Yes',
         no: 'No',
-        confirmDelete: 'Are you sure you want to delete this conversation?',
-        deleteConfirm: 'Are you sure you want to delete?',
     },
 
     // === Sidebar ===
     sidebar: {
         chats: 'Chats',
-        history: 'History',
         models: 'Models',
-        prompts: 'Prompts',
         settings: 'Settings',
         noActiveChats: 'Start a new conversation.',
         createNewChat: 'Create new chat',
-        activeSessions: 'Active Sessions',
         availableModels: 'Available Models',
         maxInstancesHint: 'Max 3 / model',
         proUser: 'Pro User',
         versionLabel: 'ModelDock V1',
-        byokModels: 'BYOK Models',
-        standardModels: 'Standard Models',
-        conversationHistory: 'Conversation History',
-        today: 'Today',
-        yesterday: 'Yesterday',
-        previous7Days: 'Previous 7 Days',
-        older: 'Older',
-        noHistory: 'No conversation history',
-        brainFlow: 'Brain Flow',
-        autoRouting: 'Auto Routing',
-        manual: 'Manual',
-        link: 'Link',
     },
 
     // === Model Grid ===
@@ -67,8 +50,8 @@ export default {
         send: 'Send',
         copyToClipboard: 'Copy to Clipboard',
         dispatchToAll: 'Send to All Models',
-        consentTitle: '⚡️ Auto-Routing Consent (Risk Disclosure)',
-        consentMessage: 'ModelDock automatically sends messages to active models within your browser. ⚠️ Warning: Some AI services (ChatGPT, Claude, etc.) may consider automated access a violation of their Terms of Service, which could result in account warnings, temporary blocks, or permanent suspension. You assume all responsibility for using this feature.',
+        consentTitle: '⚡️ Auto-Routing Consent',
+        consentMessage: 'ModelDock will automatically inject your message into active model iframes and simulate submission. This is safe and works locally in your browser.',
         iUnderstand: 'I Understand',
         sentSuccess: 'Sent!',
         errorNoTargets: 'No valid targets found',
@@ -231,101 +214,52 @@ export default {
 
     // === Brain Flow ===
     brainFlow: {
-        phase1: `# ROLE
-You are the "Main Brain" - a task orchestrator who distributes specialized subtasks to slave AI models.
-You do NOT answer the user's question directly. Your ONLY job is to create optimal prompts for each slave.
-
-# SLAVE MODELS
+        phase1: `You are the "Main Brain" managing and directing slave bots. Slaves do not communicate with each other; conversation proceeds 1:N between you and the slaves.
+Slave Bot List:
 {{slaves}}
 
-# USER'S GOAL
+[Goal]
 {{goal}}
 
-# CRITICAL RULES (MUST FOLLOW)
-1. Create EXACTLY ONE [SLAVE:id] block for EVERY slave listed above - no exceptions
-2. Slaves run IN PARALLEL and CANNOT see each other's outputs
-3. Do NOT include any text outside [SLAVE:...][/SLAVE] blocks
-4. Use the EXACT slave ID from the list (e.g., [SLAVE:gemini-1], [SLAVE:grok-2])
+[Role]
+Considering the characteristics and strengths of each slave bot, design optimal prompts, synthesize subsequent responses to perform fact-checking/verification/problem analysis, and present the optimal solution to achieve the user's goal.
 
-# OUTPUT FORMAT
-[SLAVE:model-id]
-Your specific task prompt here...
-[/SLAVE]
+[Output Format Rules - MUST FOLLOW]
+1) Exactly one block per slave, maintain list order.
+2) Header: [SLAVE:modelId-number] (e.g., [SLAVE:gemini-1], [SLAVE:grok-2])
+   ※ IMPORTANT: Use the exact ID provided in the list above!
+3) Inside block: Prompt content only (no meta text)
+4) Close: [/SLAVE]
+5) No text outside SLAVE blocks
+6) No chain dependencies: Slaves run in parallel.
+7) Do not miss any slave from the list.
 
-# PROMPT DESIGN STRATEGY
-For each slave, assign a DISTINCT role based on the goal:
-- Analyst: Data analysis, pattern recognition, statistics
-- Critic: Risk assessment, counterarguments, edge cases
-- Creator: Solutions, ideas, implementation plans
-- Validator: Fact-checking, source verification, logic review
-- Synthesizer: Summaries, key insights, action items
+[Slave Instruction Guide]
+0. Persona: Define role clearly
+1. Instruction: Use specific verbs
+2. Context: Provide background info
+3. Input Data: Provide data to process
+4. Output Format: Specify desired format
+- Specify role/goal/format/constraints per model
+- Avoid duplicate questions, distribute perspectives
+- Ensure response is in user's language
 
-# SLAVE PROMPT TEMPLATE
-Each prompt should include:
-1. ROLE: "You are a [specific expert role]..."
-2. TASK: Clear, actionable instruction with specific verbs
-3. FOCUS: What specific aspect to analyze (avoid overlap with other slaves)
-4. FORMAT: Desired output structure (bullets, numbered list, sections)
-5. LANGUAGE: Respond in the same language as the user's goal
+[Example Format]
+[SLAVE:gemini-1]
+Persona: You are a market analyst.
+Instruction: Answer the following based on data...
+[/SLAVE]`,
+        phase3: `Below are the responses from the slave bots according to your instructions.
+Format: [Model Name(ID) Response: Content...]
 
-# ANTI-PATTERNS (DO NOT)
-❌ Ask the same question to multiple slaves
-❌ Create dependency between slaves (e.g., "based on Model A's output...")
-❌ Write meta-commentary or explanations outside blocks
-❌ Skip any slave from the list
-❌ Use generic prompts - be specific to each slave's strengths`,
-        phase3: `# ROLE
-You are the "Main Brain" synthesizer. Your job is to merge multiple AI responses into ONE optimal answer.
-
-# USER'S ORIGINAL GOAL
+[User's Original Goal] - Recall carefully
 {{goal}}
 
-# SLAVE RESPONSES
+[Slave Response Data]
 {{responses}}
 
-# SYNTHESIS METHODOLOGY
-Follow this process:
-
-## Step 1: EXTRACT
-- List key points from each response
-- Note unique insights that only one model provided
-- Identify overlapping conclusions (consensus)
-
-## Step 2: VALIDATE
-- Cross-check facts mentioned by multiple sources
-- Flag any contradictions between responses
-- Assess confidence: High (3+ models agree) / Medium (2 agree) / Low (1 only)
-
-## Step 3: RESOLVE CONFLICTS
-When models disagree:
-- Prefer responses with specific evidence/data over opinions
-- Consider each model's domain expertise
-- If unresolvable, present both views with pros/cons
-
-## Step 4: SYNTHESIZE
-Create a unified answer that:
-- Directly addresses the user's original goal
-- Combines the best elements from all responses
-- Eliminates redundancy and contradictions
-- Maintains logical flow and coherence
-
-# OUTPUT FORMAT
-Structure your response as:
-
-### 📋 Executive Summary
-[2-3 sentence overview of the synthesized answer]
-
-### 🔍 Key Findings
-[Bullet points of main conclusions with confidence levels]
-
-### ⚠️ Important Considerations
-[Risks, caveats, or minority opinions worth noting]
-
-### ✅ Recommended Action / Answer
-[Clear, actionable conclusion that fulfills the user's goal]
-
-# LANGUAGE
-Respond in the same language as the user's original goal.`,
+[Final Instruction]
+Parse and synthesize the above responses, perform fact-checking, verification, and problem analysis, then present the optimal solution that meets the user's original goal.`,
     },
 
     // === Brain Flow Modal ===
@@ -463,151 +397,5 @@ Respond in the same language as the user's original goal.`,
         // Cache Info
         cacheAge: 'Updated {{minutes}} min ago',
         cached: 'Cached',
-
-        // BYOK Modal UI (additional)
-        studioTitle: 'BYOK Studio',
-        studioSubtitle: 'Configure your AI infrastructure',
-        openRouterNote: '* Model info is based on OpenRouter. Availability may vary with actual provider keys.',
-        aiProviders: 'AI Providers',
-        selectProvider: 'Select a provider to configure',
-        allSystemsOperational: 'All systems operational',
-        lastUpdated: 'Last Updated: {{time}}',
-        notYetRefreshed: 'Not yet refreshed',
-        refreshModels: 'Refresh Models',
-
-        // Model Variants
-        variants: {
-            default: 'Default settings',
-            free: 'Free version ($0, rate limit applied)',
-            extended: 'Extended context window',
-            thinking: 'Extended reasoning (Chain-of-Thought)',
-            online: 'Real-time web search (Exa.ai)',
-            nitro: 'Fastest provider priority',
-            floor: 'Cheapest provider priority',
-        },
-
-        // Status
-        status: {
-            available: 'Available',
-            unavailable: 'Unavailable',
-            uncertain: 'Verified (Model Check Skipped)',
-            notVerified: 'Not verified',
-            checking: 'Checking...',
-            verified: 'Verified',
-        },
-
-        // Advanced Settings
-        advanced: {
-            title: 'Advanced Settings',
-            topP: 'Top P',
-            topK: 'Top K',
-            frequencyPenalty: 'Frequency Penalty',
-            presencePenalty: 'Presence Penalty',
-            seed: 'Seed',
-            random: 'Random',
-            responseFormat: 'Response Format',
-            text: 'Text',
-            jsonObject: 'JSON Object',
-        },
-
-        // Model Card UI
-        modelCard: {
-            settings: 'Settings',
-            customSettings: 'Custom Settings',
-            ctx: 'ctx',
-            free: 'Free',
-        },
-
-        // Tooltips
-        tooltips: {
-            modelAvailable: '✅ Model available with your API key',
-            modelUnavailable: '❌ Model unavailable (check API key or model access)',
-            modelUncertain: 'API Key is valid, but we couldn\'t verify the specific model\'s availability. You can likely use it.',
-            clickToVerify: 'Click to verify model availability',
-        },
-    },
-
-    // === BYOK Chat ===
-    byokChat: {
-        noMessages: 'No messages yet',
-        startConversation: 'Start a conversation with this BYOK model',
-        attachImage: 'Attach image',
-        imageTooLarge: 'Image "{{name}}" is too large (max 20MB)',
-        sending: 'Sending...',
-        receiving: 'Receiving...',
-        imagesSelected: '{{count}} image(s) selected',
-        pressEnterToSend: 'Press Enter to send',
-        sendMessage: 'Send a message to this model...',
-        attachedImage: 'Attached image',
-        preview: 'Preview {{index}}',
-    },
-
-    // === Brain Flow Progress ===
-    brainFlowProgress: {
-        phase1Title: 'Planning Phase',
-        phase2Title: 'Execution Phase',
-        phase3Title: 'Synthesis Phase',
-        waiting: 'Waiting',
-        done: 'Done',
-        processing: 'Processing...',
-        skipWaiting: 'Skip Waiting',
-    },
-
-    // === History Popover ===
-    historyPopover: {
-        title: 'History',
-        modelHistory: 'Model History',
-        newChat: 'New Chat',
-        searchPlaceholder: 'Search conversations...',
-        loading: 'Loading...',
-        noConversations: 'No conversations found',
-        startNewChat: 'Start a new chat to see it here',
-        untitledConversation: 'Untitled Conversation',
-        noPreview: 'No preview available',
-        deleteConversation: 'Delete conversation',
-        conversationsStored: '{{count}} conversations stored',
-        daysAgo: '{{days}}d ago',
-    },
-
-    // === Model Settings Dropdown ===
-    modelSettings: {
-        title: 'Model Settings',
-        useDefaultSettings: 'Use Default Settings',
-        applyGlobalSettings: 'Apply global BYOK settings',
-        unsaved: 'Unsaved',
-        resetToDefaults: 'Reset to defaults',
-        modelVariant: 'Model Variant',
-        enableThinking: 'Enable Thinking',
-        noCustomSettings: 'No custom settings for this model.',
-    },
-
-    // === Settings Modal (additional) ===
-    settingsModal: {
-        byokTitle: 'API Key Settings',
-        byokDescription: 'Use OpenAI, Claude, Gemini directly',
-        openSettings: 'Open Settings',
-    },
-
-    // === App Confirm Dialogs ===
-    confirmDialogs: {
-        addModel: '🚀 Would you like to add {{name}} model?\n\nStart a new conversation and freely\nconsult or request something from {{name}}.',
-        deleteModel: '❌ Delete "{{name}}" model?',
-        newChat: '💬 Start a new conversation?\n\nCurrent conversation will be saved automatically,\nand can be retrieved from history anytime.',
-        apiKeyNotSet: 'API key is not set. Please enable and save the key in Settings → BYOK.',
-        modelNotSelected: 'No model selected. Please select a model in BYOK settings.',
-    },
-
-    // === Thinking Process (AnimatedChatMessage) ===
-    thinking: {
-        processTitle: 'Thinking Process',
-        showProcess: 'Show thinking process',
-        hideProcess: 'Hide thinking process',
-        summary: 'Summary',
-    },
-
-    // === Header ===
-    header: {
-        title: 'modeldock',
-        conversationHistory: 'Conversation History',
     },
 };

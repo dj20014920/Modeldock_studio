@@ -1,6 +1,7 @@
 import { ActiveModel, ModelId, BYOKProviderId, ChatMessage } from '../types';
 import { INPUT_SELECTORS, SUPPORTED_MODELS } from '../constants';
 import { BYOKAPIService, loadBYOKSettings } from './byokService';
+import { getIframeActualUrlWithRetry } from '../utils/iframeUrlUtils';
 
 export interface BrainFlowCallbacks {
     onPhaseStart: (phase: 1 | 2 | 3) => void;
@@ -26,7 +27,7 @@ export class ChainOrchestrator {
     private static instance: ChainOrchestrator;
     private activeListeners: Map<string, (e: MessageEvent) => void> = new Map();
     private pendingRequests: Map<string, { resolve: (value: string) => void, cleanup: () => void, getCurrentText: () => string }> = new Map();
-    
+
     // Skip 기능을 위한 상태 관리
     private skipRequested: boolean = false;
     private collectedSlaveResponses: Map<string, { slave: ActiveModel, response: string }> = new Map();
@@ -105,7 +106,6 @@ export class ChainOrchestrator {
                 console.log(`[BrainFlow] ${displayId} (${slave.instanceId}): ${found ? 'FOUND ✓' : 'NOT FOUND ✗'}`);
             });
 
-            // 슬레이브 실행 - Skip 요청 시 현재까지의 응답 수집
             const slavePromises = slaves.map(async (slave) => {
                 const displayId = slaveIdMap.get(slave.instanceId)!;
                 // Try multiple matching strategies
@@ -139,7 +139,7 @@ export class ChainOrchestrator {
             const slaveResults = await Promise.all(slavePromises);
 
             // Skip이 요청되었을 경우, 수집된 응답들로 결과 구성
-            const finalResults = this.skipRequested 
+            const finalResults = this.skipRequested
                 ? Array.from(this.collectedSlaveResponses.values())
                 : slaveResults;
 
@@ -179,7 +179,7 @@ export class ChainOrchestrator {
     public skipCurrentPhase() {
         console.log('[BrainFlow] Skipping current phase...');
         this.skipRequested = true;
-        
+
         // 모든 pending request에서 현재까지의 텍스트 수집 후 강제 완료
         this.pendingRequests.forEach((request, requestId) => {
             console.log(`[BrainFlow] Forcing completion for request ${requestId}`);
@@ -375,17 +375,16 @@ export class ChainOrchestrator {
         if (!selector) throw new Error(`No selector for model ${model.modelId}`);
 
         const requestId = `bf-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const modelConfig = SUPPORTED_MODELS[model.modelId];
+        const initialUrl = modelConfig?.url || iframe.src;
 
         callbacks.onModelStart(model.modelId, model.instanceId);
-        if (iframe?.src) {
-            callbacks.onConversationLink?.(model.instanceId, iframe.src, model.modelId);
-        }
 
         return new Promise((resolve) => {
             let responseText = '';
 
             // Listener for this specific request
-            const listener = (event: MessageEvent) => {
+            const listener = async (event: MessageEvent) => {
                 const data = event.data;
                 if (!data) return;
 
@@ -407,10 +406,18 @@ export class ChainOrchestrator {
                 if (data.type === 'MODEL_DOCK_RESPONSE_COMPLETE' && data.payload?.requestId === requestId) {
                     console.log(`[BrainFlow] Completion signal received from ${model.modelId}`);
                     responseText = data.payload.text;
-                    callbacks.onModelComplete(model.modelId, responseText, model.instanceId);
-                    if (iframe?.src) {
+
+                    // 🔧 CRITICAL: Get final conversation URL with retry logic
+                    // Wait for URL to change (platforms take time to navigate to new session)
+                    const finalUrl = await getIframeActualUrlWithRetry(iframe, initialUrl, 5, 500);
+                    if (finalUrl) {
+                        callbacks.onConversationLink?.(model.instanceId, finalUrl, model.modelId);
+                    } else if (iframe?.src) {
+                        // Fallback to iframe.src if retry failed
                         callbacks.onConversationLink?.(model.instanceId, iframe.src, model.modelId);
                     }
+
+                    callbacks.onModelComplete(model.modelId, responseText, model.instanceId);
                     cleanup();
                     resolve(responseText);
                 }

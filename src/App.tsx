@@ -8,7 +8,6 @@ import { ModelCard } from './components/ModelCard';
 import { SettingsModal } from './components/SettingsModal';
 import { ModelId, ActiveModel, SidebarView, ChatMessage, ImageContentPart, MessageContentPart, BYOKProviderId } from './types';
 import { SUPPORTED_MODELS } from './constants';
-import { X } from 'lucide-react';
 import { usePersistentState } from './hooks/usePersistentState';
 import { HistoryService } from './services/historyService';
 import { BYOKHistoryService } from './services/byokHistoryService';
@@ -579,27 +578,15 @@ export const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
       />
 
-      {/* Prompt Library Modal (if needed as modal) */}
-      {isPromptLibraryOpen && (
-        <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center">
-          <div className="bg-white rounded-xl w-3/4 h-3/4 relative flex flex-col">
-            <button
-              onClick={() => setIsPromptLibraryOpen(false)}
-              className="absolute top-4 right-4 p-2 hover:bg-slate-100 rounded-full"
-            >
-              <X size={20} />
-            </button>
-            <PromptLibrary
-              isOpen={true}
-              onClose={() => setIsPromptLibraryOpen(false)}
-              onSelectPrompt={(content) => {
-                handlePromptSelect(content);
-                setIsPromptLibraryOpen(false);
-              }}
-            />
-          </div>
-        </div>
-      )}
+      {/* Prompt Library Modal */}
+      <PromptLibrary
+        isOpen={isPromptLibraryOpen}
+        onClose={() => setIsPromptLibraryOpen(false)}
+        onSelectPrompt={(content) => {
+          handlePromptSelect(content);
+          setIsPromptLibraryOpen(false);
+        }}
+      />
     </div>
   );
 };

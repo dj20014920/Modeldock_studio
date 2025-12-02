@@ -74,6 +74,61 @@
     return true;
   });
 
+  // === Brain Flow History: Current URL tracker ===
+  // 🔒 SECURITY: Enhanced with 2024 postMessage best practices
+  // Listen for URL requests from parent frame (for history save)
+  window.addEventListener('message', async (event) => {
+    const data = event.data;
+    if (!data || data.type !== 'MODEL_DOCK_GET_CURRENT_URL') return;
+
+    const { requestId } = data.payload || {};
+
+    try {
+      // 🔒 SECURITY: Determine safe targetOrigin
+      // Use document.referrer if available, otherwise use window.location.origin
+      let targetOrigin = '*';
+
+      if (document.referrer) {
+        try {
+          const referrerUrl = new URL(document.referrer);
+          // Only trust chrome-extension protocol (our extension)
+          if (referrerUrl.protocol === 'chrome-extension:') {
+            targetOrigin = referrerUrl.origin;
+          }
+        } catch (e) {
+          console.warn('[ModelDock] Failed to parse referrer, using wildcard');
+        }
+      }
+
+      // 🔒 SECURITY: Sanitize URL before sending
+      let sanitizedUrl = window.location.href;
+      try {
+        const urlObj = new URL(sanitizedUrl);
+        // Only allow http/https
+        if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+          console.warn('[ModelDock] Non-HTTP(S) URL detected, rejecting');
+          sanitizedUrl = '';
+        }
+      } catch (e) {
+        console.warn('[ModelDock] Invalid URL format');
+        sanitizedUrl = '';
+      }
+
+      window.parent.postMessage({
+        type: 'MODEL_DOCK_CURRENT_URL_RESPONSE',
+        payload: {
+          requestId,
+          url: sanitizedUrl,
+          host: window.location.host,
+          pathname: window.location.pathname
+        }
+      }, targetOrigin);
+
+    } catch (err) {
+      console.warn('[ModelDock] Failed to send current URL:', err);
+    }
+  });
+
   // --- Deep Search & Helpers ---
   function queryShadow(root, selector) {
     if (!root) return null;
