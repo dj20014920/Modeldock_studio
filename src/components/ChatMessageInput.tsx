@@ -547,6 +547,15 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
     ChainOrchestrator.getInstance().skipCurrentPhase();
   };
 
+  const handleCancelBrainFlow = () => {
+    if (window.confirm(t('brainFlow.confirmCancel', 'Are you sure you want to stop Brain Flow?'))) {
+      ChainOrchestrator.getInstance().cancelBrainFlow();
+      setBrainFlowPhase(0);
+      setBfWaitingModels([]);
+      setBfCompletedModels([]);
+    }
+  };
+
   // 🔧 Calculate Brain Flow stats for Modal
   const mainBrainInstance = activeModels.find(m => m.modelId === mainBrainId);
   const potentialSlaves = activeModels.filter(m => m.instanceId !== mainBrainInstance?.instanceId);
@@ -570,6 +579,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
         waitingModels={bfWaitingModels}
         completedModels={bfCompletedModels}
         onSkip={handleSkipBrainFlow}
+        onCancel={handleCancelBrainFlow}
       />
 
       {/* Risk Consent Modal */}

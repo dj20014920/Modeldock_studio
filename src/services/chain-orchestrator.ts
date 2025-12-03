@@ -30,6 +30,7 @@ export class ChainOrchestrator {
 
     // Skip 기능을 위한 상태 관리
     private skipRequested: boolean = false;
+    private isCancelled: boolean = false;
     private collectedSlaveResponses: Map<string, { slave: ActiveModel, response: string }> = new Map();
 
     private constructor() { }
@@ -59,10 +60,12 @@ export class ChainOrchestrator {
 
         // 새 BrainFlow 시작 시 상태 초기화
         this.skipRequested = false;
+        this.isCancelled = false;
         this.collectedSlaveResponses.clear();
 
         try {
             // === Phase 1: Main Brain Planning ===
+            if (this.isCancelled) throw new Error('Brain Flow cancelled by user');
             callbacks.onPhaseStart(1);
 
             // 🔧 Generate unique display IDs for slaves (e.g., grok-1, grok-2)
@@ -89,6 +92,24 @@ export class ChainOrchestrator {
                 callbacks
             );
 
+            // 🔧 CRITICAL VALIDATION: Phase 1 응답 유효성 검증
+            // 메인 브레인의 응답이 슬레이브 지시를 포함하는지 확인
+            console.log('[BrainFlow] Phase 1 Response received, validating...');
+            console.log('[BrainFlow] Response length:', planResponse?.length || 0);
+            
+            if (!planResponse || planResponse.length < 50) {
+                console.error('[BrainFlow] ❌ Phase 1 response too short or empty!');
+                throw new Error('Main Brain response is too short. Please try again.');
+            }
+            
+            // 슬레이브 지시 블록 존재 확인
+            const hasSlaveBlocks = planResponse.includes('[SLAVE:') || planResponse.includes('[/SLAVE]');
+            if (!hasSlaveBlocks) {
+                console.warn('[BrainFlow] ⚠️ No [SLAVE:] blocks found in response. Response preview:', planResponse.substring(0, 200));
+            }
+
+            if (this.isCancelled) throw new Error('Brain Flow cancelled by user');
+
             // === Phase 2: Slave Execution ===
             callbacks.onPhaseStart(2);
 
@@ -99,14 +120,25 @@ export class ChainOrchestrator {
 
             const slavePrompts = this.parseSlavePrompts(planResponse, slaves);
 
+            // 🔧 CRITICAL VALIDATION: 슬레이브 프롬프트 파싱 결과 검증
             console.log('[BrainFlow] ===== MATCHING RESULTS =====');
+            console.log('[BrainFlow] Parsed prompts count:', slavePrompts.size);
+            
             slaves.forEach(slave => {
                 const displayId = slaveIdMap.get(slave.instanceId);
                 const found = slavePrompts.get(displayId!) || slavePrompts.get(slave.instanceId) || slavePrompts.get(slave.modelId);
                 console.log(`[BrainFlow] ${displayId} (${slave.instanceId}): ${found ? 'FOUND ✓' : 'NOT FOUND ✗'}`);
             });
 
+            // 슬레이브 프롬프트가 하나도 없으면 경고 (에러는 아님 - 일부 슬레이브만 있을 수 있음)
+            if (slavePrompts.size === 0) {
+                console.error('[BrainFlow] ❌ CRITICAL: No slave prompts parsed! Main Brain may not have generated proper instructions.');
+                console.error('[BrainFlow] Full response for debugging:', planResponse);
+            }
+
             const slavePromises = slaves.map(async (slave) => {
+                if (this.isCancelled) return { slave, response: '(Cancelled)' };
+
                 const displayId = slaveIdMap.get(slave.instanceId)!;
                 // Try multiple matching strategies
                 let prompt = slavePrompts.get(displayId) // Priority 1: grok-1
@@ -138,6 +170,8 @@ export class ChainOrchestrator {
 
             const slaveResults = await Promise.all(slavePromises);
 
+            if (this.isCancelled) throw new Error('Brain Flow cancelled by user');
+
             // Skip이 요청되었을 경우, 수집된 응답들로 결과 구성
             const finalResults = this.skipRequested
                 ? Array.from(this.collectedSlaveResponses.values())
@@ -162,12 +196,17 @@ export class ChainOrchestrator {
                 callbacks
             );
 
-        } catch (error) {
-            console.error('[BrainFlow] Error:', error);
-            callbacks.onError(error);
+        } catch (error: any) {
+            if (error.message === 'Brain Flow cancelled by user') {
+                console.log('[BrainFlow] Process cancelled.');
+            } else {
+                console.error('[BrainFlow] Error:', error);
+                callbacks.onError(error);
+            }
         } finally {
             // 정리
             this.skipRequested = false;
+            this.isCancelled = false;
             this.collectedSlaveResponses.clear();
         }
     }
@@ -186,6 +225,21 @@ export class ChainOrchestrator {
             const currentText = request.getCurrentText();
             console.log(`[BrainFlow] Collected text length: ${currentText.length} chars`);
             request.resolve(currentText);
+            request.cleanup();
+        });
+        this.pendingRequests.clear();
+    }
+
+    /**
+     * Cancel 버튼 클릭 시 호출 - 프로세스 즉시 중단
+     */
+    public cancelBrainFlow() {
+        console.log('[BrainFlow] Cancelling process...');
+        this.isCancelled = true;
+
+        // 모든 pending request 강제 종료 (reject 대신 cleanup만)
+        this.pendingRequests.forEach((request, requestId) => {
+            console.log(`[BrainFlow] Cancelling request ${requestId}`);
             request.cleanup();
         });
         this.pendingRequests.clear();

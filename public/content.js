@@ -1915,11 +1915,17 @@
     let lastChunkTime = Date.now();
     console.log(`[ModelDock] 🎯 Using ARMS (Functional) for ${hostname}`);
 
-    let lastText = '';
+    // 🔧 CRITICAL FIX: Baseline 캡처 - 이전 대화의 응답을 기준점으로 저장
+    // 이렇게 하면 "새로운" 응답만 감지하고 이전 응답으로 인한 조기 완료 판정 방지
+    const baselineText = getResponseText() || '';
+    console.log(`[ModelDock] 📊 Baseline captured: ${baselineText.length} chars`);
+    
+    let lastText = baselineText;  // baseline으로 초기화
     let lastChangeTime = Date.now();
     let monitorStartTime = Date.now();
     let isComplete = false;
-    let hasReceivedFirstResponse = false;
+    let hasReceivedNewResponse = false;  // 🔧 이름 변경: "새로운" 응답 여부
+    let newResponseStartTime = 0;  // 🔧 새 응답 시작 시간 (안정화 판정용)
     let heartbeatInterval;
     let fallbackCheckCount = 0;
 
@@ -2167,9 +2173,19 @@
       const hadDOMChange = true; // MutationObserver가 호출됨 = DOM 변화 있음
 
       if (currentText && currentText !== lastText) {
+        // 🔧 CRITICAL FIX: Baseline 대비 실질적 증가 확인
+        // 이전 대화의 응답과 구분하기 위해 최소 증가분 체크
+        const textIncrease = currentText.length - baselineText.length;
+        
+        if (textIncrease > 10 && !hasReceivedNewResponse) {
+          // 🔧 "새로운" 응답 시작 감지!
+          hasReceivedNewResponse = true;
+          newResponseStartTime = now;
+          console.log(`[ModelDock] 🆕 NEW RESPONSE DETECTED! Increase: ${textIncrease} chars`);
+        }
+        
         lastText = currentText;
         lastChangeTime = Date.now();
-        hasReceivedFirstResponse = true;
 
         // 🧠 ARMS: Track chunk activity
         const interval = now - lastChunkTime;
@@ -2179,11 +2195,14 @@
           if (chunkIntervals.length > 10) chunkIntervals.shift();
         }
 
-        window.parent.postMessage({
-          type: 'MODEL_DOCK_RESPONSE_CHUNK',
-          payload: { requestId, text: currentText, host: window.location.host }
-        }, '*');
-      } else if (hadDOMChange && hasReceivedFirstResponse) {
+        // 새 응답이 있을 때만 청크 전송
+        if (hasReceivedNewResponse) {
+          window.parent.postMessage({
+            type: 'MODEL_DOCK_RESPONSE_CHUNK',
+            payload: { requestId, text: currentText, host: window.location.host }
+          }, '*');
+        }
+      } else if (hadDOMChange && hasReceivedNewResponse) {
         // 🔧 NEW: 텍스트는 변화 없지만 DOM이 변화 → 여전히 생성 중
         // Custom Parser가 중간에 빈 값을 반환하는 경우 대응
         const interval = now - lastChunkTime;
@@ -2204,15 +2223,23 @@
       const isRunning = checkIsRunning();
       const timeSinceStart = Date.now() - monitorStartTime;
       const timeSinceChange = Date.now() - lastChangeTime;
+      const now = Date.now();
 
       // Update if MutationObserver missed anything
       if (currentText && currentText !== lastText) {
+        // 🔧 CRITICAL FIX: Baseline 대비 새 응답 감지
+        const textIncrease = currentText.length - baselineText.length;
+        
+        if (textIncrease > 10 && !hasReceivedNewResponse) {
+          hasReceivedNewResponse = true;
+          newResponseStartTime = now;
+          console.log(`[ModelDock] 🆕 NEW RESPONSE DETECTED (heartbeat)! Increase: ${textIncrease} chars`);
+        }
+        
         lastText = currentText;
-        lastChangeTime = Date.now();
-        hasReceivedFirstResponse = true;
+        lastChangeTime = now;
 
         // 🧠 ARMS: Track chunk activity
-        const now = Date.now();
         const interval = now - lastChunkTime;
         lastChunkTime = now;
         if (interval < 10000 && interval > 10) {
@@ -2220,58 +2247,105 @@
           if (chunkIntervals.length > 10) chunkIntervals.shift();
         }
 
-        window.parent.postMessage({
-          type: 'MODEL_DOCK_RESPONSE_CHUNK',
-          payload: { requestId, text: currentText, host: window.location.host }
-        }, '*');
+        // 새 응답이 있을 때만 청크 전송
+        if (hasReceivedNewResponse) {
+          window.parent.postMessage({
+            type: 'MODEL_DOCK_RESPONSE_CHUNK',
+            payload: { requestId, text: currentText, host: window.location.host }
+          }, '*');
+        }
       }
 
       // 🧠 ARMS (B안): Adaptive Completion Detection
       // 함수형 if-else 분기 사용
 
-      // 1. UI Lock Check
+      // 1. UI Lock Check - 입력 가능 상태 확인
       const isUILockedRaw = checkModelUILocked(hostname, config.stopSelectors);
+      
+      // 🔧 NEW: 입력 필드가 활성화되어 있는지 직접 확인 (가장 신뢰할 수 있는 지표)
+      const isInputReady = (() => {
+        const input = document.querySelector(config.inputSelector) || queryShadow(document.body, config.inputSelector);
+        if (!input) return false;
+        
+        // contenteditable 요소
+        if (input.getAttribute('contenteditable') === 'true') return true;
+        // textarea/input - disabled가 아니면 준비됨
+        if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+          return !input.disabled && input.getAttribute('aria-disabled') !== 'true';
+        }
+        return true;
+      })();
 
       // 2. Stream Lock Check
-      const silence = Date.now() - lastChunkTime;
+      const silence = now - lastChunkTime;
       const adaptiveThreshold = getModelAdaptiveThreshold(hostname, chunkIntervals);
+      
+      // 🔧 CRITICAL FIX: 더 공격적인 완료 감지
+      // 조건: 텍스트 변화 없음 (3초+) + 입력 필드 활성화 → 즉시 완료
+      const textUnchangedTime = now - lastChangeTime;
+      const quickComplete = hasReceivedNewResponse && isInputReady && textUnchangedTime > 3000;
+      
+      // 기존 스트림 락 (더 보수적)
       const isStreamLocked = silence < adaptiveThreshold;
 
-      // 강제 언락: 응답을 받았고 침묵이 임계치보다 충분히 길면 UI Lock 오인식 해제
-      const forceUnlock = hasReceivedFirstResponse && silence > adaptiveThreshold * 1.5;
+      // 🔧 CRITICAL FIX: 새 응답 시작 후 최소 대기 시간 (3초로 단축)
+      const timeSinceNewResponse = hasReceivedNewResponse ? (now - newResponseStartTime) : 0;
+      const minResponseTime = 3000; // 5초 → 3초로 단축
+      const isTooEarlyAfterNewResponse = hasReceivedNewResponse && timeSinceNewResponse < minResponseTime;
+
+      // 강제 언락 조건 완화
+      const forceUnlock = hasReceivedNewResponse && !isTooEarlyAfterNewResponse && (silence > adaptiveThreshold || quickComplete);
       const isUILocked = forceUnlock ? false : isUILockedRaw;
       const effectiveStreamLocked = forceUnlock ? false : isStreamLocked;
 
       // 디버그 로그
-      console.log(`[ARMS] ${isUILocked ? 'UI_ACTIVE' : effectiveStreamLocked ? 'STREAM_ACTIVE' : 'COMPLETE'} | Silence: ${(silence / 1000).toFixed(1)}s / Threshold: ${(adaptiveThreshold / 1000).toFixed(1)}s | ForceUnlock: ${forceUnlock}`);
+      console.log(`[ARMS] ${quickComplete ? 'QUICK_COMPLETE' : isUILocked ? 'UI_ACTIVE' : effectiveStreamLocked ? 'STREAM_ACTIVE' : isTooEarlyAfterNewResponse ? 'TOO_EARLY' : 'COMPLETE'} | Silence: ${(silence / 1000).toFixed(1)}s | TextUnchanged: ${(textUnchangedTime / 1000).toFixed(1)}s | InputReady: ${isInputReady}`);
 
-      // 🔧 CRITICAL FIX: 최소 안전 대기 시간
-      // 문제: 프롬프트 전송 직후 즉시 완료 판정되는 경우 방지
-      const timeSinceMonitorStart = Date.now() - monitorStartTime;
+      // 🔧 CRITICAL FIX: 최소 안전 대기 시간 (2초로 단축)
+      const timeSinceMonitorStart = now - monitorStartTime;
       if (timeSinceMonitorStart < 2000) {
-        // 모니터링 시작 후 최소 2초 대기 (응답 생성 시작 시간 확보)
-        console.log(`[ARMS] Safety: Too early (${(timeSinceMonitorStart / 1000).toFixed(1)}s < 2s)`);
+        console.log(`[ARMS] Safety: Too early since monitor start (${(timeSinceMonitorStart / 1000).toFixed(1)}s < 2s)`);
         return;
       }
 
-      // Minimum requirements
-      if (!hasReceivedFirstResponse || lastText.length === 0) {
-        return; // 아직 응답 없음
+      // 🔧 CRITICAL FIX: 새 응답이 감지되어야만 완료 판정 진행
+      if (!hasReceivedNewResponse) {
+        return;
       }
 
-      // Wait if UI or Stream is locked
+      // 🔧 CRITICAL FIX: 새 응답 시작 후 최소 대기 시간 체크
+      if (isTooEarlyAfterNewResponse) {
+        console.log(`[ARMS] Safety: Too early since new response (${(timeSinceNewResponse / 1000).toFixed(1)}s < ${minResponseTime / 1000}s)`);
+        return;
+      }
+      
+      // 🔧 CRITICAL FIX: 실제 새 응답 텍스트가 있는지 확인
+      const newResponseText = lastText.length > baselineText.length ? lastText.substring(baselineText.length).trim() : '';
+      if (newResponseText.length < 20) {
+        console.log(`[ARMS] New response too short: ${newResponseText.length} chars`);
+        return;
+      }
+
+      // 🔧 NEW: Quick Complete 경로 - 입력 가능 + 텍스트 안정화 시 즉시 완료
+      if (quickComplete) {
+        console.log(`[ModelDock] ✅ QUICK COMPLETION: Input ready + text stable for ${(textUnchangedTime / 1000).toFixed(1)}s`);
+        finish();
+        return;
+      }
+
+      // 기존 경로: UI/Stream 락 체크
       if (isUILocked || effectiveStreamLocked) {
-        fallbackCheckCount = 0; // Reset counter
+        fallbackCheckCount = 0;
         return;
       }
 
-      // Complete! -> Triple-check for safety
+      // Complete! -> 2회 연속 확인으로 완화
       fallbackCheckCount++;
 
-      const requiredChecks = 2; // 2회 연속 확인
+      const requiredChecks = 2; // 🔧 3회 → 2회로 완화 (더 빠른 완료 감지)
 
       if (fallbackCheckCount >= requiredChecks) {
-        console.log(`[ModelDock] ✅ Completion detected by ARMS (Functional) (${fallbackCheckCount}x verified):`, requestId);
+        console.log(`[ModelDock] ✅ Completion detected by ARMS (${fallbackCheckCount}x verified):`, requestId);
         finish();
         return;
       } else {
@@ -2293,6 +2367,7 @@
           requestId,
           status: isRunning ? 'running' : 'idle',
           textLength: lastText.length,
+          newResponseLength: newResponseText.length,
           host: window.location.host
         }
       }, '*');
@@ -2303,13 +2378,27 @@
       isComplete = true;
       observer.disconnect();
       clearInterval(heartbeatInterval);
-      console.log('[ModelDock] Response monitoring complete');
+      
+      // 🔧 CRITICAL FIX: 새 응답 텍스트만 추출하여 전송
+      // baseline 이후에 추가된 텍스트만 실제 응답으로 간주
+      const newResponseText = lastText.length > baselineText.length 
+        ? lastText.substring(baselineText.length).trim() 
+        : lastText;  // fallback: 전체 텍스트
+      
+      console.log(`[ModelDock] Response monitoring complete - Total: ${lastText.length} chars, New: ${newResponseText.length} chars`);
+      
       window.parent.postMessage({
         type: 'MODEL_DOCK_RESPONSE_COMPLETE',
-        payload: { requestId, text: lastText, host: window.location.host }
+        payload: { 
+          requestId, 
+          text: newResponseText,  // 🔧 새 응답만 전송
+          fullText: lastText,     // 전체 텍스트 (디버깅용)
+          baselineLength: baselineText.length,
+          host: window.location.host 
+        }
       }, '*');
     }
   }
 
-  console.log('[ModelDock] Content Script Loaded (v8.0 - Reference Port)');
+  console.log('[ModelDock] Content Script Loaded (v8.1 - BrainFlow Phase Fix)');
 })();
