@@ -116,7 +116,6 @@ export interface ConversationMetadata {
   preview: string;
   modelCount: number;
   mode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual';
-  linkCount?: number;
   lastPrompt?: string;
 }
 
@@ -124,7 +123,6 @@ export interface ConversationContent {
   id: string;
   activeModels: ActiveModel[];
   mainBrainId: string | null;
-  conversationLinks?: Record<string, string>;
   mode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual';
   lastPrompt?: string;
 }

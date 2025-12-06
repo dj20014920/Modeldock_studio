@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FastForward, Loader2, CheckCircle2, BrainCircuit, StopCircle } from 'lucide-react';
 import { clsx } from 'clsx';
+import { usePersistentState } from '../hooks/usePersistentState';
 
 interface BrainFlowProgressProps {
     phase: 0 | 1 | 2 | 3;
@@ -20,11 +21,89 @@ export const BrainFlowProgress: React.FC<BrainFlowProgressProps> = ({
 }) => {
     const { t } = useTranslation();
 
+    // Draggable Logic
+    const [savedPos, setSavedPos] = usePersistentState<{ x: number, y: number } | null>('md_brainflow_progress_pos', null);
+    const [position, setPosition] = useState<{ x: number, y: number } | null>(savedPos);
+    const [isDragging, setIsDragging] = useState(false);
+    const nodeRef = useRef<HTMLDivElement>(null);
+    const latestPosRef = useRef<{ x: number, y: number } | null>(position);
+
+    useEffect(() => {
+        if (!isDragging && savedPos) {
+            setPosition(savedPos);
+            latestPosRef.current = savedPos;
+        }
+    }, [savedPos, isDragging]);
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        // Prevent drag if clicking buttons
+        if ((e.target as HTMLElement).closest('button')) return;
+
+        if (nodeRef.current) {
+            setIsDragging(true);
+
+            // Immediately center the window on the mouse cursor
+            const rect = nodeRef.current.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+
+            const newPos = {
+                x: e.clientX - centerX,
+                y: e.clientY - centerY
+            };
+
+            setPosition(newPos);
+            latestPosRef.current = newPos;
+        }
+    };
+
+    useEffect(() => {
+        if (!isDragging) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (nodeRef.current) {
+                const rect = nodeRef.current.getBoundingClientRect();
+                const centerX = rect.width / 2;
+                const centerY = rect.height / 2;
+
+                const newPos = {
+                    x: e.clientX - centerX,
+                    y: e.clientY - centerY
+                };
+                setPosition(newPos);
+                latestPosRef.current = newPos;
+            }
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+            if (latestPosRef.current) {
+                setSavedPos(latestPosRef.current);
+            }
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging, setSavedPos]);
+
     if (phase === 0) return null;
 
     return (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
-            <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl p-4 min-w-[420px] flex items-center gap-4 ring-1 ring-black/5">
+        <div
+            ref={nodeRef}
+            onMouseDown={handleMouseDown}
+            style={position ? { left: position.x, top: position.y, transform: 'none' } : undefined}
+            className={clsx(
+                "fixed z-50 animate-in fade-in duration-300 cursor-move",
+                !position && "bottom-24 left-1/2 -translate-x-1/2 slide-in-from-bottom-4"
+            )}
+        >
+            <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl p-4 min-w-[420px] flex items-center gap-4 ring-1 ring-black/5 select-none">
 
                 {/* Icon & Status */}
                 <div className="flex items-center gap-3 border-r border-slate-200 pr-4">

@@ -116,13 +116,13 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
   const isBYOK = model.id.startsWith('byok-');
   // byokProviderId: 'byok-openrouter-model/name' → 'openrouter' (첫 번째 부분만)
-  const byokProviderId = isBYOK 
-    ? model.id.replace('byok-', '').split('-')[0] 
+  const byokProviderId = isBYOK
+    ? model.id.replace('byok-', '').split('-')[0]
     : undefined;
-  
+
   // ✨ 모델별 설정 키: "openrouter-meta-llama/llama-3.2-3b-instruct" 형식
-  const byokModelKey = isBYOK 
-    ? model.id.replace('byok-', '') 
+  const byokModelKey = isBYOK
+    ? model.id.replace('byok-', '')
     : undefined;
 
   return (
@@ -133,9 +133,9 @@ export const ModelCard: React.FC<ModelCardProps> = ({
       status === 'success' && "border-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.3)]",
       status === 'error' && "border-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.2)] animate-shake"
     )}>
-      {/* Status Indicator Line (Top) */}
+      {/* Status Indicator Line (Top) - Fixed: Now part of flex flow to respect border-radius */}
       {status === 'sending' && (
-        <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-gradient-x z-20" />
+        <div className="w-full h-0.5 shrink-0 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-gradient-x" />
       )}
 
       {/* Header Bar */}

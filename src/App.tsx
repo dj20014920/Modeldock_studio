@@ -55,12 +55,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const saveTimer = setTimeout(async () => {
       const hasMessages = activeModels.some(m => m.messages && m.messages.length > 0);
-      const linkMap = activeModels.reduce<Record<string, string>>((acc, m) => {
-        if (m.conversationUrl) acc[m.instanceId] = m.conversationUrl;
-        return acc;
-      }, {});
-      const hasLinks = Object.keys(linkMap).length > 0;
-      if (!hasMessages && !hasLinks) return;
+      if (!hasMessages) return;
 
       const historyMode = (() => {
         if (activeModels.some(m => m.historyMode === 'brainflow')) return 'brainflow' as const;
@@ -76,8 +71,7 @@ export const App: React.FC = () => {
         mainBrainInstanceId,
         {
           mode: historyMode,
-          links: linkMap,
-          force: hasLinks
+          force: false
         }
       );
 
@@ -93,19 +87,15 @@ export const App: React.FC = () => {
   const handleLoadHistory = async (id: string) => {
     const content = await HistoryService.getInstance().loadConversation(id);
     if (content) {
-      let loadedModels = content.activeModels;
-      if (content.conversationLinks) {
-        loadedModels = loadedModels.map(m => {
-          const link = content.conversationLinks?.[m.instanceId];
-          return link && !m.conversationUrl ? { ...m, conversationUrl: link } : m;
-        });
-      }
+      let loadedModels = content.activeModels.map(model => ({ ...model }));
+
       if (content.mode) {
         loadedModels = loadedModels.map(m => m.historyMode ? m : { ...m, historyMode: content.mode! });
       }
       if (content.lastPrompt) {
         loadedModels = loadedModels.map(m => m.lastPrompt ? m : { ...m, lastPrompt: content.lastPrompt! });
       }
+
       setActiveModels(loadedModels);
       setMainBrainInstanceId(content.mainBrainId);
       setCurrentConversationId(content.id);

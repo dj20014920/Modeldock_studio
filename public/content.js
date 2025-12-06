@@ -1,6 +1,229 @@
 // ModelDock Content Script v8.0 (The "Reference Implementation" Port)
 // Ported from text-injection-bridge.ts.back to solve v0, Codex, Claude, and Grok issues.
 
+// ============================================================
+// 🎯 Phase 1: Model Manifest Loader
+// ============================================================
+let MODEL_MANIFESTS = null;
+
+/**
+ * Load and parse ai_model_dom_selectors.json
+ * @returns {Promise<Object>} Parsed manifest data
+ */
+async function loadModelManifests() {
+  if (MODEL_MANIFESTS) return MODEL_MANIFESTS;
+
+  try {
+    const response = await fetch(chrome.runtime.getURL('ai_model_dom_selectors.json'));
+    const data = await response.json();
+    MODEL_MANIFESTS = data.models;
+    console.log('[BrainFlow] Model manifests loaded:', Object.keys(MODEL_MANIFESTS));
+    return MODEL_MANIFESTS;
+  } catch (error) {
+    console.error('[BrainFlow] Failed to load model manifests:', error);
+    return {};
+  }
+}
+
+// ============================================================
+// 🎯 Phase 2: MonitorFactory & DefaultMonitor
+// ============================================================
+
+/**
+ * DefaultMonitor - 기본 모니터 클래스
+ * 모든 모델에 공통적으로 적용되는 기본 로직
+ */
+class DefaultMonitor {
+  constructor(manifest, requestId) {
+    this.manifest = manifest;
+    this.requestId = requestId;
+    this.activityStats = {
+      lastChunkTime: Date.now(),
+      avgChunkInterval: 1000,
+      totalChunks: 0
+    };
+  }
+
+  /**
+   * UI 신호 수집
+   */
+  collectSignals() {
+    const signals = {
+      stopButton: this._checkStopButton(),
+      inputEnabled: this._checkInputEnabled(),
+      loadingIndicator: this._checkLoadingIndicator(),
+      submitButton: this._checkSubmitButton(),
+      timestamp: Date.now()
+    };
+    return signals;
+  }
+
+  _checkStopButton() {
+    const stopButton = this.manifest.selectors?.stop_button;
+    if (!stopButton) return false;
+    const button = this._querySelectors(stopButton);
+    return Boolean(button && button.offsetParent !== null);
+  }
+
+  _checkInputEnabled() {
+    const inputField = this.manifest.selectors?.input_field;
+    if (!inputField) return false;
+    const input = this._querySelectors(inputField);
+    if (!input) return false;
+
+    const inferredType = (inputField.type || '').toLowerCase();
+    if (inferredType === 'textarea' || input.tagName === 'TEXTAREA') {
+      return !input.disabled;
+    } else if (inferredType === 'contenteditable' || input.isContentEditable || input.getAttribute('contenteditable') !== null) {
+      return input.getAttribute('contenteditable') !== 'false';
+    }
+    return !input.disabled;
+  }
+
+  _checkLoadingIndicator() {
+    const loadingIndicator = this.manifest.selectors?.loading_indicator;
+    if (!loadingIndicator) return false;
+
+    const indicator = this._querySelectors(loadingIndicator);
+    return Boolean(indicator && indicator.offsetParent !== null);
+  }
+
+  _checkSubmitButton() {
+    const submitButton = this.manifest.selectors?.submit_button;
+    if (!submitButton) return false;
+    const btn = this._querySelectors(submitButton);
+    return Boolean(btn && !btn.disabled);
+  }
+
+  _safeQuerySelector(selector) {
+    if (!selector) return null;
+    try {
+      return document.querySelector(selector);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  _querySelectors(selectorConfig) {
+    if (!selectorConfig) return null;
+    const selectors = [selectorConfig.primary, ...(selectorConfig.alternatives || [])].filter(Boolean);
+    for (const selector of selectors) {
+      const element = this._safeQuerySelector(selector);
+      if (element) return element;
+    }
+    return null;
+  }
+
+  /**
+   * Adaptive delay 계산
+   */
+  deriveAdaptiveDelay() {
+    const completion = this.manifest.completion || { minWaitMs: 10000, adaptiveMultiplier: 1 };
+    const { minWaitMs, adaptiveMultiplier } = completion;
+    return minWaitMs + (adaptiveMultiplier * this.activityStats.avgChunkInterval);
+  }
+
+  /**
+   * 완료 판정
+   */
+  shouldComplete(signals) {
+    const completion = this.manifest.completion || { checks: [] };
+    const { checks = [] } = completion;
+
+    // 필수 체크: Stop 버튼 없음 + Input 활성화
+    if (checks.includes('stopButton') && signals.stopButton) return false;
+    if (checks.includes('inputEnabled') && !signals.inputEnabled) return false;
+    if (checks.includes('loadingIndicator') && signals.loadingIndicator) return false;
+
+    // Thinking mode 체크
+    if (completion.thinking?.enabled) {
+      const thinkingPatterns = completion.thinking.patterns;
+      // TODO: 응답 텍스트에서 thinking 패턴 확인
+    }
+
+    return true;
+  }
+
+  /**
+   * 모니터링 시작
+   */
+  async run() {
+    console.log('[MonitorFactory] Starting monitor for:', this.manifest.id);
+
+    let checkCount = 0;
+    const maxChecks = 100; // 최대 100회 체크 (약 100초)
+    const checkInterval = 1000; // 1초마다 체크
+
+    while (checkCount < maxChecks) {
+      const signals = this.collectSignals();
+
+      if (this.shouldComplete(signals)) {
+        console.log('[MonitorFactory] Completion detected!', signals);
+        return { success: true, signals };
+      }
+
+      await new Promise(resolve => setTimeout(resolve, checkInterval));
+      checkCount++;
+    }
+
+    console.warn('[MonitorFactory] Timeout after', maxChecks, 'checks');
+    return { success: false, reason: 'timeout' };
+  }
+}
+
+/**
+ * MonitorFactory - 모니터 생성 팩토리
+ */
+class MonitorFactory {
+  static async createMonitor(hostname, requestId) {
+    const manifest = await getManifestForHost(hostname);
+
+    if (!manifest) {
+      console.warn('[MonitorFactory] No manifest for:', hostname);
+      return null;
+    }
+
+    // Plugin 지원 (향후 확장)
+    if (manifest.plugin) {
+      console.log('[MonitorFactory] Plugin support:', manifest.plugin);
+      // TODO Phase 3: Plugin 시스템 구현
+    }
+
+    return new DefaultMonitor(manifest, requestId);
+  }
+}
+
+/**
+ * Get manifest for current location
+ * @param {string} hostname - Current hostname
+ * @returns {Promise<Object|null>} Model manifest or null
+ */
+async function getManifestForHost(hostname) {
+  const manifests = await loadModelManifests();
+
+  // Match hostname to model ID
+  const modelMapping = {
+    'claude.ai': 'claude',
+    'chat.openai.com': 'chatgpt',
+    'chatgpt.com': 'chatgpt',
+    'gemini.google.com': 'gemini'
+  };
+
+  const modelId = modelMapping[hostname];
+  if (!modelId || !manifests[modelId]) {
+    console.log('[BrainFlow] No manifest found for:', hostname);
+    return null;
+  }
+
+  const manifest = manifests[modelId];
+  if (!manifest.id) manifest.id = modelId;
+  console.log('[BrainFlow] Using manifest for:', modelId);
+  return manifest;
+}
+
+// TODO Phase 2: Replace RESPONSE_CONFIGS with manifest-based system
+// TODO Phase 3: Implement MonitorFactory pattern
+
 (() => {
   if (window.hasModelDockListener) return;
   window.hasModelDockListener = true;
@@ -374,13 +597,57 @@
   async function robustInject(element, text, modelId) {
     element.focus();
 
-    // v0 / TipTap / ProseMirror / CodeMirror -> Paste Event
-    const isTipTap = element.classList.contains('ProseMirror') || element.classList.contains('tiptap') ||
-      element.classList.contains('cm-content') || element.classList.contains('monaco-editor') ||
-      modelId === 'v0' || modelId === 'replit' || modelId === 'codex';
+    // 🔧 v14.0: 모델별 명시적 분기 처리 (BrainFlow 최적화)
+    console.log(`[ModelDock v14] Injecting to model: ${modelId}, element type: ${element.tagName}, contentEditable: ${element.isContentEditable}`);
 
-    if (isTipTap) {
-      console.log('[ModelDock] TipTap/Code editor detected, using paste');
+    // === 모델별 명시적 if-else 분기 ===
+
+    // 🎯 Claude (모든 버전: claude, claudecode)
+    if (modelId === 'claude' || modelId === 'claudecode' || element.isContentEditable) {
+      console.log('[ModelDock v14] Using Claude-specific injection (execCommand)');
+      // Try execCommand first (best for undo history and internal state)
+      const success = document.execCommand('insertText', false, text);
+      if (!success) {
+        console.warn('[ModelDock v14] execCommand failed, using textContent fallback');
+        element.textContent = text;
+      }
+      triggerInputEvents(element);
+      return true;
+    }
+
+    // 🎯 Grok
+    else if (modelId === 'grok') {
+      console.log('[ModelDock v14] Using Grok-specific injection (textarea with verification)');
+      if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        const proto = window.HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(element, text);
+        } else {
+          element.value = text;
+        }
+        triggerInputEvents(element);
+
+        // Grok specific: verify and retry with execCommand if needed
+        if (element.value !== text) {
+          console.warn('[ModelDock v14] Grok: textarea value mismatch, retrying with execCommand');
+          document.execCommand('insertText', false, text);
+        }
+        return true;
+      }
+      // Grok contenteditable fallback
+      else if (element.isContentEditable) {
+        const success = document.execCommand('insertText', false, text);
+        if (!success) element.textContent = text;
+        triggerInputEvents(element);
+        return true;
+      }
+    }
+
+    // 🎯 ChatGPT / Codex (Code editor - TipTap)
+    else if (modelId === 'chatgpt' || modelId === 'codex' ||
+      element.classList.contains('ProseMirror') || element.classList.contains('tiptap')) {
+      console.log('[ModelDock v14] Using ChatGPT/Codex-specific injection (paste event)');
       try {
         const dataTransfer = new DataTransfer();
         dataTransfer.setData('text/plain', text);
@@ -391,41 +658,170 @@
         triggerInputEvents(element);
         return true;
       } catch (e) {
-        console.warn('[ModelDock] Paste failed, falling back to execCommand');
+        console.warn('[ModelDock v14] Paste failed, falling back to execCommand');
+        const success = document.execCommand('insertText', false, text);
+        if (!success) element.textContent = text;
+        triggerInputEvents(element);
+        return true;
       }
     }
 
-    // ContentEditable (Claude, Gemini, etc)
-    if (element.isContentEditable || modelId === 'claude' || modelId === 'gemini') {
-      // Try execCommand first (best for undo history and internal state)
-      const success = document.execCommand('insertText', false, text);
-      if (!success) {
-        element.textContent = text;
+    // 🎯 v0 / Replit (Code editor - TipTap/CodeMirror)
+    else if (modelId === 'v0' || modelId === 'replit' ||
+      element.classList.contains('cm-content') || element.classList.contains('monaco-editor')) {
+      console.log('[ModelDock v14] Using v0/Replit-specific injection (paste event)');
+      try {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.setData('text/plain', text);
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true, cancelable: true, clipboardData: dataTransfer
+        });
+        element.dispatchEvent(pasteEvent);
+        triggerInputEvents(element);
+        return true;
+      } catch (e) {
+        console.warn('[ModelDock v14] Paste failed for code editor');
+        return false;
       }
-      triggerInputEvents(element);
-      return true;
     }
 
-    // Textarea / Input
-    if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
-      const proto = window.HTMLTextAreaElement.prototype;
-      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      if (nativeSetter) {
-        nativeSetter.call(element, text);
-      } else {
-        element.value = text;
+    // 🎯 Gemini
+    else if (modelId === 'gemini') {
+      console.log('[ModelDock v14] Using Gemini-specific injection (execCommand)');
+      if (element.isContentEditable) {
+        const success = document.execCommand('insertText', false, text);
+        if (!success) element.textContent = text;
+        triggerInputEvents(element);
+        return true;
       }
-      triggerInputEvents(element);
+    }
 
-      // Grok specific: verify and retry with execCommand if needed
-      if (modelId === 'grok') {
-        if (element.value !== text) {
-          document.execCommand('insertText', false, text);
+    // 🎯 Qwen (Alibaba) - textarea 기반, 긴 응답 시간 대응
+    else if (modelId === 'qwen') {
+      console.log('[ModelDock v14] Using Qwen-specific injection');
+      if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        const proto = window.HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(element, text);
+        } else {
+          element.value = text;
         }
+        triggerInputEvents(element);
+        // Qwen 전용: 추가 이벤트 트리거 (React 상태 동기화)
+        element.dispatchEvent(new Event('compositionend', { bubbles: true }));
+        return true;
       }
-      return true;
+      // contenteditable fallback
+      else if (element.isContentEditable) {
+        const success = document.execCommand('insertText', false, text);
+        if (!success) element.textContent = text;
+        triggerInputEvents(element);
+        return true;
+      }
     }
 
+    // 🎯 Kimi (Moonshot) - contenteditable 기반, 중국어 UI
+    else if (modelId === 'kimi') {
+      console.log('[ModelDock v14] Using Kimi-specific injection');
+      if (element.isContentEditable) {
+        // Kimi는 execCommand가 가장 안정적
+        const success = document.execCommand('insertText', false, text);
+        if (!success) {
+          element.textContent = text;
+        }
+        triggerInputEvents(element);
+        return true;
+      }
+      // textarea fallback
+      else if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        const proto = window.HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(element, text);
+        } else {
+          element.value = text;
+        }
+        triggerInputEvents(element);
+        return true;
+      }
+    }
+
+    // 🎯 DeepSeek - textarea 기반, R1 모드 지원
+    else if (modelId === 'deepseek') {
+      console.log('[ModelDock v14] Using DeepSeek-specific injection');
+      if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        const proto = window.HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(element, text);
+        } else {
+          element.value = text;
+        }
+        triggerInputEvents(element);
+        return true;
+      }
+      // contenteditable fallback (드문 케이스)
+      else if (element.isContentEditable) {
+        const success = document.execCommand('insertText', false, text);
+        if (!success) element.textContent = text;
+        triggerInputEvents(element);
+        return true;
+      }
+    }
+
+    // 🎯 LM Arena / OpenRouter / Mistral (Textarea)
+    else if (modelId === 'lmarena' || modelId === 'openrouter' || modelId === 'mistral') {
+      console.log(`[ModelDock v14] Using ${modelId}-specific injection (native textarea)`);
+      if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        const proto = window.HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(element, text);
+        } else {
+          element.value = text;
+        }
+        triggerInputEvents(element);
+        return true;
+      }
+      // Fallback to contentEditable
+      else if (element.isContentEditable) {
+        const success = document.execCommand('insertText', false, text);
+        if (!success) element.textContent = text;
+        triggerInputEvents(element);
+        return true;
+      }
+    }
+
+    // 🎯 Generic fallback (자동 감지)
+    else {
+      console.log('[ModelDock v14] Using generic injection (auto-detect)');
+
+      // Textarea / Input
+      if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        const proto = window.HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(element, text);
+        } else {
+          element.value = text;
+        }
+        triggerInputEvents(element);
+        return true;
+      }
+
+      // ContentEditable
+      if (element.isContentEditable) {
+        const success = document.execCommand('insertText', false, text);
+        if (!success) {
+          element.textContent = text;
+        }
+        triggerInputEvents(element);
+        return true;
+      }
+    }
+
+    console.warn('[ModelDock v14] No injection method matched');
     return false;
   }
 
@@ -450,8 +846,12 @@
   }
 
   // --- Response Monitoring (Added for Brain Flow) ---
-  // === RESPONSE_CONFIGS v3.0 - 정밀 셀렉터 (2025 대폭 업데이트) ===
-  // 🔧 핵심 원칙: 봇 응답만 선택, 사용자 메시지 제외, 안정화 시간 증가
+  // === RESPONSE_CONFIGS v4.0 - 동적 감지 시스템 (2025) ===
+  // 🔧 v14.0 변경사항:
+  //   - stabilizationTime: DEPRECATED (동적 계산으로 대체됨)
+  //   - 새로운 동적 시스템: detectDynamicCompletionSignal() + calculateDynamicStabilizationTime()
+  //   - 모델별 특수 신호 감지 (Gemini aria-busy, Qwen 복사버튼 등)
+  // 🔧 핵심 원칙: 봇 응답만 선택, 사용자 메시지 제외
   const RESPONSE_CONFIGS = [
     // 🔧 PRIORITY: 경로 포함 설정을 최상단에 배치 (더 구체적인 매칭 우선)
 
@@ -716,39 +1116,110 @@
       stabilizationTime: 15000
     },
     // === Grok (X/Twitter AI) ===
-    // 🔧 핵심 수정: 봇 응답만 선택, 프롬프트 파싱 오류 해결
+    // 🔧 v12.4 CRITICAL FIX: 실제 Grok DOM 구조 기반 Custom Parser
     {
       hosts: ['grok.com', 'x.com'],
+      customParser: () => {
+        console.log('[Grok Parser v2] Starting with real DOM structure...');
+
+        // 🎯 실제 Grok DOM 구조:
+        // - .message-bubble = 메시지 컨테이너 (사용자/봇 공통)
+        // - p.break-words = 응답 텍스트
+        // - button[aria-label="복사"] = 복사 버튼 (봇 응답에만 존재!)
+
+        // Strategy 1: 복사 버튼이 있는 마지막 메시지 버블 찾기
+        // 복사 버튼이 있으면 봇 응답임 (사용자 메시지에는 복사 버튼 없음)
+        const allBubbles = document.querySelectorAll('.message-bubble');
+        console.log(`[Grok Parser v2] Found ${allBubbles.length} message bubbles`);
+
+        // 역순으로 검사 (최신 메시지부터)
+        for (let i = allBubbles.length - 1; i >= 0; i--) {
+          const bubble = allBubbles[i];
+
+          // 복사 버튼이 있는지 확인 (봇 응답 식별)
+          const copyButton = bubble.querySelector('button[aria-label="복사"], button[aria-label="Copy"]');
+
+          if (!copyButton) {
+            console.log(`[Grok Parser v2] Bubble ${i}: No copy button (user message)`);
+            continue;
+          }
+
+          // 응답 텍스트 추출
+          const textElement = bubble.querySelector('p.break-words') || bubble.querySelector('p');
+          const text = textElement ? textElement.innerText.trim() : bubble.innerText.trim();
+
+          if (!text || text.length < 10) {
+            console.log(`[Grok Parser v2] Bubble ${i}: Text too short (${text?.length || 0} chars)`);
+            continue;
+          }
+
+          // 🔧 CRITICAL: 시스템 프롬프트 필터링
+          const systemPromptKeywords = [
+            '슬레이브 봇들을 총괄',
+            'SLAVE:',
+            '[목적]',
+            '[역할]',
+            '메인 브레인',
+            '출력 형식 규칙',
+            '당신은 슬레이브',
+            '슬레이브 봇 목록'
+          ];
+
+          const isSystemPrompt = systemPromptKeywords.some(kw => text.includes(kw));
+          if (isSystemPrompt) {
+            console.log(`[Grok Parser v2] Bubble ${i}: System prompt detected, skipping`);
+            continue;
+          }
+
+          // 유효한 봇 응답!
+          console.log(`[Grok Parser v2] ✅ SUCCESS: Found bot response (${text.length} chars)`);
+          console.log(`[Grok Parser v2] First 100 chars: "${text.substring(0, 100)}..."`);
+          return text;
+        }
+
+        // Strategy 2: Fallback - prose 클래스 사용
+        const proseElements = document.querySelectorAll('.prose');
+        console.log(`[Grok Parser v2] Fallback: Found ${proseElements.length} .prose elements`);
+
+        for (let i = proseElements.length - 1; i >= 0; i--) {
+          const el = proseElements[i];
+          const text = el.innerText?.trim();
+
+          if (!text || text.length < 20) continue;
+
+          // 시스템 프롬프트 체크
+          const isSystemPrompt = [
+            '슬레이브 봇들을 총괄', 'SLAVE:', '[목적]', '메인 브레인'
+          ].some(kw => text.includes(kw));
+
+          if (isSystemPrompt) continue;
+
+          console.log(`[Grok Parser v2] Fallback SUCCESS: ${text.length} chars`);
+          return text;
+        }
+
+        console.log('[Grok Parser v2] ❌ No valid response found');
+        return '';
+      },
       responseSelectors: [
-        // 🔧 Grok CRITICAL FIX: 더 엄격한 assistant 전용 셀렉터
-        // ISSUE: 프롬프트 복사 문제 - user 메시지와 혼동
-        // Priority 1: 가장 명확한 container + data 속성 조합
-        'article[data-testid="tweet"]:has(div[data-message-author-role="assistant"]) div[data-message-author-role="assistant"]:last-of-type',
-        'div[data-testid="cellInnerDiv"]:has(div[data-message-author-role="assistant"]) div[data-message-author-role="assistant"]:last-of-type',
-        // Priority 2: 단일 data 속성 (하지만 매우 구체적)
-        'div[data-message-author-role="assistant"]:not([data-message-author-role="user"]):last-of-type',
-        'div[data-testid="assistant-message"]:last-of-type',
-        'div[data-testid="grok-response"]:last-of-type',
-        // Priority 3: 클래스 기반 (assistant 명시)
-        'div[class*="assistant-message"]:not([class*="user"]):last-of-type',
-        'div[class*="grok-message"]:last-of-type',
-        'div[class*="bot-message"]:last-of-type',
-        // Priority 4: Nested prose (매우 구체적인 부모 확인)
-        'div[data-message-author-role="assistant"]:not([data-message-author-role="user"]) div.prose:last-of-type',
-        'div[class*="assistant"]:not([class*="user"]) div.prose:last-of-type'
+        // Fallback selectors (Custom Parser 실패 시)
+        '.message-bubble:has(button[aria-label="복사"]) p.break-words',
+        '.message-bubble:has(button[aria-label="Copy"]) p.break-words',
+        '.message-bubble p.break-words:last-of-type',
+        '.prose:last-of-type'
       ],
       stopSelectors: [
         'button[aria-label*="Stop"]',
         'button[aria-label*="stop"]',
-        'button:has(svg[data-icon="stop"])',
-        'div[role="button"][aria-label*="Stop"]',
-        'button[data-testid="stop-generation"]'
+        'button[aria-label*="중지"]',
+        // Grok 생성 중 표시되는 요소
+        '[class*="loading"]',
+        '[class*="generating"]'
       ],
-      inputSelector: 'div[role="textbox"][contenteditable="true"]',
-      submitSelector: 'button[aria-label="Send"]',
-      // 🔧 CRITICAL: Grok은 excludeUserMessage를 더 엄격하게 적용
+      inputSelector: 'textarea, div[role="textbox"][contenteditable="true"]',
+      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
       excludeUserMessage: true,
-      strictAssistantCheck: true, // 🚨 Assistant 마커 필수 (프롬프트 복사 방지)
+      strictAssistantCheck: true,
       stabilizationTime: 20000
     },
     // === Qwen ===
@@ -977,11 +1448,11 @@
       submitSelector: 'button[data-testid="send-button"]',
       stabilizationTime: 10000
     },
-    // === Claude (Custom Parser) - 2025 Enhanced v2 ===
+    // === Claude (Custom Parser) - 2025 Enhanced v3 ===
     {
       hosts: ['claude.ai'],
       customParser: () => {
-        console.log('[Claude Parser v2] Starting...');
+        console.log('[Claude Parser v3] Starting...');
 
         // 🔧 CRITICAL: UI 요소 제거 헬퍼 함수
         const removeUIElements = (clone) => {
@@ -1003,45 +1474,130 @@
           toRemove.forEach(el => el.remove());
         };
 
-        // Strategy 1: .font-claude-message 직접 탐색 - Enhanced v2
+        // 🔧 v3: 프롬프트 텍스트 필터 (Brain Flow에서 주입된 프롬프트 구분)
+        const isPromptText = (text) => {
+          if (!text || text.length < 10) return false;
+
+          const promptPatterns = [
+            /^페르소나:/i,
+            /^\[SLAVE:/i,
+            /^당신은.*역할을/i,
+            /^다음 지시사항을 따라/i,
+            /^Please respond to/i,
+            /^You are assigned/i
+          ];
+
+          return promptPatterns.some(pattern => pattern.test(text.trim()));
+        };
+
+        // 🔧 v3: 사용자 메시지 컨테이너인지 확인
+        const isUserMessageContainer = (element) => {
+          if (!element) return false;
+
+          // 부모 탐색하여 사용자 메시지 컨테이너 여부 확인
+          let parent = element;
+          for (let i = 0; i < 15 && parent; i++) {
+            const className = (parent.className || '').toLowerCase();
+            const role = parent.getAttribute('data-message-author-role');
+
+            // 사용자 메시지 표시
+            if (className.includes('human') ||
+              className.includes('user-message') ||
+              role === 'user' ||
+              role === 'human') {
+              return true;
+            }
+
+            // Claude 봇 메시지 표시 (확실히 봇 메시지면 false)
+            if (className.includes('assistant') ||
+              className.includes('claude') ||
+              role === 'assistant') {
+              return false;
+            }
+
+            parent = parent.parentElement;
+          }
+          return false;
+        };
+
+        // 🔧 v3: 대화 메시지 블록들을 찾아 마지막 봇 응답 찾기
+        const conversationBlocks = Array.from(document.querySelectorAll(
+          '[data-message-author-role], ' +
+          '.group[class*="message"], ' +
+          'div[class*="conversation"] > div'
+        ));
+
+        console.log(`[Claude Parser v3] Found ${conversationBlocks.length} conversation blocks`);
+
+        // 마지막부터 역순 탐색하여 봇 응답 찾기
+        for (let i = conversationBlocks.length - 1; i >= 0; i--) {
+          const block = conversationBlocks[i];
+          const role = block.getAttribute('data-message-author-role');
+
+          if (role === 'assistant') {
+            const content = block.querySelector('.font-claude-message') ||
+              block.querySelector('[data-testid="message-content"]') ||
+              block.querySelector('.prose');
+            if (content) {
+              const clone = content.cloneNode(true);
+              removeUIElements(clone);
+              const text = clone.innerText?.trim();
+              if (text && text.length > 10 && !isPromptText(text)) {
+                console.log(`[Claude Parser v3] Success (role=assistant): ${text.length} chars`);
+                return text;
+              }
+            }
+          }
+        }
+
+        // Strategy 1: .font-claude-message 직접 탐색 - 봇 메시지만
         const claudeMessages = Array.from(document.querySelectorAll('.font-claude-message'));
-        console.log(`[Claude Parser v2] Found ${claudeMessages.length} claude messages`);
+        console.log(`[Claude Parser v3] Found ${claudeMessages.length} claude messages`);
 
-        if (claudeMessages.length > 0) {
-          const lastMessage = claudeMessages[claudeMessages.length - 1];
+        // 마지막부터 역순으로 탐색
+        for (let i = claudeMessages.length - 1; i >= 0; i--) {
+          const message = claudeMessages[i];
 
-          // 🔧 CRITICAL: Clone & Remove 패턴 적용
-          const clone = lastMessage.cloneNode(true);
+          // 사용자 메시지 컨테이너 스킵
+          if (isUserMessageContainer(message)) {
+            console.log('[Claude Parser v3] Skipping user message container');
+            continue;
+          }
+
+          const clone = message.cloneNode(true);
           removeUIElements(clone);
 
           const text = clone.innerText?.trim();
-          if (text && text.length > 0) {
-            console.log(`[Claude Parser v2] Success (.font-claude-message): ${text.length} chars`);
+          if (text && text.length > 10 && !isPromptText(text)) {
+            console.log(`[Claude Parser v3] Success (.font-claude-message): ${text.length} chars`);
             return text;
           }
         }
 
-        // Strategy 2: data-testid="message-content" - Enhanced v2
+        // Strategy 2: data-testid="message-content" - 봇 메시지만
         const messageContents = Array.from(document.querySelectorAll('div[data-testid="message-content"]'));
-        console.log(`[Claude Parser v2] Found ${messageContents.length} message-content divs`);
+        console.log(`[Claude Parser v3] Found ${messageContents.length} message-content divs`);
 
-        if (messageContents.length > 0) {
-          const lastContent = messageContents[messageContents.length - 1];
+        for (let i = messageContents.length - 1; i >= 0; i--) {
+          const content = messageContents[i];
 
-          // 🔧 CRITICAL: Clone & Remove 패턴 적용
-          const clone = lastContent.cloneNode(true);
+          if (isUserMessageContainer(content)) {
+            continue;
+          }
+
+          const clone = content.cloneNode(true);
           removeUIElements(clone);
 
           const text = clone.innerText?.trim();
-          if (text && text.length > 0) {
-            console.log(`[Claude Parser v2] Success (message-content): ${text.length} chars`);
+          if (text && text.length > 10 && !isPromptText(text)) {
+            console.log(`[Claude Parser v3] Success (message-content): ${text.length} chars`);
             return text;
           }
         }
 
-        // Strategy 3: Copy 버튼 역추적 - Enhanced v2
+        // Strategy 3: Copy 버튼 역추적 (최신 복사 버튼 = 최신 응답)
         const copyBtns = Array.from(document.querySelectorAll('button[data-sentry-component="CopyButton"]'));
-        console.log(`[Claude Parser v2] Found ${copyBtns.length} copy buttons`);
+        console.log(`[Claude Parser v3] Found ${copyBtns.length} copy buttons`);
 
         if (copyBtns.length > 0) {
           const lastBtn = copyBtns[copyBtns.length - 1];
@@ -1049,31 +1605,28 @@
           // 부모 탐색 (최대 15단계)
           let parent = lastBtn.parentElement;
           for (let i = 0; i < 15 && parent; i++) {
-            // .font-claude-message 또는 [data-testid="message-content"] 찾기
             const content = parent.querySelector('.font-claude-message') ||
               parent.querySelector('[data-testid="message-content"]');
-            if (content) {
-              // 🔧 CRITICAL: Clone & Remove 패턴 적용
+            if (content && !isUserMessageContainer(content)) {
               const clone = content.cloneNode(true);
               removeUIElements(clone);
 
               const text = clone.innerText?.trim();
-              if (text && text.length > 0) {
-                console.log(`[Claude Parser v2] Success (copy btn traverse): ${text.length} chars`);
+              if (text && text.length > 10 && !isPromptText(text)) {
+                console.log(`[Claude Parser v3] Success (copy btn traverse): ${text.length} chars`);
                 return text;
               }
             }
 
-            // .group 클래스 확인
-            if (parent.classList?.contains('group')) {
+            if (parent.classList?.contains('group') && !isUserMessageContainer(parent)) {
               const content = parent.querySelector('.font-claude-message');
               if (content) {
                 const clone = content.cloneNode(true);
                 removeUIElements(clone);
 
                 const text = clone.innerText?.trim();
-                if (text && text.length > 0) {
-                  console.log(`[Claude Parser v2] Success (.group): ${text.length} chars`);
+                if (text && text.length > 10 && !isPromptText(text)) {
+                  console.log(`[Claude Parser v3] Success (.group): ${text.length} chars`);
                   return text;
                 }
               }
@@ -1083,44 +1636,29 @@
           }
         }
 
-        // Strategy 4: prose 클래스 기반 - Enhanced v2
+        // Strategy 4: prose 클래스 기반
         const proseElements = Array.from(document.querySelectorAll('.prose'));
-        console.log(`[Claude Parser v2] Found ${proseElements.length} prose elements`);
+        console.log(`[Claude Parser v3] Found ${proseElements.length} prose elements`);
 
         for (let i = proseElements.length - 1; i >= 0; i--) {
           const prose = proseElements[i];
 
-          // 🔧 CRITICAL: 강화된 사용자 메시지 필터링
-          let isUserMessage = false;
-          let parent = prose.parentElement;
-          for (let j = 0; j < 8 && parent; j++) {  // 5 → 8로 증가
-            const className = (parent.className || '').toLowerCase();
-            const role = parent.getAttribute('data-message-author-role');
-
-            if (className.includes('human') ||
-              className.includes('user') ||
-              role === 'user') {
-              isUserMessage = true;
-              console.log('[Claude Parser v2] Skipping user message');
-              break;
-            }
-            parent = parent.parentElement;
+          if (isUserMessageContainer(prose)) {
+            console.log('[Claude Parser v3] Skipping user prose');
+            continue;
           }
 
-          if (!isUserMessage) {
-            // 🔧 CRITICAL: Clone & Remove 패턴 적용
-            const clone = prose.cloneNode(true);
-            removeUIElements(clone);
+          const clone = prose.cloneNode(true);
+          removeUIElements(clone);
 
-            const text = clone.innerText?.trim();
-            if (text && text.length > 20) {  // 최소 길이 체크
-              console.log(`[Claude Parser v2] Success (prose): ${text.length} chars`);
-              return text;
-            }
+          const text = clone.innerText?.trim();
+          if (text && text.length > 20 && !isPromptText(text)) {
+            console.log(`[Claude Parser v3] Success (prose): ${text.length} chars`);
+            return text;
           }
         }
 
-        console.log('[Claude Parser v2] No response found');
+        console.log('[Claude Parser v3] No response found');
         return '';
       },
       responseSelectors: [
@@ -1149,18 +1687,98 @@
       submitSelector: 'button[aria-label*="Send"]',
       stabilizationTime: 10000
     },
-    // === Grok (Strict Mode) ===
+    // === Grok (Custom Parser) - 2025 v12.5 ===
+    // 실제 DOM 구조 기반 (사용자 제공):
+    // <div class="message-bubble ...">
+    //   <p class="break-words ...">응답 텍스트</p>
+    //   <button aria-label="복사">복사</button>  ← 봇 응답에만 존재!
+    // </div>
     {
       hosts: ['grok.com', 'x.com'],
+      customParser: () => {
+        console.log('[Grok Parser v3] Starting with real DOM structure...');
+
+        // Strategy 1: .message-bubble 컨테이너 + 복사 버튼으로 봇 응답 식별
+        const allBubbles = document.querySelectorAll('.message-bubble');
+        console.log(`[Grok Parser v3] Found ${allBubbles.length} message bubbles`);
+
+        if (allBubbles.length === 0) {
+          // Fallback: 다른 가능한 셀렉터 시도
+          const altBubbles = document.querySelectorAll('[class*="message"]');
+          console.log(`[Grok Parser v3] Fallback: Found ${altBubbles.length} [class*="message"] elements`);
+        }
+
+        // 역순으로 탐색 (최신 응답부터)
+        for (let i = allBubbles.length - 1; i >= 0; i--) {
+          const bubble = allBubbles[i];
+
+          // 🔑 핵심: 복사 버튼이 있으면 봇 응답 (사용자 메시지에는 복사 버튼 없음!)
+          const copyButton = bubble.querySelector('button[aria-label="복사"], button[aria-label="Copy"]');
+
+          if (!copyButton) {
+            // 복사 버튼 없음 = 사용자 메시지 → 스킵
+            continue;
+          }
+
+          console.log(`[Grok Parser v3] Found bot response at index ${i} (has copy button)`);
+
+          // 텍스트 추출: p.break-words 또는 전체 innerText
+          let text = '';
+
+          // 1차: p.break-words 태그에서 추출
+          const paragraphs = bubble.querySelectorAll('p.break-words, p[class*="break-words"]');
+          if (paragraphs.length > 0) {
+            text = Array.from(paragraphs).map(p => p.innerText || p.textContent).join('\n').trim();
+            console.log(`[Grok Parser v3] Extracted from p.break-words: ${text.length} chars`);
+          }
+
+          // 2차: innerText fallback (버튼 텍스트 제외)
+          if (!text || text.length < 50) {
+            const clone = bubble.cloneNode(true);
+            // 버튼 및 UI 요소 제거
+            clone.querySelectorAll('button, [role="button"], svg, [class*="icon"], [class*="action"]').forEach(el => el.remove());
+            text = clone.innerText?.trim() || '';
+            console.log(`[Grok Parser v3] Extracted from innerText: ${text.length} chars`);
+          }
+
+          // 시스템 프롬프트 필터링
+          const systemPromptIndicators = [
+            '당신은 ',
+            'You are ',
+            '역할:',
+            'Role:',
+            '시스템 프롬프트',
+            'System prompt',
+            '[SLAVE:',  // BrainFlow 시스템 프롬프트 일부
+          ];
+
+          const isSystemPrompt = systemPromptIndicators.some(indicator =>
+            text.substring(0, 100).includes(indicator)
+          );
+
+          if (isSystemPrompt && i > 0) {
+            console.log(`[Grok Parser v3] Skipping system prompt at index ${i}`);
+            continue;
+          }
+
+          if (text && text.length > 10) {
+            console.log(`[Grok Parser v3] ✅ SUCCESS: Found bot response (${text.length} chars)`);
+            console.log(`[Grok Parser v3] First 200 chars: ${text.substring(0, 200)}...`);
+            return text;
+          }
+        }
+
+        console.log('[Grok Parser v3] ❌ No valid bot response found');
+        return '';
+      },
       responseSelectors: [
-        'div[data-message-author-role="assistant"]:last-of-type',
-        'div[data-testid="assistant-message"]:last-of-type'
+        // Custom Parser가 실패할 경우 fallback
+        '.message-bubble:last-of-type',
+        'div[class*="message"]:last-of-type'
       ],
-      stopSelectors: ['button[aria-label*="Stop"]'],
-      inputSelector: 'div[role="textbox"]',
-      submitSelector: 'button[aria-label="Send"]',
-      excludeUserMessage: true,
-      strictAssistantCheck: true,
+      stopSelectors: ['button[aria-label*="Stop"]', 'button[aria-label*="중지"]'],
+      inputSelector: 'div[role="textbox"], textarea',
+      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
       stabilizationTime: 20000
     },
     // === Qwen (Custom Parser) - 2025 Enhanced v2 ===
@@ -1294,11 +1912,11 @@
       // 🔧 CRITICAL: Qwen은 토큰 생성 간격이 매우 길 수 있음 (60초)
       stabilizationTime: 60000
     },
-    // === LMArena (Custom Parser) - 2025 Final Fix v7 (Deep Shadow Search) ===
+    // === LMArena (Custom Parser) - 2025 Final Fix v8 (User/Bot Distinction) ===
     {
       hosts: ['lmarena.ai'],
       customParser: () => {
-        console.log('[LMArena Parser v7] Starting Deep Shadow Search...');
+        console.log('[LMArena Parser v8] Starting with User/Bot distinction...');
 
         // 🔧 Helper: Shadow DOM까지 뚫고 들어가는 탐색기
         const deepQuerySelectorAll = (selector, root = document) => {
@@ -1321,34 +1939,107 @@
           return (clone.innerText || clone.textContent || '').trim();
         };
 
-        const isPromptText = (text) => {
-          if (!text) return true;
-          const patterns = ['페르소나:', '명령:', '[SLAVE:', '사용자가 제시한', '입력 데이터:', '출력 형식:'];
-          const head = text.substring(0, 100);
-          return patterns.some(p => head.includes(p));
+        // 🔧 CRITICAL FIX: 슬레이브 프롬프트 패턴 감지 (Brain Flow에서 전송한 지시문)
+        const isSlavePromptText = (text) => {
+          if (!text) return false;
+          const head = text.substring(0, 200).toLowerCase();
+          const patterns = [
+            '페르소나:', '명령:', '[slave:', '입력 데이터:', '출력 형식:',
+            'persona:', 'instruction:', 'input data:', 'output format:',
+            '사용자가 제시한', '맥락:', 'context:'
+          ];
+          // 2개 이상의 패턴이 포함되면 슬레이브 프롬프트로 판정
+          const matchCount = patterns.filter(p => head.includes(p.toLowerCase())).length;
+          return matchCount >= 2;
+        };
+
+        // 🔧 CRITICAL FIX: 사용자 메시지 컨테이너 감지
+        const isUserMessageContainer = (el) => {
+          if (!el) return false;
+
+          // 1. 직접적인 user 마커 확인
+          const className = (el.className || '').toLowerCase();
+          if (className.includes('user') || className.includes('human')) return true;
+
+          // 2. data 속성 확인
+          if (el.getAttribute('data-role') === 'user') return true;
+          if (el.getAttribute('data-message-author-role') === 'user') return true;
+
+          // 3. 조상 요소에서 user 마커 확인 (최대 5단계)
+          let parent = el.parentElement;
+          for (let i = 0; i < 5 && parent; i++) {
+            const pClass = (parent.className || '').toLowerCase();
+            if (pClass.includes('user') || pClass.includes('human')) return true;
+            if (parent.getAttribute('data-role') === 'user') return true;
+
+            // LMArena 특유의 사용자 메시지 배경색 클래스
+            if (pClass.includes('bg-surface-secondary')) return true;
+
+            parent = parent.parentElement;
+          }
+
+          return false;
+        };
+
+        // 🔧 CRITICAL FIX: 봇 응답 컨테이너 감지
+        const isBotResponseContainer = (el) => {
+          if (!el) return false;
+
+          // 1. 직접적인 assistant/bot 마커 확인
+          const className = (el.className || '').toLowerCase();
+          if (className.includes('assistant') || className.includes('bot') || className.includes('model')) return true;
+
+          // 2. data 속성 확인
+          if (el.getAttribute('data-role') === 'assistant') return true;
+          if (el.getAttribute('data-message-author-role') === 'assistant') return true;
+
+          // 3. 조상 요소에서 assistant 마커 확인
+          let parent = el.parentElement;
+          for (let i = 0; i < 5 && parent; i++) {
+            const pClass = (parent.className || '').toLowerCase();
+            if (pClass.includes('assistant') || pClass.includes('bot') || pClass.includes('model-response')) return true;
+            if (parent.getAttribute('data-role') === 'assistant') return true;
+            parent = parent.parentElement;
+          }
+
+          return false;
         };
 
         // 1. Shadow DOM 포함 모든 .prose 요소 수집
         const allProses = deepQuerySelectorAll('.prose');
-        console.log(`[LMArena Parser v7] Found ${allProses.length} .prose elements (including shadow)`);
+        console.log(`[LMArena Parser v8] Found ${allProses.length} .prose elements`);
 
-        // 2. 뒤에서부터 탐색
+        // 2. 뒤에서부터 탐색 - 봇 응답만 찾기
         for (let i = allProses.length - 1; i >= 0; i--) {
           const prose = allProses[i];
 
-          // 사용자 메시지 제외
-          if (prose.closest('.bg-surface-secondary, [data-role="user"]')) continue;
+          // 🔧 CRITICAL: 사용자 메시지 컨테이너면 건너뛰기
+          if (isUserMessageContainer(prose)) {
+            console.log(`[LMArena Parser v8] Skipping user message container at index ${i}`);
+            continue;
+          }
 
           const text = cleanText(prose);
 
-          // 3. 검증
-          if (text.length > 30 && !isPromptText(text)) {
-            console.log(`[LMArena Parser v7] Success: ${text.length} chars`);
+          // 🔧 CRITICAL: 슬레이브 프롬프트 패턴이면 건너뛰기
+          if (isSlavePromptText(text)) {
+            console.log(`[LMArena Parser v8] Skipping slave prompt text at index ${i}: "${text.substring(0, 50)}..."`);
+            continue;
+          }
+
+          // 3. 유효한 응답 검증
+          if (text.length > 30) {
+            // 추가 검증: 봇 응답 컨테이너인지 확인 (선택적)
+            const isBot = isBotResponseContainer(prose);
+            console.log(`[LMArena Parser v8] Found text at index ${i}: ${text.length} chars, isBot: ${isBot}`);
+
+            // 봇 컨테이너가 아니더라도 슬레이브 프롬프트가 아니면 허용
+            console.log(`[LMArena Parser v8] Success: ${text.length} chars`);
             return text;
           }
         }
 
-        console.log('[LMArena Parser v7] No valid text found');
+        console.log('[LMArena Parser v8] No valid bot response found');
         return '';
       },
       responseSelectors: [],
@@ -1896,6 +2587,624 @@
   }
 
   // ============================================================================
+  // 🎯 DYNAMIC COMPLETION SIGNAL SYSTEM (v14.0)
+  // BATCH1_ANALYSIS.md 기반 - 하드코딩 제거, 동적 감지
+  // ============================================================================
+
+  /**
+   * 모델별 동적 완료 신호 감지
+   * @param {string} hostname - window.location.hostname
+   * @returns {Object} { isComplete: boolean, confidence: number, signal: string }
+   */
+  function detectDynamicCompletionSignal(hostname) {
+    const result = { isComplete: false, confidence: 0, signal: 'none' };
+
+    // === Gemini 전용: aria-busy 속성 감지 (BATCH1_ANALYSIS Line 106, 112) ===
+    if (hostname.includes('gemini.google.com')) {
+      const messageContent = document.querySelector('message-content[aria-busy]');
+      if (messageContent) {
+        const ariaBusy = messageContent.getAttribute('aria-busy');
+        if (ariaBusy === 'false') {
+          result.isComplete = true;
+          result.confidence = 95;
+          result.signal = 'gemini:aria-busy=false';
+          console.log('[Dynamic Completion] Gemini: aria-busy=false detected');
+          return result;
+        } else if (ariaBusy === 'true') {
+          result.confidence = 0;
+          result.signal = 'gemini:aria-busy=true (generating)';
+          return result;
+        }
+      }
+      // model-thoughts 패널 체크 (생각 중)
+      const modelThoughts = document.querySelector('model-thoughts[data-test-id="model-thoughts"]');
+      if (modelThoughts && isElementVisible(modelThoughts)) {
+        result.confidence = 0;
+        result.signal = 'gemini:model-thoughts visible (thinking)';
+        return result;
+      }
+    }
+
+    // === Qwen 전용: 복사 버튼 출현 감지 (BATCH1_ANALYSIS Line 234) ===
+    if (hostname.includes('chat.qwen.ai')) {
+      const responseContainers = document.querySelectorAll('.response-meesage-container, [class*="ChatItem"]');
+      if (responseContainers.length > 0) {
+        const lastContainer = responseContainers[responseContainers.length - 1];
+        const copyButton = lastContainer.querySelector('.copy-response-button, button[class*="copy"], [aria-label*="复制"], [aria-label*="Copy"]');
+        if (copyButton) {
+          result.isComplete = true;
+          result.confidence = 85;
+          result.signal = 'qwen:copy-button appeared';
+          console.log('[Dynamic Completion] Qwen: Copy button detected');
+          return result;
+        }
+      }
+    }
+
+    // === Kimi 전용: 복사 아이콘 출현 감지 (BATCH1_ANALYSIS Line 288) ===
+    if (hostname.includes('kimi.moonshot.cn')) {
+      const copyIcons = document.querySelectorAll('[class*="copy"], [aria-label*="复制"]');
+      if (copyIcons.length > 0) {
+        // 마지막 메시지에 복사 아이콘이 있으면 완료
+        const lastCopyIcon = copyIcons[copyIcons.length - 1];
+        if (isElementVisible(lastCopyIcon)) {
+          result.isComplete = true;
+          result.confidence = 80;
+          result.signal = 'kimi:copy-icon appeared';
+          console.log('[Dynamic Completion] Kimi: Copy icon detected');
+          return result;
+        }
+      }
+    }
+
+    // === DeepSeek 전용: .ds-markdown 안정 감지 (BATCH1_ANALYSIS Line 204, 220) ===
+    if (hostname.includes('chat.deepseek.com')) {
+      const dsMarkdown = document.querySelectorAll('.ds-markdown');
+      if (dsMarkdown.length > 0) {
+        const lastMarkdown = dsMarkdown[dsMarkdown.length - 1];
+        // 텍스트가 있고 stop 버튼이 없으면 완료 가능성
+        if (lastMarkdown.textContent && lastMarkdown.textContent.length > 10) {
+          const stopBtn = document.querySelector('div[role="button"]:has(svg[class*="stop"])') ||
+            document.querySelector('button[aria-label*="Stop"]');
+          if (!stopBtn) {
+            result.isComplete = true;
+            result.confidence = 75;
+            result.signal = 'deepseek:ds-markdown stable + no stop button';
+            console.log('[Dynamic Completion] DeepSeek: Markdown stable, no stop button');
+            return result;
+          }
+        }
+      }
+    }
+
+    // === OpenRouter 전용: rounded-*-none 버블 클래스 감지 (BATCH1_ANALYSIS Line 313, 328) ===
+    if (hostname.includes('openrouter.ai')) {
+      // assistant 버블은 rounded-tl-none, user 버블은 rounded-tr-none
+      const assistantBubbles = document.querySelectorAll('[class*="rounded-tl-none"]');
+      if (assistantBubbles.length > 0) {
+        const lastBubble = assistantBubbles[assistantBubbles.length - 1];
+        if (lastBubble.textContent && lastBubble.textContent.length > 10) {
+          result.confidence = 60; // 보조 신호로 활용
+          result.signal = 'openrouter:assistant-bubble detected';
+        }
+      }
+    }
+
+    // === LMArena 전용: assistant 마커 노드 감지 (BATCH1_ANALYSIS Line 261, 271) ===
+    if (hostname.includes('lmarena.ai')) {
+      const assistantNodes = document.querySelectorAll('[data-message-author-role="assistant"], [class*="assistant"]');
+      if (assistantNodes.length > 0) {
+        result.confidence = 50; // 보조 신호
+        result.signal = 'lmarena:assistant-node detected';
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * 동적 안정화 시간 계산 (하드코딩 제거)
+   * @param {string} hostname - window.location.hostname  
+   * @param {number} avgChunkInterval - 평균 청크 간격 (ms)
+   * @param {Object} completionSignal - detectDynamicCompletionSignal 결과
+   * @returns {number} 동적 안정화 시간 (ms)
+   */
+  function calculateDynamicStabilizationTime(hostname, avgChunkInterval, completionSignal) {
+    // 완료 신호가 확실하면 최소 대기
+    if (completionSignal.isComplete && completionSignal.confidence >= 80) {
+      console.log(`[Dynamic Stabilization] High confidence (${completionSignal.confidence}%), using minimal wait`);
+      return Math.max(1500, avgChunkInterval * 2);
+    }
+
+    // 기본 베이스라인: 평균 청크 간격 * 3, 최소 3초
+    const baseline = Math.max(3000, avgChunkInterval * 3);
+
+    // 모델별 가중치 적용
+    let multiplier = 1.0;
+
+    if (hostname.includes('chat.qwen.ai')) {
+      multiplier = 2.5; // Qwen: 긴 토큰 간격, 최대 대기
+    } else if (hostname.includes('kimi.moonshot.cn')) {
+      multiplier = 2.0; // Kimi: 중국 서버 지연
+    } else if (hostname.includes('lmarena.ai')) {
+      multiplier = 1.8; // LMArena: 다중 모델 비교
+    } else if (hostname.includes('openrouter.ai')) {
+      multiplier = 1.5; // OpenRouter: 프록시 지연
+    } else if (hostname.includes('claude.ai')) {
+      multiplier = 1.3; // Claude: Thinking 모드
+    } else if (hostname.includes('gemini.google.com')) {
+      multiplier = 0.8; // Gemini: aria-busy로 빠른 감지
+    } else if (hostname.includes('chatgpt.com')) {
+      multiplier = 1.0; // ChatGPT: 표준
+    }
+
+    const dynamicTime = Math.min(baseline * multiplier, 60000); // 최대 60초
+    console.log(`[Dynamic Stabilization] ${hostname}: baseline=${baseline}ms, multiplier=${multiplier}, result=${dynamicTime}ms`);
+
+    return dynamicTime;
+  }
+
+  // ============================================================================
+  // UI STATE SNAPSHOT SYSTEM (v11.0) - 모델별 분기 처리
+  // 각 AI 모델 회사마다 다른 UI 구조에 맞춘 개별 감지 로직
+  // ============================================================================
+
+  /**
+   * 🎯 모델별 UI 상태 감지 설정
+   * 각 회사의 실제 DOM 구조에 맞춘 셀렉터와 감지 전략
+   */
+  const MODEL_UI_CONFIGS = {
+    // ========== OpenAI (ChatGPT) ==========
+    chatgpt: {
+      hosts: ['chatgpt.com', 'chat.openai.com'],
+      stopButton: [
+        'button[aria-label="Stop generating"]',
+        'button[data-testid="stop-button"]',
+        'button[aria-label="중지"]'  // 한국어
+      ],
+      inputSelector: '#prompt-textarea, textarea[data-id="root"]',
+      inputDisabledCheck: (input) => input.disabled || input.getAttribute('disabled') !== null,
+      loadingIndicators: ['[data-testid="stop-button"]', '.result-streaming'],
+      submitButton: 'button[data-testid="send-button"], button[aria-label="Send prompt"]'
+    },
+
+    // ========== Anthropic (Claude) ==========
+    claude: {
+      hosts: ['claude.ai'],
+      stopButton: [
+        'button[aria-label="Stop generating"]',
+        'button[aria-label="Stop Response"]',
+        'button[aria-label="중지"]'
+      ],
+      inputSelector: 'div[contenteditable="true"].ProseMirror, div[contenteditable="true"]',
+      inputDisabledCheck: (input) => input.getAttribute('contenteditable') === 'false',
+      loadingIndicators: ['[class*="is-generating"]', '[class*="streaming"]'],
+      submitButton: 'button[aria-label*="Send"], button[type="submit"]'
+    },
+
+    // ========== Google (Gemini) ==========
+    gemini: {
+      hosts: ['gemini.google.com', 'aistudio.google.com'],
+      stopButton: [
+        '.stop-button',
+        'button[aria-label="Stop"]',
+        'button[aria-label="중지"]'
+      ],
+      inputSelector: 'rich-textarea, textarea',
+      inputDisabledCheck: (input) => input.disabled || input.getAttribute('aria-disabled') === 'true',
+      loadingIndicators: ['.loading-indicator', '[aria-busy="true"]'],
+      submitButton: 'button[aria-label="Send message"], button.send-button'
+    },
+
+    // ========== xAI (Grok) ==========
+    grok: {
+      hosts: ['grok.com', 'x.com/i/grok'],
+      stopButton: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="stop"]',  // 소문자도 체크
+        'button[aria-label*="중지"]',
+        '[data-testid="stop-button"]',
+        '[data-testid="stopButton"]',
+        'button[class*="stop"]',
+        'button[class*="Stop"]',
+        // Grok은 SVG 아이콘 기반일 수 있음
+        'button:has(svg[class*="stop"])',
+        'button:has(svg[data-testid*="stop"])'
+      ],
+      inputSelector: 'textarea, div[contenteditable="true"]',
+      inputDisabledCheck: (input) => {
+        // Grok: placeholder가 바뀌면 비활성화 상태
+        const placeholder = input.getAttribute('placeholder') || '';
+        const isDisabled = input.disabled ||
+          input.getAttribute('contenteditable') === 'false' ||
+          placeholder.toLowerCase().includes('wait') ||
+          placeholder.toLowerCase().includes('generating');
+        return isDisabled;
+      },
+      loadingIndicators: [
+        '[data-testid="loading"]',
+        '[class*="LoadingDots"]',
+        '.animate-pulse',
+        '[class*="loading"]',
+        '[class*="generating"]',
+        '[class*="typing"]',
+        // Grok 특유의 "생각 중" 애니메이션
+        '[class*="thinking"]',
+        '.cursor-blink',
+        '.text-cursor'
+      ],
+      submitButton: 'button[data-testid="send-button"], button[type="submit"]'
+    },
+
+    // ========== DeepSeek ==========
+    deepseek: {
+      hosts: ['chat.deepseek.com'],
+      stopButton: [
+        'div[role="button"]:has(svg[class*="stop"])',
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="중지"]'
+      ],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]', '[class*="generating"]'],
+      submitButton: 'button[type="submit"], div[role="button"]:has(svg[class*="send"])'
+    },
+
+    // ========== Alibaba (Qwen) ==========
+    qwen: {
+      hosts: ['chat.qwen.ai', 'qwen.ai'],
+      stopButton: [], // Qwen은 텍스트로 감지
+      stopButtonTextMatch: ['stop', '중지', '정지', '停止'],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]', '[class*="generating"]', '[class*="thinking"]'],
+      submitButton: 'button[type="submit"]',
+      // Qwen 전용: 복사 버튼이 아직 없으면 생성 중
+      customCheck: () => {
+        const responseContainers = document.querySelectorAll('.response-meesage-container');
+        if (responseContainers.length > 0) {
+          const lastContainer = responseContainers[responseContainers.length - 1];
+          return !lastContainer.querySelector('.copy-response-button');
+        }
+        return false;
+      }
+    },
+
+    // ========== LMArena ==========
+    lmarena: {
+      hosts: ['lmarena.ai', 'chat.lmsys.org'],
+      stopButton: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="stop"]'
+      ],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]', '.animate-spin'],
+      submitButton: 'button[type="submit"]'
+    },
+
+    // ========== Mistral ==========
+    mistral: {
+      hosts: ['chat.mistral.ai'],
+      stopButton: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="stop"]',
+        'button[data-testid="stop-button"]'
+      ],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]'],
+      submitButton: 'button[type="submit"]'
+    },
+
+    // ========== OpenRouter ==========
+    openrouter: {
+      hosts: ['openrouter.ai'],
+      stopButton: [
+        'button[aria-label="Stop generating"]',
+        'button[aria-label*="Stop"]'
+      ],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]'],
+      submitButton: 'button[type="submit"]'
+    },
+
+    // ========== Perplexity (iframe 내부용) ==========
+    perplexity: {
+      hosts: ['perplexity.ai'],
+      stopButton: [
+        'button[aria-label*="Stop"]',
+        'button:has(svg[data-icon="pause"])'
+      ],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]', '[class*="searching"]'],
+      submitButton: 'button[aria-label*="Submit"]'
+    },
+
+    // ========== Kimi (Moonshot) ==========
+    kimi: {
+      hosts: ['kimi.moonshot.cn'],
+      stopButton: ['button[class*="stop"]'],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]'],
+      submitButton: 'button[type="submit"]'
+    },
+
+    // ========== GitHub Copilot ==========
+    copilot: {
+      hosts: ['github.com/copilot', 'copilot.github.com'],
+      stopButton: [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="Cancel"]',
+        'button[data-testid="stop-button"]'
+      ],
+      inputSelector: 'textarea',
+      inputDisabledCheck: (input) => input.disabled,
+      loadingIndicators: ['[class*="loading"]'],
+      submitButton: 'button[type="submit"]'
+    }
+  };
+
+  /**
+   * 현재 호스트에 맞는 모델 UI 설정 반환
+   * @returns {Object|null} 모델 설정 또는 null (알 수 없는 모델)
+   */
+  function getModelUIConfig() {
+    const hostname = window.location.hostname;
+    const fullPath = hostname + window.location.pathname;
+
+    for (const [modelId, config] of Object.entries(MODEL_UI_CONFIGS)) {
+      if (config.hosts.some(h => fullPath.includes(h) || hostname.includes(h))) {
+        return { modelId, ...config };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 🎯 모델별 UI 상태 스냅샷 캡처 (v11.0)
+   * 각 모델의 실제 DOM 구조에 맞춘 정밀 캡처
+   * @param {Object} config - getResponseConfig()에서 반환된 설정
+   * @returns {Object} UI 상태 스냅샷
+   */
+  function captureUIStateSnapshot(config) {
+    const modelConfig = getModelUIConfig();
+    const hostname = window.location.hostname;
+
+    const snapshot = {
+      timestamp: Date.now(),
+      modelId: modelConfig?.modelId || 'unknown',
+      isGenerating: false,
+      input: { found: false, enabled: false },
+      submitButton: { found: false, enabled: false },
+      stopButton: { found: false, visible: false },
+      loadingIndicator: { found: false, visible: false }
+    };
+
+    // 모델 설정이 없으면 기본 범용 로직 사용
+    if (!modelConfig) {
+      console.log(`[UI Snapshot v11] ⚠️ Unknown model: ${hostname}, using fallback`);
+      return captureUIStateSnapshotFallback(config, snapshot);
+    }
+
+    console.log(`[UI Snapshot v11] 📸 Capturing for: ${modelConfig.modelId}`);
+
+    // 1. Stop 버튼 감지 (모델별 셀렉터)
+    for (const sel of modelConfig.stopButton) {
+      const btn = document.querySelector(sel) || queryShadow(document.body, sel);
+      if (btn && isElementVisible(btn)) {
+        snapshot.stopButton.found = true;
+        snapshot.stopButton.visible = true;
+        snapshot.isGenerating = true;
+        console.log(`[UI Snapshot v11] 🔴 Stop button found: ${sel}`);
+        break;
+      }
+    }
+
+    // Qwen 전용: 텍스트 기반 Stop 버튼 감지
+    if (modelConfig.stopButtonTextMatch && !snapshot.stopButton.visible) {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const stopBtn = buttons.find(btn => {
+        const text = (btn.innerText || '').toLowerCase();
+        return modelConfig.stopButtonTextMatch.some(t => text.includes(t.toLowerCase()));
+      });
+      if (stopBtn && isElementVisible(stopBtn)) {
+        snapshot.stopButton.found = true;
+        snapshot.stopButton.visible = true;
+        snapshot.isGenerating = true;
+        console.log(`[UI Snapshot v11] 🔴 Stop button found (text match)`);
+      }
+    }
+
+    // Qwen 전용: 커스텀 체크 (복사 버튼 없으면 생성 중)
+    if (modelConfig.customCheck && modelConfig.customCheck()) {
+      snapshot.isGenerating = true;
+      console.log(`[UI Snapshot v11] 🔴 Custom check: still generating`);
+    }
+
+    // 2. 로딩 인디케이터 감지
+    if (modelConfig.loadingIndicators) {
+      for (const sel of modelConfig.loadingIndicators) {
+        const el = document.querySelector(sel) || queryShadow(document.body, sel);
+        if (el && isElementVisible(el)) {
+          snapshot.loadingIndicator.found = true;
+          snapshot.loadingIndicator.visible = true;
+          snapshot.isGenerating = true;
+          console.log(`[UI Snapshot v11] ⏳ Loading indicator found: ${sel}`);
+          break;
+        }
+      }
+    }
+
+    // 3. 입력창 상태 감지
+    if (modelConfig.inputSelector) {
+      const inputSelectors = modelConfig.inputSelector.split(',').map(s => s.trim());
+      for (const sel of inputSelectors) {
+        const input = document.querySelector(sel) || queryShadow(document.body, sel);
+        if (input) {
+          snapshot.input.found = true;
+          const isDisabled = modelConfig.inputDisabledCheck
+            ? modelConfig.inputDisabledCheck(input)
+            : (input.disabled || input.getAttribute('contenteditable') === 'false');
+          snapshot.input.enabled = !isDisabled;
+
+          if (isDisabled) {
+            snapshot.isGenerating = true;
+            console.log(`[UI Snapshot v11] 🔒 Input disabled`);
+          }
+          break;
+        }
+      }
+    }
+
+    // 4. Submit 버튼 상태 감지
+    if (modelConfig.submitButton) {
+      const submitSelectors = modelConfig.submitButton.split(',').map(s => s.trim());
+      for (const sel of submitSelectors) {
+        const btn = document.querySelector(sel) || queryShadow(document.body, sel);
+        if (btn && isElementVisible(btn)) {
+          snapshot.submitButton.found = true;
+          snapshot.submitButton.enabled = !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+          break;
+        }
+      }
+    }
+
+    // 5. Thinking 텍스트 감지 (추론 모델 공통)
+    const thinkingTexts = ['Thinking...', 'Generating...', 'Reasoning...', '생성 중...', '생각 중...', '답변 생성 중', '搜索中'];
+    const bodyText = document.body.innerText || '';
+    const recentText = bodyText.slice(-1000);
+    if (thinkingTexts.some(t => recentText.includes(t))) {
+      snapshot.isGenerating = true;
+      console.log(`[UI Snapshot v11] 💭 Thinking text detected`);
+    }
+
+    return snapshot;
+  }
+
+  /**
+   * 알 수 없는 모델용 범용 스냅샷 캡처 (fallback)
+   */
+  function captureUIStateSnapshotFallback(config, snapshot) {
+    // 범용 Stop 버튼 셀렉터
+    const universalStopSelectors = [
+      'button[aria-label*="Stop"]', 'button[aria-label*="stop"]',
+      'button[aria-label*="Cancel"]', 'button[aria-label*="중지"]',
+      '[data-testid="stop-button"]', '.stop-button'
+    ];
+
+    for (const sel of universalStopSelectors) {
+      const btn = document.querySelector(sel) || queryShadow(document.body, sel);
+      if (btn && isElementVisible(btn)) {
+        snapshot.stopButton.found = true;
+        snapshot.stopButton.visible = true;
+        snapshot.isGenerating = true;
+        break;
+      }
+    }
+
+    // 범용 로딩 인디케이터
+    const universalLoadingSelectors = [
+      '[class*="loading"]', '[class*="generating"]', '[class*="thinking"]',
+      '[aria-busy="true"]', '.animate-pulse', '.animate-spin'
+    ];
+
+    for (const sel of universalLoadingSelectors) {
+      const el = document.querySelector(sel) || queryShadow(document.body, sel);
+      if (el && isElementVisible(el)) {
+        snapshot.loadingIndicator.found = true;
+        snapshot.loadingIndicator.visible = true;
+        snapshot.isGenerating = true;
+        break;
+      }
+    }
+
+    // 범용 입력창 감지
+    const universalInputSelectors = ['textarea', 'div[contenteditable="true"]', '[role="textbox"]'];
+    for (const sel of universalInputSelectors) {
+      const input = document.querySelector(sel);
+      if (input && isElementVisible(input)) {
+        snapshot.input.found = true;
+        const isDisabled = input.disabled ||
+          input.getAttribute('contenteditable') === 'false' ||
+          input.getAttribute('aria-disabled') === 'true';
+        snapshot.input.enabled = !isDisabled;
+        if (isDisabled) snapshot.isGenerating = true;
+        break;
+      }
+    }
+
+    return snapshot;
+  }
+
+  /**
+   * 🎯 UI 상태가 "응답 가능 상태"로 복귀했는지 판단 (v11.0)
+   * 모델별 특성을 고려한 복귀 판정
+   * @param {Object} initialSnapshot - 프롬프트 전송 전 스냅샷
+   * @param {Object} currentSnapshot - 현재 스냅샷
+   * @returns {Object} { restored: boolean, reason: string, confidence: number }
+   */
+  function isUIStateRestored(initialSnapshot, currentSnapshot) {
+    const result = { restored: false, reason: '', confidence: 0 };
+
+    // 핵심 판정: isGenerating 플래그
+    if (currentSnapshot.isGenerating) {
+      // 어떤 요소가 생성 중인지 상세히 기록
+      const reasons = [];
+      if (currentSnapshot.stopButton.visible) reasons.push('Stop 버튼');
+      if (currentSnapshot.loadingIndicator.visible) reasons.push('로딩 인디케이터');
+      if (currentSnapshot.input.found && !currentSnapshot.input.enabled) reasons.push('입력창 비활성화');
+
+      result.reason = `응답 생성 중: ${reasons.join(', ') || '기타 신호'}`;
+      result.confidence = 0;
+      return result;
+    }
+
+    // 생성 완료 판정
+    let score = 0;
+    const reasons = [];
+
+    // Stop 버튼 없음 (+40)
+    if (!currentSnapshot.stopButton.visible) {
+      score += 40;
+      reasons.push('Stop 버튼 없음');
+    }
+
+    // 로딩 인디케이터 없음 (+20)
+    if (!currentSnapshot.loadingIndicator.visible) {
+      score += 20;
+      reasons.push('로딩 없음');
+    }
+
+    // 입력창 활성화 (+30)
+    if (currentSnapshot.input.found && currentSnapshot.input.enabled) {
+      score += 30;
+      reasons.push('입력창 활성화');
+    }
+
+    // Submit 버튼 활성화 (+10)
+    if (currentSnapshot.submitButton.found && currentSnapshot.submitButton.enabled) {
+      score += 10;
+      reasons.push('Submit 활성화');
+    }
+
+    result.confidence = score;
+
+    // 60점 이상이면 복귀로 판정 (기준 완화)
+    if (score >= 60) {
+      result.restored = true;
+      result.reason = `[${currentSnapshot.modelId}] ${reasons.join(' + ')}`;
+    } else {
+      result.reason = `점수 부족 (${score}/60): ${reasons.join(', ')}`;
+    }
+
+    return result;
+  }
+
+  // ============================================================================
   // END OF ADAPTIVE RESPONSE MONITOR SYSTEM
   // ============================================================================
 
@@ -1907,32 +3216,48 @@
 
   function startResponseMonitoring(requestId) {
     console.log('[ModelDock] Starting response monitoring for', requestId);
+    // ============================================================
+    // 🧪 Phase 2 실험: MonitorFactory 병렬 테스트
+    // ============================================================
+    const testNewMonitor = async () => {
+      try {
+        const monitor = await MonitorFactory.createMonitor(window.location.hostname, requestId);
+        if (monitor) {
+          console.log('[Phase 2 Test] Running new monitor...');
+          const result = await monitor.run();
+          console.log('[Phase 2 Test] Monitor result:', result);
+        }
+      } catch (error) {
+        console.error('[Phase 2 Test] Monitor error:', error);
+      }
+    };
+
+    // 기존 시스템과 병렬로 실행 (테스트)
+    testNewMonitor();
+
     const config = getResponseConfig();
     const hostname = window.location.hostname;
+
+    // 🎯 UI State Snapshot System (v10.0)
+    // 프롬프트 전송 전 UI 상태 캡처 - "응답 가능 상태로 복귀" 감지용
+    const initialUISnapshot = captureUIStateSnapshot(config);
+    console.log('[ModelDock] 📸 Initial UI Snapshot captured:', {
+      input: initialUISnapshot.input.enabled ? '✅ enabled' : '❌ disabled',
+      submit: initialUISnapshot.submitButton.enabled ? '✅ enabled' : '❌ disabled',
+      stop: initialUISnapshot.stopButton.visible ? '🔴 visible' : '⚪ hidden',
+      loading: initialUISnapshot.loadingIndicator.visible ? '⏳ loading' : '✅ idle'
+    });
 
     // 🧠 ARMS (B안): Functional Approach
     let chunkIntervals = [];
     let lastChunkTime = Date.now();
-    console.log(`[ModelDock] 🎯 Using ARMS (Functional) for ${hostname}`);
+    console.log(`[ModelDock] 🎯 Using UI State Snapshot + ARMS for ${hostname}`);
 
-    // 🔧 CRITICAL FIX: Baseline 캡처 - 이전 대화의 응답을 기준점으로 저장
-    // 이렇게 하면 "새로운" 응답만 감지하고 이전 응답으로 인한 조기 완료 판정 방지
-    const baselineText = getResponseText() || '';
-    console.log(`[ModelDock] 📊 Baseline captured: ${baselineText.length} chars`);
-    
-    let lastText = baselineText;  // baseline으로 초기화
-    let lastChangeTime = Date.now();
-    let monitorStartTime = Date.now();
-    let isComplete = false;
-    let hasReceivedNewResponse = false;  // 🔧 이름 변경: "새로운" 응답 여부
-    let newResponseStartTime = 0;  // 🔧 새 응답 시작 시간 (안정화 판정용)
-    let heartbeatInterval;
-    let fallbackCheckCount = 0;
+    // 🎯 v14.0: 동적 완료 감지 시스템 사용 (하드코딩 제거)
+    // [DEPRECATED] const STABILIZATION_TIME = config.stabilizationTime || 15000;
+    // stabilizationTime은 더 이상 사용하지 않음 → calculateDynamicStabilizationTime() 사용
 
-    // ⚠️ Legacy: 하드코딩된 안정화 시간 (참고용, 더 이상 사용 안 함)
-    const STABILIZATION_TIME = config.stabilizationTime || 15000;
-    console.log(`[ModelDock] Legacy stabilization time: ${STABILIZATION_TIME}ms (replaced by adaptive logic)`);
-
+    // === getResponseText 함수를 먼저 정의 (호이스팅 문제 해결) ===
     const getResponseText = () => {
       // 🔧 [Architecture] Custom Parser Strategy (World Class Refactoring)
       if (config.customParser) {
@@ -1963,15 +3288,13 @@
 
         if (elements.length > 0) {
           elementsFound = elements.length;
-          console.log(`[ModelDock] 🔍 Selector matched (${selectorsTried}/${config.responseSelectors.length}): "${selector}" → ${elementsFound} elements`);
+          // 로그 줄임 (너무 많이 출력됨)
+          // console.log(`[ModelDock] 🔍 Selector matched: "${selector}" → ${elementsFound} elements`);
 
           const lastElement = elements[elements.length - 1];
 
           // 🔧 CRITICAL FIX: excludeUserMessage 옵션 - 개선된 검증 로직
           if (config.excludeUserMessage) {
-            // Strategy: assistant 마커가 명확히 있는지 확인 (긍정적 검증)
-            // user 마커가 있으면 무조건 제외
-
             const elementClasses = (lastElement.className || '').toLowerCase();
             const elementDataRole = (lastElement.getAttribute('data-role') || '').toLowerCase();
             const elementDataAuthor = (lastElement.getAttribute('data-message-author-role') || '').toLowerCase();
@@ -1981,7 +3304,6 @@
             if (elementClasses.includes('user') || elementClasses.includes('human') ||
               elementDataRole === 'user' || elementDataAuthor === 'user' ||
               elementDataTestId.includes('user-message') || elementDataTestId.includes('human-message')) {
-              console.log('[ModelDock] ❌ Skipping: Element has user marker');
               continue;
             }
 
@@ -1996,7 +3318,6 @@
               const ancestorDataAuthor = (ancestor.getAttribute('data-message-author-role') || '').toLowerCase();
               const ancestorDataTestId = (ancestor.getAttribute('data-testid') || '').toLowerCase();
 
-              // User 마커 체크
               if (ancestorClasses.includes('user-message') || ancestorClasses.includes('human-message') ||
                 ancestorDataRole === 'user' || ancestorDataAuthor === 'user' ||
                 ancestorDataTestId.includes('user-message')) {
@@ -2004,7 +3325,6 @@
                 break;
               }
 
-              // Assistant 마커 체크
               if (ancestorClasses.includes('assistant') || ancestorClasses.includes('bot') ||
                 ancestorDataRole === 'assistant' || ancestorDataAuthor === 'assistant' ||
                 ancestorDataTestId.includes('assistant') || ancestorDataTestId.includes('bot-message')) {
@@ -2014,70 +3334,31 @@
               ancestor = ancestor.parentElement;
             }
 
-            // 3. 최종 판정
-            if (hasUserAncestor) {
-              console.log('[ModelDock] ❌ Skipping: Ancestor has user marker');
-              continue;
-            }
+            if (hasUserAncestor) continue;
 
-            // 🔧 Strict Assistant Check (Grok, LMArena 등 프롬프트 복사 문제 해결용)
+            // 🔧 Strict Assistant Check
             if (config.strictAssistantCheck) {
-              const isAssistant =
-                hasAssistantAncestor ||
+              const isAssistant = hasAssistantAncestor ||
                 selector.includes('assistant') ||
                 selector.includes('bot') ||
-                selector.includes('response'); // responseSelectors에 'response'가 포함된 경우도 인정
+                selector.includes('response');
 
-              if (!isAssistant) {
-                console.log('[ModelDock] ❌ Skipping: No assistant marker found (Strict Mode)');
-                continue;
-              }
+              if (!isAssistant) continue;
             }
-
-            // 4. Assistant 마커가 명확히 있거나, selector가 이미 assistant를 지정한 경우만 통과
-            const selectorHasAssistant = selector.includes('assistant') || selector.includes('bot');
-
-            if (!hasAssistantAncestor && !selectorHasAssistant) {
-              console.log('[ModelDock] ⚠️ Warning: No clear assistant marker, but allowing (selector-based)');
-              // 셀렉터가 충분히 구체적이면 허용 (예: :last-of-type)
-            }
-
-            console.log(`[ModelDock] ✅ Passed excludeUserMessage check (hasAssistant: ${hasAssistantAncestor}, selectorBased: ${selectorHasAssistant})`);
           }
 
-
-          // Enhanced text extraction with multiple fallbacks
-          // Strategy 1: textContent (gets ALL text including hidden)
+          // Enhanced text extraction
           let text = lastElement.textContent || '';
-
-          // Strategy 2: If textContent failed, try innerText
           if (!text || text.trim().length === 0) {
             text = lastElement.innerText || '';
           }
-
-          // Strategy 3: If both failed, recursively collect from all text nodes
           if (!text || text.trim().length === 0) {
             text = extractAllTextNodes(lastElement);
           }
 
-          // Clean up excessive whitespace while preserving structure
-          const trimmedText = text.trim();
-
-          // 🔧 CRITICAL FIX: 응답 텍스트 추출 로그
-          if (trimmedText.length > 0) {
-            console.log(`[ModelDock] ✓ Response text extracted: ${trimmedText.length} chars (first 100): "${trimmedText.substring(0, 100)}..."`);
-          } else {
-            console.warn(`[ModelDock] ⚠️ Element found but text extraction failed for selector: "${selector}"`);
-          }
-
-          return trimmedText;
+          return text.trim();
         }
       }
-
-      // 🔧 CRITICAL FIX: 모든 셀렉터 실패 로그
-      console.error(`[ModelDock] ❌ NO RESPONSE FOUND - Tried ${selectorsTried} selectors, none matched`);
-      console.error(`[ModelDock] Host: ${window.location.hostname}`);
-      console.error(`[ModelDock] Available selectors:`, config.responseSelectors.slice(0, 5));
 
       return '';
     };
@@ -2085,83 +3366,37 @@
     // Recursive text extraction from all text nodes (ultimate fallback)
     const extractAllTextNodes = (element) => {
       let text = '';
-      const walker = document.createTreeWalker(
-        element,
-        NodeFilter.SHOW_TEXT,
-        null
-      );
-
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
       let node;
       while (node = walker.nextNode()) {
         text += node.textContent;
       }
-
       return text;
     };
 
-    const checkIsRunning = () => {
-      // Strategy 1: Check for visible stop button (most reliable)
-      const hasStopButton = config.stopSelectors.some(sel => {
-        const el = document.querySelector(sel);
-        // 🔧 FIX: Shadow DOM도 탐색
-        const shadowEl = !el ? queryShadow(document.body, sel) : null;
-        const finalEl = el || shadowEl;
-        return finalEl && isElementVisible(finalEl);
-      });
+    // 🔧 v14.0: Baseline 캡쳐 - getResponseText 정의 후 호출
+    const baselineText = getResponseText() || '';
+    console.log(`[ModelDock] 📊 Baseline captured: ${baselineText.length} chars`);
 
-      if (hasStopButton) return true;
+    let lastText = baselineText;
+    let lastChangeTime = Date.now();
+    let monitorStartTime = Date.now();
+    let isComplete = false;
+    let hasReceivedNewResponse = false;
+    let newResponseStartTime = 0;
+    let heartbeatInterval;
+    let stableIdleCount = 0;
 
-      // Strategy 2: Check if input/submit is disabled (model still responding)
-      // When model is generating, input is usually disabled
-      const inputDisabled = config.inputSelector && (() => {
-        const input = document.querySelector(config.inputSelector) || queryShadow(document.body, config.inputSelector);
-        if (!input) return false;
-
-        // 🔧 FIX: contenteditable 요소 처리 (Claude 등)
-        if (input.getAttribute('contenteditable') === 'false') return true;
-
-        return (
-          input.disabled ||
-          input.getAttribute('disabled') !== null ||
-          input.getAttribute('aria-disabled') === 'true' ||
-          input.hasAttribute('readonly') ||
-          input.classList.contains('disabled')
-        );
-      })();
-
-      const submitDisabled = config.submitSelector && (() => {
-        const submit = document.querySelector(config.submitSelector) || queryShadow(document.body, config.submitSelector);
-        return submit && (
-          submit.disabled ||
-          submit.getAttribute('disabled') !== null ||
-          submit.getAttribute('aria-disabled') === 'true' ||
-          submit.classList.contains('disabled')
-        );
-      })();
-
-      if (inputDisabled || submitDisabled) return true;
-
-      // Strategy 3: Check for loading indicators (추가 검증)
-      const hasLoadingIndicator = [
-        '[class*="loading"]',
-        '[class*="generating"]',
-        '[class*="thinking"]',
-        '[class*="typing"]',
-        '[aria-busy="true"]'
-      ].some(sel => {
-        const el = document.querySelector(sel) || queryShadow(document.body, sel);
-        return el && isElementVisible(el);
-      });
-
-      if (hasLoadingIndicator) return true;
-
-      return false;
-    };
+    // 🔧 v14.0 CRITICAL FIX: "모델 생성 시작" 감지 플래그
+    let modelStartedGenerating = false;
+    let generatingStartTime = 0;
+    const MIN_GENERATION_DURATION = 3000; // 최소 3초
 
     // === HYBRID MONITORING SYSTEM ===
     // 1. MutationObserver: Immediate text change detection (real-time)
-    // 2. heartbeatInterval: Periodic checks + heartbeat (every 2s)
+    // 2. heartbeatInterval: Periodic checks + UI State Snapshot (every 2s)
     // 3. Safety timeout: Prevent infinite wait (max 3 minutes)
+    // Note: checkIsRunning() 함수 제거됨 - UI State Snapshot 시스템(v10.0)으로 대체
 
     const observer = new MutationObserver(() => {
       if (isComplete) return;
@@ -2176,14 +3411,14 @@
         // 🔧 CRITICAL FIX: Baseline 대비 실질적 증가 확인
         // 이전 대화의 응답과 구분하기 위해 최소 증가분 체크
         const textIncrease = currentText.length - baselineText.length;
-        
+
         if (textIncrease > 10 && !hasReceivedNewResponse) {
           // 🔧 "새로운" 응답 시작 감지!
           hasReceivedNewResponse = true;
           newResponseStartTime = now;
           console.log(`[ModelDock] 🆕 NEW RESPONSE DETECTED! Increase: ${textIncrease} chars`);
         }
-        
+
         lastText = currentText;
         lastChangeTime = Date.now();
 
@@ -2220,22 +3455,19 @@
       if (isComplete) { clearInterval(heartbeatInterval); return; }
 
       const currentText = getResponseText();
-      const isRunning = checkIsRunning();
-      const timeSinceStart = Date.now() - monitorStartTime;
-      const timeSinceChange = Date.now() - lastChangeTime;
       const now = Date.now();
 
       // Update if MutationObserver missed anything
       if (currentText && currentText !== lastText) {
         // 🔧 CRITICAL FIX: Baseline 대비 새 응답 감지
         const textIncrease = currentText.length - baselineText.length;
-        
+
         if (textIncrease > 10 && !hasReceivedNewResponse) {
           hasReceivedNewResponse = true;
           newResponseStartTime = now;
           console.log(`[ModelDock] 🆕 NEW RESPONSE DETECTED (heartbeat)! Increase: ${textIncrease} chars`);
         }
-        
+
         lastText = currentText;
         lastChangeTime = now;
 
@@ -2256,118 +3488,209 @@
         }
       }
 
-      // 🧠 ARMS (B안): Adaptive Completion Detection
-      // 함수형 if-else 분기 사용
+      // === 🎯 UI State Snapshot 기반 완료 감지 (v14.0) ===
+      // 핵심 변경: 동적 완료 신호 시스템 통합
 
-      // 1. UI Lock Check - 입력 가능 상태 확인
-      const isUILockedRaw = checkModelUILocked(hostname, config.stopSelectors);
-      
-      // 🔧 NEW: 입력 필드가 활성화되어 있는지 직접 확인 (가장 신뢰할 수 있는 지표)
-      const isInputReady = (() => {
-        const input = document.querySelector(config.inputSelector) || queryShadow(document.body, config.inputSelector);
-        if (!input) return false;
-        
-        // contenteditable 요소
-        if (input.getAttribute('contenteditable') === 'true') return true;
-        // textarea/input - disabled가 아니면 준비됨
-        if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-          return !input.disabled && input.getAttribute('aria-disabled') !== 'true';
+      const currentUISnapshot = captureUIStateSnapshot(config);
+      const uiStateResult = isUIStateRestored(initialUISnapshot, currentUISnapshot);
+      const currentNewResponseLength = lastText.length > baselineText.length
+        ? lastText.length - baselineText.length
+        : 0;
+
+      // 🎯 v14.0: 동적 완료 신호 감지 (BATCH1_ANALYSIS 기반)
+      const avgChunkInterval = chunkIntervals.length > 0
+        ? chunkIntervals.reduce((a, b) => a + b, 0) / chunkIntervals.length
+        : 3000;
+      const dynamicCompletionSignal = detectDynamicCompletionSignal(hostname);
+
+      // 동적 신호가 높은 신뢰도로 완료를 감지하면 빠르게 처리
+      if (dynamicCompletionSignal.isComplete && dynamicCompletionSignal.confidence >= 80) {
+        console.log(`[Dynamic Completion v14] 🎯 High confidence signal: ${dynamicCompletionSignal.signal}`);
+      }
+
+      // 🔧 v14.0: 모델 생성 시작 감지
+      // Stop 버튼, 로딩 인디케이터, 또는 입력창 비활성화 = 생성 중
+      if (currentUISnapshot.isGenerating && !modelStartedGenerating) {
+        modelStartedGenerating = true;
+        generatingStartTime = now;
+        console.log(`[UI State v14] 🚀 MODEL STARTED GENERATING!`, {
+          stopButton: currentUISnapshot.stopButton.visible,
+          loadingIndicator: currentUISnapshot.loadingIndicator.visible,
+          inputDisabled: currentUISnapshot.input.found && !currentUISnapshot.input.enabled
+        });
+      }
+
+      // 상태 로그 (v14.0 - modelStartedGenerating 추가)
+      console.log(`[UI State v14] 🔍 Snapshot Check:`, {
+        modelStarted: modelStartedGenerating,
+        isGenerating: currentUISnapshot.isGenerating,
+        restored: uiStateResult.restored,
+        confidence: uiStateResult.confidence,
+        reason: uiStateResult.reason,
+        hasNewResponse: hasReceivedNewResponse,
+        newResponseLen: currentNewResponseLength,
+        elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+      });
+
+      // === 완료 조건 (v14.0 강화) ===
+      // 1. 🆕 모델이 생성을 "시작"했어야 함 (Stop 버튼이 한번이라도 보임)
+      // 2. UI가 "응답 가능 상태"로 복귀 (isUIStateRestored)
+      // 3. 새 응답이 감지됨
+      // 4. 최소 텍스트 길이 충족
+      // 5. 최소 생성 시간 경과
+
+      const minRequiredLength = 30;
+      const hasMinimumResponse = currentNewResponseLength >= minRequiredLength;
+      const generationDuration = modelStartedGenerating ? (now - generatingStartTime) : 0;
+      const hasMinGenerationTime = generationDuration >= MIN_GENERATION_DURATION;
+
+      // 🔧 v14.0 CRITICAL: 모델이 아직 생성 시작 안 함
+      if (!modelStartedGenerating) {
+        const waitTime = now - monitorStartTime;
+
+        // 🔧 v14.0: 텍스트가 있으면 즉시 modelStarted로 간주
+        // Grok 등 일부 모델은 Stop 버튼이 감지 안 됨
+        if (hasReceivedNewResponse && currentNewResponseLength > 100) {
+          console.log(`[UI State v14] 🔶 Text-based start detection: ${currentNewResponseLength} chars found`);
+          modelStartedGenerating = true;
+          generatingStartTime = newResponseStartTime || monitorStartTime;
         }
-        return true;
-      })();
+        // 15초 후에도 UI 신호 없으면 텍스트 기반으로 전환
+        else if (waitTime > 15000 && hasReceivedNewResponse && hasMinimumResponse) {
+          console.warn('[UI State v14] 🔶 Fallback after 15s: Using text-based detection');
+          modelStartedGenerating = true;
+          generatingStartTime = monitorStartTime;
+        }
 
-      // 2. Stream Lock Check
-      const silence = now - lastChunkTime;
-      const adaptiveThreshold = getModelAdaptiveThreshold(hostname, chunkIntervals);
-      
-      // 🔧 CRITICAL FIX: 더 공격적인 완료 감지
-      // 조건: 텍스트 변화 없음 (3초+) + 입력 필드 활성화 → 즉시 완료
-      const textUnchangedTime = now - lastChangeTime;
-      const quickComplete = hasReceivedNewResponse && isInputReady && textUnchangedTime > 3000;
-      
-      // 기존 스트림 락 (더 보수적)
-      const isStreamLocked = silence < adaptiveThreshold;
+        // 모델이 시작 안 했으면 완료 불가
+        if (!modelStartedGenerating) {
+          if (waitTime > 30000) {
+            console.warn(`[UI State v14] ⚠️ Still waiting for model to start (${(waitTime / 1000).toFixed(0)}s)`);
+          }
+          return;
+        }
+      }
 
-      // 🔧 CRITICAL FIX: 새 응답 시작 후 최소 대기 시간 (3초로 단축)
-      const timeSinceNewResponse = hasReceivedNewResponse ? (now - newResponseStartTime) : 0;
-      const minResponseTime = 3000; // 5초 → 3초로 단축
-      const isTooEarlyAfterNewResponse = hasReceivedNewResponse && timeSinceNewResponse < minResponseTime;
+      // 🔧 v14.0: 동적 완료 감지 시스템 (하드코딩 제거)
+      // 각 모델의 특성에 맞는 완료 조건을 동적으로 계산
+      const timeSinceLastChange = now - lastChangeTime;
 
-      // 강제 언락 조건 완화
-      const forceUnlock = hasReceivedNewResponse && !isTooEarlyAfterNewResponse && (silence > adaptiveThreshold || quickComplete);
-      const isUILocked = forceUnlock ? false : isUILockedRaw;
-      const effectiveStreamLocked = forceUnlock ? false : isStreamLocked;
+      // === 🎯 동적 안정화 시간 계산 ===
+      // 동적 완료 신호 + 평균 청크 간격 기반
+      const dynamicStabilizationTime = calculateDynamicStabilizationTime(
+        hostname,
+        avgChunkInterval,
+        dynamicCompletionSignal
+      );
 
-      // 디버그 로그
-      console.log(`[ARMS] ${quickComplete ? 'QUICK_COMPLETE' : isUILocked ? 'UI_ACTIVE' : effectiveStreamLocked ? 'STREAM_ACTIVE' : isTooEarlyAfterNewResponse ? 'TOO_EARLY' : 'COMPLETE'} | Silence: ${(silence / 1000).toFixed(1)}s | TextUnchanged: ${(textUnchangedTime / 1000).toFixed(1)}s | InputReady: ${isInputReady}`);
+      // 동적 임계값 설정
+      let textStableThreshold = dynamicStabilizationTime;
+      let minResponseLength = 100; // 기본값: 100자 (동적 신호가 있으면 더 낮아도 됨)
+      let finalStableThreshold = dynamicStabilizationTime * 1.5;
 
-      // 🔧 CRITICAL FIX: 최소 안전 대기 시간 (2초로 단축)
-      const timeSinceMonitorStart = now - monitorStartTime;
-      if (timeSinceMonitorStart < 2000) {
-        console.log(`[ARMS] Safety: Too early since monitor start (${(timeSinceMonitorStart / 1000).toFixed(1)}s < 2s)`);
+      // 🎯 v14.0: 동적 완료 신호가 높은 신뢰도면 임계값 대폭 낮춤
+      if (dynamicCompletionSignal.isComplete && dynamicCompletionSignal.confidence >= 80) {
+        textStableThreshold = Math.max(1500, avgChunkInterval * 2);
+        minResponseLength = 30; // 신뢰도 높으면 짧은 응답도 허용
+        finalStableThreshold = Math.max(2000, avgChunkInterval * 3);
+        console.log(`[Dynamic v14] High confidence completion - using fast thresholds: ${textStableThreshold}ms`);
+      }
+      // 동적 완료 신호가 중간 신뢰도면 약간 낮춤
+      else if (dynamicCompletionSignal.confidence >= 50) {
+        textStableThreshold = dynamicStabilizationTime * 0.7;
+        finalStableThreshold = dynamicStabilizationTime;
+        console.log(`[Dynamic v14] Medium confidence - using reduced thresholds: ${textStableThreshold}ms`);
+      }
+
+      const textStable = timeSinceLastChange > textStableThreshold;
+      const hasSubstantialResponse = currentNewResponseLength > minResponseLength;
+
+      // 🔧 v14.0: 텍스트 기반 완료는 별도 카운터 사용 (중복 방지)
+      // UI 기반과 텍스트 기반을 독립적으로 처리
+      if (textStable && hasSubstantialResponse && hasReceivedNewResponse && hasMinGenerationTime) {
+        console.log(`[UI State v14] 📝 Text stable for ${(timeSinceLastChange / 1000).toFixed(1)}s with ${currentNewResponseLength} chars (threshold: ${textStableThreshold}ms)`);
+
+        // UI가 idle이거나, finalStableThreshold 이상 텍스트가 안정화되었으면 완료
+        if (uiStateResult.restored || timeSinceLastChange > finalStableThreshold) {
+          stableIdleCount++;
+          if (stableIdleCount >= 2) {
+            console.log(`[UI State v14] ✅ TEXT-BASED COMPLETION:`, {
+              model: hostname,
+              textStableFor: `${(timeSinceLastChange / 1000).toFixed(1)}s`,
+              responseLength: currentNewResponseLength,
+              uiRestored: uiStateResult.restored,
+              generationDuration: `${(generationDuration / 1000).toFixed(1)}s`,
+              thresholds: { textStable: textStableThreshold, minLength: minResponseLength, finalStable: finalStableThreshold }
+            });
+            finish();
+            return;  // 🔧 CRITICAL: 여기서 반드시 return
+          } else {
+            console.log(`[UI State v14] Text-based verification ${stableIdleCount}/2`);
+          }
+        }
+        return;  // 🔧 텍스트 기반 체크를 했으면 UI 기반 체크 스킵 (중복 방지)
+      }
+
+      // UI 상태가 아직 "응답 중"이면 대기
+      if (!uiStateResult.restored) {
+        stableIdleCount = 0;
         return;
       }
 
-      // 🔧 CRITICAL FIX: 새 응답이 감지되어야만 완료 판정 진행
+      // 새 응답이 아직 없으면 대기
       if (!hasReceivedNewResponse) {
+        if (now - monitorStartTime > 45000) {
+          console.warn('[UI State v14] ⚠️ No response detected after 45s');
+        }
         return;
       }
 
-      // 🔧 CRITICAL FIX: 새 응답 시작 후 최소 대기 시간 체크
-      if (isTooEarlyAfterNewResponse) {
-        console.log(`[ARMS] Safety: Too early since new response (${(timeSinceNewResponse / 1000).toFixed(1)}s < ${minResponseTime / 1000}s)`);
-        return;
-      }
-      
-      // 🔧 CRITICAL FIX: 실제 새 응답 텍스트가 있는지 확인
-      const newResponseText = lastText.length > baselineText.length ? lastText.substring(baselineText.length).trim() : '';
-      if (newResponseText.length < 20) {
-        console.log(`[ARMS] New response too short: ${newResponseText.length} chars`);
+      // 최소 응답 길이 체크
+      if (!hasMinimumResponse) {
+        console.log(`[UI State v14] Response too short: ${currentNewResponseLength}/${minResponseLength} chars`);
         return;
       }
 
-      // 🔧 NEW: Quick Complete 경로 - 입력 가능 + 텍스트 안정화 시 즉시 완료
-      if (quickComplete) {
-        console.log(`[ModelDock] ✅ QUICK COMPLETION: Input ready + text stable for ${(textUnchangedTime / 1000).toFixed(1)}s`);
-        finish();
+      // 🔧 v14.0: 최소 생성 시간 체크
+      if (!hasMinGenerationTime) {
+        console.log(`[UI State v14] ⏳ Too fast: ${(generationDuration / 1000).toFixed(1)}s < ${MIN_GENERATION_DURATION / 1000}s minimum`);
         return;
       }
 
-      // 기존 경로: UI/Stream 락 체크
-      if (isUILocked || effectiveStreamLocked) {
-        fallbackCheckCount = 0;
-        return;
-      }
+      // === 모든 조건 충족 → 완료 판정 ===
+      stableIdleCount++;
 
-      // Complete! -> 2회 연속 확인으로 완화
-      fallbackCheckCount++;
-
-      const requiredChecks = 2; // 🔧 3회 → 2회로 완화 (더 빠른 완료 감지)
-
-      if (fallbackCheckCount >= requiredChecks) {
-        console.log(`[ModelDock] ✅ Completion detected by ARMS (${fallbackCheckCount}x verified):`, requestId);
+      if (stableIdleCount >= 2) {
+        console.log(`[UI State v14] ✅ COMPLETION CONFIRMED:`, {
+          reason: uiStateResult.reason,
+          confidence: uiStateResult.confidence,
+          responseLength: currentNewResponseLength,
+          generationDuration: `${(generationDuration / 1000).toFixed(1)}s`,
+          verifications: stableIdleCount
+        });
         finish();
         return;
       } else {
-        console.log(`[ModelDock] Verification ${fallbackCheckCount}/${requiredChecks}...`);
+        console.log(`[UI State v14] Verification ${stableIdleCount}/2 - waiting for stable state...`);
       }
 
-      // 3. Error timeout (no response after 3 minutes)
-      // Prevents infinite wait on errors
-      if (timeSinceStart > 180000) {
-        console.warn('[ModelDock] Timeout: No response after 3 minutes:', requestId);
-        finish(); // Complete with whatever we have (might be empty)
+      // 안전 타임아웃 (3분)
+      if (now - monitorStartTime > 180000) {
+        console.warn('[UI State v14] ⏰ Timeout: 3 minutes elapsed, forcing completion');
+        finish();
         return;
       }
 
-      // Send heartbeat
+      // 하트비트 전송
       window.parent.postMessage({
         type: 'MODEL_DOCK_HEARTBEAT',
         payload: {
           requestId,
-          status: isRunning ? 'running' : 'idle',
+          status: uiStateResult.restored ? 'idle' : 'running',
+          modelStarted: modelStartedGenerating,
+          uiConfidence: uiStateResult.confidence,
           textLength: lastText.length,
-          newResponseLength: newResponseText.length,
+          newResponseLength: currentNewResponseLength,
           host: window.location.host
         }
       }, '*');
@@ -2378,27 +3701,27 @@
       isComplete = true;
       observer.disconnect();
       clearInterval(heartbeatInterval);
-      
+
       // 🔧 CRITICAL FIX: 새 응답 텍스트만 추출하여 전송
       // baseline 이후에 추가된 텍스트만 실제 응답으로 간주
-      const newResponseText = lastText.length > baselineText.length 
-        ? lastText.substring(baselineText.length).trim() 
+      const newResponseText = lastText.length > baselineText.length
+        ? lastText.substring(baselineText.length).trim()
         : lastText;  // fallback: 전체 텍스트
-      
+
       console.log(`[ModelDock] Response monitoring complete - Total: ${lastText.length} chars, New: ${newResponseText.length} chars`);
-      
+
       window.parent.postMessage({
         type: 'MODEL_DOCK_RESPONSE_COMPLETE',
-        payload: { 
-          requestId, 
+        payload: {
+          requestId,
           text: newResponseText,  // 🔧 새 응답만 전송
           fullText: lastText,     // 전체 텍스트 (디버깅용)
           baselineLength: baselineText.length,
-          host: window.location.host 
+          host: window.location.host
         }
       }, '*');
     }
   }
 
-  console.log('[ModelDock] Content Script Loaded (v8.1 - BrainFlow Phase Fix)');
+  console.log('[ModelDock] Content Script Loaded (v14.0 - Dynamic Completion Detection System)');
 })();

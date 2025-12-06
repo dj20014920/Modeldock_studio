@@ -43,6 +43,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
 
+  // Normalize legacy view state: force to chats if history was previously stored
+  useEffect(() => {
+    if (currentView === 'history') {
+      onViewChange('chats');
+    }
+  }, [currentView, onViewChange]);
+
   // Load BYOK Settings
   useEffect(() => {
     const loadBYOK = async () => {
@@ -249,15 +256,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     : "bg-slate-50 text-slate-500 border border-slate-100"
                             )}>
                               {item.mode === 'brainflow' ? 'Brain Flow' :
-                                item.mode === 'auto-routing' ? 'Auto Routing' :
-                                  item.mode === 'byok' ? 'BYOK' : 'Manual'}
+                              item.mode === 'auto-routing' ? 'Auto Routing' :
+                                item.mode === 'byok' ? 'BYOK' : 'Manual'}
                             </span>
                           )}
-                          {item.linkCount ? (
-                            <span className="px-1 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-semibold rounded border border-blue-100">
-                              Link
-                            </span>
-                          ) : null}
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
@@ -556,7 +558,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 onClick={() => {
-                  if (item.id === 'chats' || item.id === 'models' || item.id === 'history') {
+                  if (item.id === 'chats' || item.id === 'models') {
                     onViewChange(item.id as SidebarView);
                   } else if (item.id === 'prompts') {
                     onTriggerPrompt();
@@ -583,8 +585,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-7 mb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider flex justify-between items-center">
         <span>
           {currentView === 'chats' ? t('sidebar.activeSessions') :
-            currentView === 'history' ? 'Conversation History' :
-              t('sidebar.availableModels')}
+            t('sidebar.availableModels')}
         </span>
         {currentView === 'models' && (
           <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">{t('sidebar.maxInstancesHint')}</span>

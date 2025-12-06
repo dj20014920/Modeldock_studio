@@ -51,7 +51,6 @@ export class HistoryService {
         mainBrainId: string | null,
         options?: {
             mode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual';
-            links?: Record<string, string>;
             titleOverride?: string;
             previewOverride?: string;
             force?: boolean;
@@ -64,11 +63,8 @@ export class HistoryService {
         // Check if there are any messages
         const hasMessages = activeModels.some(m => m.messages && m.messages.length > 0);
 
-        const linkMap = options?.links || this.extractLinks(activeModels);
-        const hasLinks = Object.keys(linkMap).length > 0;
-
-        if (!options?.force && !hasMessages && !hasLinks) {
-            // Don't save empty chats unless forced or links exist
+        if (!options?.force && !hasMessages) {
+            // Don't save empty chats unless forced
             return id || this.generateId();
         }
 
@@ -116,7 +112,6 @@ export class HistoryService {
             preview,
             modelCount: activeModels.length,
             mode,
-            linkCount: Object.keys(linkMap).length || undefined,
             lastPrompt
         };
 
@@ -130,7 +125,6 @@ export class HistoryService {
             id: conversationId,
             activeModels,
             mainBrainId,
-            conversationLinks: linkMap,
             mode,
             lastPrompt
         };
@@ -174,16 +168,6 @@ export class HistoryService {
         keysToRemove.push(METADATA_KEY);
 
         await chrome.storage.local.remove(keysToRemove);
-    }
-
-    private extractLinks(activeModels: ActiveModel[]): Record<string, string> {
-        const links: Record<string, string> = {};
-        activeModels.forEach(m => {
-            if (m.conversationUrl) {
-                links[m.instanceId] = m.conversationUrl;
-            }
-        });
-        return links;
     }
 
     private deriveMode(activeModels: ActiveModel[]): ConversationMetadata['mode'] {

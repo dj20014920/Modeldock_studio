@@ -553,6 +553,11 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       setBrainFlowPhase(0);
       setBfWaitingModels([]);
       setBfCompletedModels([]);
+
+      // 🔧 Force reset status for all models
+      activeModels.forEach(m => {
+        onStatusUpdate?.(m.modelId, 'idle');
+      });
     }
   };
 

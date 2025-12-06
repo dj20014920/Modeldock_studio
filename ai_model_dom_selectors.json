@@ -1,0 +1,710 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "last_updated": "2025-12-04",
+    "description": "DOM selectors for 13 major AI chat interfaces",
+    "note": "These selectors may change as websites update. Always verify before use."
+  },
+  "models": {
+    "claude": {
+      "name": "Claude (Anthropic)",
+      "url": "https://claude.ai",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label*='Stop']",
+          "alternatives": [
+            "button:has-text('Stop generating')",
+            "button.stop-button",
+            "[data-testid='stop-button']"
+          ],
+          "detection": "button:has(svg[data-icon='stop'])"
+        },
+        "loading_indicator": {
+          "primary": "[data-testid='chat-loading']",
+          "alternatives": [
+            ".loading-indicator",
+            "[aria-busy='true']",
+            ".animate-pulse"
+          ]
+        },
+        "input_field": {
+          "primary": "div[contenteditable='true'][role='textbox']",
+          "alternatives": [
+            "textarea[placeholder*='Reply']",
+            "[data-testid='chat-input']",
+            ".ProseMirror"
+          ],
+          "disabled_detection": "[contenteditable='false']"
+        },
+        "response_area": {
+          "primary": "[data-testid='conversation']",
+          "alternatives": [
+            ".message-list",
+            "[role='log']",
+            ".conversation-container"
+          ]
+        },
+        "submit_button": {
+          "primary": "button[aria-label*='Send']",
+          "alternatives": [
+            "button[type='submit']",
+            "[data-testid='send-button']"
+          ]
+        }
+      },
+      "completion": {
+        "minWaitMs": 25000,
+        "adaptiveMultiplier": 1.5,
+        "checks": [
+          "stopButton",
+          "inputEnabled"
+        ],
+        "thinking": {
+          "enabled": true,
+          "patterns": [
+            "Thinking...",
+            "Reasoning...",
+            "생각 중..."
+          ]
+        }
+      },
+      "features": {
+        "usesNetworkMonitor": true,
+        "disableInputOnGenerate": true,
+        "hasThinkingMode": true
+      },
+      "plugin": "claude"
+    },
+    "chatgpt": {
+      "name": "ChatGPT (OpenAI)",
+      "url": "https://chatgpt.com",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label='Stop generating']",
+          "alternatives": [
+            "button:has-text('Stop generating')",
+            "[data-testid='stop-button']",
+            "button.btn-neutral:has(svg)"
+          ],
+          "detection": "button[aria-label*='Stop']"
+        },
+        "loading_indicator": {
+          "primary": "[data-testid='streaming-indicator']",
+          "alternatives": [
+            ".result-streaming",
+            "[aria-live='polite']",
+            ".cursor-blink"
+          ]
+        },
+        "input_field": {
+          "primary": "#prompt-textarea",
+          "alternatives": [
+            "textarea[placeholder*='Message ChatGPT']",
+            "[data-id='root']",
+            "textarea.m-0"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": "[data-testid='conversation-turn-list']",
+          "alternatives": [
+            ".flex.flex-col.items-center",
+            "main.relative",
+            "[role='presentation']"
+          ]
+        },
+        "submit_button": {
+          "primary": "button[data-testid='send-button']",
+          "alternatives": [
+            "button[aria-label='Send prompt']",
+            "button.absolute.p-1"
+          ]
+        }
+      },
+      "completion": {
+        "minWaitMs": 15000,
+        "adaptiveMultiplier": 1.2,
+        "checks": [
+          "stopButton",
+          "inputEnabled"
+        ],
+        "thinking": {
+          "enabled": false,
+          "patterns": []
+        }
+      },
+      "features": {
+        "usesNetworkMonitor": true,
+        "disableInputOnGenerate": true,
+        "hasThinkingMode": false
+      },
+      "plugin": "chatgpt"
+    },
+    "gemini": {
+      "name": "Gemini (Google)",
+      "url": "https://gemini.google.com",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label*='Stop']",
+          "alternatives": [
+            "button.stop-button",
+            "[data-test-id='stop-generating']",
+            "button:has-text('Stop generating')"
+          ],
+          "detection": "button[mattooltip*='Stop']"
+        },
+        "loading_indicator": {
+          "primary": ".loading-dots",
+          "alternatives": [
+            "[aria-label='Generating']",
+            ".response-loading",
+            "mat-progress-spinner"
+          ]
+        },
+        "input_field": {
+          "primary": "rich-textarea[aria-label*='Enter a prompt']",
+          "alternatives": [
+            ".ql-editor",
+            "div[contenteditable='true']",
+            "[data-test-id='chat-input']"
+          ],
+          "disabled_detection": "[aria-disabled='true']"
+        },
+        "response_area": {
+          "primary": ".conversation-container",
+          "alternatives": [
+            "[role='main']",
+            ".response-list",
+            "model-response"
+          ]
+        },
+        "submit_button": {
+          "primary": "button[aria-label*='Send']",
+          "alternatives": [
+            "button.send-button",
+            "[mattooltip='Send message']"
+          ]
+        }
+      },
+      "completion": {
+        "minWaitMs": 18000,
+        "adaptiveMultiplier": 1.4,
+        "checks": [
+          "stopButton",
+          "inputEnabled"
+        ],
+        "thinking": {
+          "enabled": true,
+          "patterns": [
+            "Thinking...",
+            "Working on it...",
+            "생각 중..."
+          ]
+        }
+      },
+      "features": {
+        "usesNetworkMonitor": true,
+        "disableInputOnGenerate": true,
+        "hasThinkingMode": true
+      },
+      "plugin": "gemini"
+    },
+    "grok": {
+      "name": "Grok (X.AI)",
+      "url": "https://x.ai/grok",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label='Stop']",
+          "alternatives": [
+            "[data-testid='stop-generating']",
+            "button:has-text('Stop')"
+          ],
+          "detection": "button svg[data-icon='stop']"
+        },
+        "loading_indicator": {
+          "primary": "[data-testid='loading']",
+          "alternatives": [
+            ".generating-indicator",
+            "[aria-busy='true']"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea[placeholder*='Ask Grok']",
+          "alternatives": [
+            "[data-testid='chat-input']",
+            "div[contenteditable='true']"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": "[data-testid='conversation']",
+          "alternatives": [
+            ".message-container",
+            "[role='log']"
+          ]
+        },
+        "submit_button": {
+          "primary": "button[data-testid='send']",
+          "alternatives": [
+            "button[aria-label='Send message']"
+          ]
+        }
+      }
+    },
+    "perplexity": {
+      "name": "Perplexity AI",
+      "url": "https://perplexity.ai",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label='Stop generating']",
+          "alternatives": [
+            "[data-testid='stop-button']",
+            "button.stop-generating"
+          ],
+          "detection": "button:has-text('Stop')"
+        },
+        "loading_indicator": {
+          "primary": "[data-testid='perplexity-loading']",
+          "alternatives": [
+            ".loading-animation",
+            "[aria-live='polite']"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea[placeholder*='Ask anything']",
+          "alternatives": [
+            "[data-testid='search-input']",
+            "textarea.w-full"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": "[data-testid='answer-container']",
+          "alternatives": [
+            ".prose",
+            "main article"
+          ]
+        },
+        "submit_button": {
+          "primary": "button[aria-label='Submit']",
+          "alternatives": [
+            "button[type='submit']",
+            "[data-testid='submit-button']"
+          ]
+        }
+      }
+    },
+    "deepseek": {
+      "name": "DeepSeek Chat",
+      "url": "https://chat.deepseek.com",
+      "selectors": {
+        "stop_button": {
+          "primary": "button.stop-button",
+          "alternatives": [
+            "button[aria-label*='Stop']",
+            "[data-testid='stop-generating']"
+          ],
+          "detection": "button:has-text('停止')"
+        },
+        "loading_indicator": {
+          "primary": ".generating",
+          "alternatives": [
+            "[data-loading='true']",
+            ".response-streaming"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea.chat-input",
+          "alternatives": [
+            "[placeholder*='输入消息']",
+            "div[contenteditable='true']"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": ".chat-messages",
+          "alternatives": [
+            ".message-list",
+            "[role='log']"
+          ]
+        },
+        "submit_button": {
+          "primary": "button.send-button",
+          "alternatives": [
+            "button[type='submit']"
+          ]
+        }
+      }
+    },
+    "qwen": {
+      "name": "Qwen Chat (Alibaba)",
+      "url": "https://qwen.ai",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label='停止生成']",
+          "alternatives": [
+            ".stop-generating-btn",
+            "button:has-text('Stop')"
+          ],
+          "detection": "button.ant-btn-dangerous"
+        },
+        "loading_indicator": {
+          "primary": ".ant-spin",
+          "alternatives": [
+            "[data-loading='true']",
+            ".loading-spinner"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea.ant-input",
+          "alternatives": [
+            "[placeholder*='请输入']",
+            "div[contenteditable='true']"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": ".chat-content",
+          "alternatives": [
+            ".message-container",
+            ".ant-list"
+          ]
+        },
+        "submit_button": {
+          "primary": "button.send-btn",
+          "alternatives": [
+            "button[type='submit']",
+            ".ant-btn-primary"
+          ]
+        }
+      }
+    },
+    "lmarena": {
+      "name": "LMArena (LMSYS)",
+      "url": "https://chat.lmsys.org",
+      "selectors": {
+        "stop_button": {
+          "primary": "button.stop-btn",
+          "alternatives": [
+            "button:has-text('Stop')",
+            "[data-testid='stop-button']"
+          ],
+          "detection": "button.svelte-*[disabled=false]"
+        },
+        "loading_indicator": {
+          "primary": ".generating-indicator",
+          "alternatives": [
+            "[aria-busy='true']",
+            ".loading-dots"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea.chat-input",
+          "alternatives": [
+            "[placeholder*='Enter your message']",
+            "textarea.svelte-*"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": ".chatbot",
+          "alternatives": [
+            ".message-wrap",
+            "[role='log']"
+          ]
+        },
+        "submit_button": {
+          "primary": "button.primary",
+          "alternatives": [
+            "button:has-text('Send')",
+            "[data-testid='submit']"
+          ]
+        }
+      }
+    },
+    "kimi": {
+      "name": "Kimi Chat (Moonshot AI)",
+      "url": "https://kimi.moonshot.cn",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label='停止生成']",
+          "alternatives": [
+            ".stop-button",
+            "button:has-text('停止')"
+          ],
+          "detection": "button.danger"
+        },
+        "loading_indicator": {
+          "primary": ".generating-status",
+          "alternatives": [
+            "[data-generating='true']",
+            ".typing-indicator"
+          ]
+        },
+        "input_field": {
+          "primary": "div[contenteditable='true'].input-area",
+          "alternatives": [
+            "textarea[placeholder*='和Kimi']",
+            ".chat-input"
+          ],
+          "disabled_detection": "[contenteditable='false']"
+        },
+        "response_area": {
+          "primary": ".conversation-area",
+          "alternatives": [
+            ".message-list",
+            "[role='main']"
+          ]
+        },
+        "submit_button": {
+          "primary": "button.send-btn",
+          "alternatives": [
+            "button[aria-label='发送']"
+          ]
+        }
+      }
+    },
+    "mistral": {
+      "name": "Mistral Chat (Le Chat)",
+      "url": "https://chat.mistral.ai",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label='Stop generation']",
+          "alternatives": [
+            "button:has-text('Stop')",
+            ".stop-generating"
+          ],
+          "detection": "button.text-red-500"
+        },
+        "loading_indicator": {
+          "primary": "[data-testid='streaming']",
+          "alternatives": [
+            ".animate-pulse",
+            "[aria-live='polite']"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea[placeholder*='Type a message']",
+          "alternatives": [
+            "div[contenteditable='true']",
+            "[data-testid='chat-input']"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": "[data-testid='chat-messages']",
+          "alternatives": [
+            ".messages-container",
+            "main.flex-1"
+          ]
+        },
+        "submit_button": {
+          "primary": "button[aria-label='Send message']",
+          "alternatives": [
+            "button[type='submit']",
+            ".send-button"
+          ]
+        }
+      }
+    },
+    "openrouter": {
+      "name": "OpenRouter Chat",
+      "url": "https://openrouter.ai/chat",
+      "selectors": {
+        "stop_button": {
+          "primary": "button.stop-generation",
+          "alternatives": [
+            "button[aria-label='Stop']",
+            "[data-testid='stop-btn']"
+          ],
+          "detection": "button:has-text('Stop')"
+        },
+        "loading_indicator": {
+          "primary": ".generating-indicator",
+          "alternatives": [
+            "[data-generating='true']",
+            ".loading-spinner"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea.chat-input",
+          "alternatives": [
+            "[placeholder*='Message']",
+            "div[contenteditable='true']"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": ".chat-container",
+          "alternatives": [
+            ".messages",
+            "[role='log']"
+          ]
+        },
+        "submit_button": {
+          "primary": "button.submit-btn",
+          "alternatives": [
+            "button[type='submit']",
+            "[aria-label='Send']"
+          ]
+        }
+      }
+    },
+    "github_copilot": {
+      "name": "GitHub Copilot Chat",
+      "url": "https://github.com/copilot",
+      "selectors": {
+        "stop_button": {
+          "primary": "button[aria-label='Stop generating']",
+          "alternatives": [
+            ".octicon-stop",
+            "button:has-text('Stop')"
+          ],
+          "detection": "button.btn-sm.btn-danger"
+        },
+        "loading_indicator": {
+          "primary": "[data-testid='copilot-loading']",
+          "alternatives": [
+            ".loading-indicator",
+            "[aria-busy='true']"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea#copilot-panel-input",
+          "alternatives": [
+            "[placeholder*='Ask Copilot']",
+            ".copilot-input"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": ".copilot-chat-container",
+          "alternatives": [
+            "[data-testid='chat-messages']",
+            ".discussion-timeline"
+          ]
+        },
+        "submit_button": {
+          "primary": "button.copilot-send-btn",
+          "alternatives": [
+            "button[type='submit']",
+            "[aria-label='Send message']"
+          ]
+        }
+      }
+    },
+    "genspark": {
+      "name": "Genspark AI",
+      "url": "https://genspark.ai",
+      "selectors": {
+        "stop_button": {
+          "primary": "button.stop-btn",
+          "alternatives": [
+            "button[aria-label='Stop']",
+            "[data-action='stop']"
+          ],
+          "detection": "button:has-text('Stop generating')"
+        },
+        "loading_indicator": {
+          "primary": ".generating-status",
+          "alternatives": [
+            "[data-loading='true']",
+            ".spinner"
+          ]
+        },
+        "input_field": {
+          "primary": "textarea.search-input",
+          "alternatives": [
+            "[placeholder*='Ask']",
+            "div[contenteditable='true']"
+          ],
+          "disabled_detection": "textarea:disabled"
+        },
+        "response_area": {
+          "primary": ".spark-container",
+          "alternatives": [
+            ".results",
+            "[role='main']"
+          ]
+        },
+        "submit_button": {
+          "primary": "button.search-btn",
+          "alternatives": [
+            "button[type='submit']",
+            "[aria-label='Search']"
+          ]
+        }
+      }
+    }
+  },
+  "common_patterns": {
+    "stop_button_detection": [
+      "button[aria-label*='Stop']",
+      "button:has-text('Stop')",
+      "button.stop-*",
+      "[data-testid*='stop']",
+      "button:has(svg[data-icon='stop'])"
+    ],
+    "loading_indicators": [
+      "[aria-busy='true']",
+      "[data-loading='true']",
+      ".loading, .generating, .streaming",
+      ".animate-pulse, .animate-spin",
+      "[aria-live='polite']"
+    ],
+    "input_disabled_states": [
+      "textarea:disabled",
+      "[contenteditable='false']",
+      "[aria-disabled='true']",
+      ".disabled",
+      "[disabled]"
+    ],
+    "dynamic_content_areas": [
+      "[role='log']",
+      "[role='main']",
+      "[aria-live='polite']",
+      ".message-list, .conversation",
+      "[data-testid*='message'], [data-testid*='conversation']"
+    ]
+  },
+  "detection_strategies": {
+    "stop_button": {
+      "method": "multi_selector",
+      "priority": [
+        "aria-label",
+        "data-testid",
+        "text content",
+        "class name",
+        "svg icon"
+      ],
+      "fallback": "Monitor DOM for button appearance during generation"
+    },
+    "loading_state": {
+      "method": "combined",
+      "checks": [
+        "aria-busy attribute",
+        "loading class presence",
+        "streaming indicator",
+        "input disabled state",
+        "stop button visibility"
+      ]
+    },
+    "input_availability": {
+      "method": "inverse_loading",
+      "note": "Input is usually disabled when loading=true"
+    }
+  },
+  "implementation_notes": {
+    "selector_stability": "Use multiple fallback selectors as sites frequently update",
+    "mutation_observer": "Recommended for detecting dynamic stop button appearance",
+    "timing": "Some sites delay showing stop button by 100-500ms after stream starts",
+    "framework_specific": {
+      "react": "Look for data-testid attributes",
+      "vue": "Check for v-* directives in HTML",
+      "svelte": "Class names often include svelte-* hash",
+      "angular": "Look for ng-* attributes and mat-* components"
+    },
+    "accessibility": "Prefer aria-label and role attributes for stability",
+    "internationalization": "Text-based selectors may fail in non-English locales"
+  }
+}

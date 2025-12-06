@@ -1,6 +1,6 @@
 
 import { ModelConfig, ModelId, InjectionSelector, PromptData } from './types';
-import { Bot, Cpu, MessageSquare, Sparkles, Clock } from 'lucide-react';
+import { Bot, Cpu, MessageSquare, Sparkles } from 'lucide-react';
 
 export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
   gemini: {
@@ -83,7 +83,7 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
   aistudio: {
     id: 'aistudio',
     name: 'Google AI Studio',
-    url: 'https://aistudio.google.com',
+    url: 'https://aistudio.google.com/apps?source=',
     iconColor: 'bg-blue-600',
     themeColor: 'border-blue-300',
     excludeFromBrainFlow: true // Vibe Coding Tool
@@ -159,7 +159,6 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
 // For the sidebar visual construction
 export const NAV_ITEMS = [
   { id: 'chats', icon: MessageSquare, label: 'Chats' },
-  { id: 'history', icon: Clock, label: 'History' },
   { id: 'models', icon: Bot, label: 'Models' },
   { id: 'prompts', icon: Sparkles, label: 'Prompts' },
   { id: 'settings', icon: Cpu, label: 'Settings' },
