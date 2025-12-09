@@ -5,6 +5,30 @@ const PARTITION_KEY = { topLevelSite: EXTENSION_TOP_LEVEL_SITE };
 
 bootstrapSessionRegistry();
 
+// === Action Icon & Context Menu Setup ===
+// 설치 시 초기화
+chrome.runtime.onInstalled.addListener(() => {
+  // 사이드 패널 동작: 아이콘 클릭으로는 열리지 않음 (우클릭 메뉴로만)
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false })
+    .catch((error) => console.error('[ModelDock] Failed to set panel behavior:', error));
+
+  // 컨텍스트 메뉴 생성 (우클릭 메뉴)
+  chrome.contextMenus.create({
+    id: 'open-sidepanel',
+    title: '사이드 패널에서 열기',
+    contexts: ['action'] // 확장 프로그램 아이콘 우클릭 시에만 표시
+  });
+});
+
+// 컨텍스트 메뉴 클릭 핸들러
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'open-sidepanel' && tab?.id) {
+    chrome.sidePanel.open({ tabId: tab.id })
+      .catch((error) => console.error('[ModelDock] Failed to open side panel:', error));
+  }
+});
+
+// 아이콘 클릭 시 전체 웹사이트 열기 (기본 동작)
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: 'index.html' });
 });

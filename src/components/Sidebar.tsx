@@ -7,7 +7,7 @@ import { twMerge } from 'tailwind-merge';
 import { Plus, Minus, MessageSquare, ArrowRight, Crown, Trash2, Edit2, Check, X } from 'lucide-react';
 
 import { useTranslation } from 'react-i18next';
-import { loadBYOKSettings } from '../services/byokService';
+import { useBYOKModels } from '../hooks/useBYOKModels';
 import { HistoryService } from '../services/historyService';
 
 interface SidebarProps {
@@ -36,7 +36,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLoadHistory
 }) => {
   const { t } = useTranslation();
-  const [byokModels, setByokModels] = useState<{ id: string; name: string; providerId: string; variantId?: string; iconColor: string }[]>([]);
+  
+  // BYOK 모델 목록 (공통 hook 사용 - DRY)
+  const { byokModels } = useBYOKModels();
 
   // History State
   const [historyList, setHistoryList] = useState<ConversationMetadata[]>([]);
@@ -50,69 +52,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [currentView, onViewChange]);
 
-  // Load BYOK Settings
+  // chrome.storage 변경 감지 (히스토리 메타데이터)
   useEffect(() => {
-    const loadBYOK = async () => {
-      const settings = await loadBYOKSettings();
-      if (!settings.enabled) {
-        setByokModels([]);
-        return;
-      }
-
-      // ✅ 멀티 선택: selectedVariants 배열을 펼쳐서 각각 표시
-      const models = Object.entries(settings.providers)
-        .filter(([_, config]) => {
-          // 하위 호환성: selectedVariant(구) 또는 selectedVariants(신) 둘 다 지원
-          const hasVariants = config.selectedVariants && config.selectedVariants.length > 0;
-          const hasLegacyVariant = (config as any).selectedVariant;
-          return config.apiKey && (hasVariants || hasLegacyVariant);
-        })
-        .flatMap(([providerId, config]) => {
-          console.log(`[Sidebar] Processing provider: ${providerId}`);
-          console.log(`[Sidebar] - selectedVariants:`, config.selectedVariants);
-          console.log(`[Sidebar] - legacy selectedVariant:`, (config as any).selectedVariant);
-
-          // 하위 호환성: 기존 selectedVariant를 selectedVariants로 변환
-          let variants = config.selectedVariants || [];
-          if (variants.length === 0 && (config as any).selectedVariant) {
-            variants = [(config as any).selectedVariant];
-          }
-
-          console.log(`[Sidebar] - Final variants array (length: ${variants.length}):`, variants);
-
-          // 각 variant를 별도 항목으로 펼침
-          const mappedModels = variants.map(variantId => {
-            // ✅ 모델명 추출: 'openai/gpt-4o' → 'gpt-4o', 'gpt-4o' → 'gpt-4o'
-            const modelName = variantId.includes('/') ? variantId.split('/').pop()! : variantId;
-
-            const modelItem = {
-              id: `byok-${providerId}-${variantId}`,  // 고유 ID
-              name: modelName,  // ✅ 모델명만 (회사명 제외)
-              providerId,
-              variantId,
-              iconColor: 'bg-purple-500'
-            };
-
-            console.log(`[Sidebar] - Mapped model:`, modelItem);
-            return modelItem;
-          });
-
-          console.log(`[Sidebar] - Total mapped models for ${providerId}:`, mappedModels.length);
-          return mappedModels;
-        });
-
-      console.log(`[Sidebar] ===== FINAL BYOK MODELS (${models.length}) =====`);
-      console.log(models);
-      setByokModels(models);
-    };
-    loadBYOK();
-
     const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      if (changes.byokSettings) {
-        console.log('[Sidebar] BYOK settings changed, reloading...');
-        loadBYOK();
-      }
-      // Reload history if metadata changes
       if (changes.md_history_metadata) {
         loadHistory();
       }

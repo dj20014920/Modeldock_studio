@@ -1,4 +1,4 @@
-// ModelDock Content Script v8.0 (The "Reference Implementation" Port)
+// ModelDock Content Script v15.8 (Multi-Model Completion Detection Fix - DeepSeek, Kimi, Qwen, Mistral, OpenRouter, Gemini)
 // Ported from text-injection-bridge.ts.back
 // 2025.12.06: Refactored for robust completion detection and manifest-first parsing
 // 2025.12.09: Fixed LMArena user message copying and Skip/Empty response issues
@@ -275,7 +275,7 @@ class ChatGPTMonitor extends DefaultMonitor {
       console.log('[ChatGPTMonitor v15.2] 🔴 Generating: streaming-animation class detected');
       return false;
     }
-    
+
     // === Priority 1: 생성 중 명확 신호 → 즉시 false ===
 
     // 1-1. Stop 버튼 visible
@@ -342,7 +342,7 @@ class ChatGPTMonitor extends DefaultMonitor {
       console.log('[ChatGPTMonitor v15.2] 🔴 streaming-animation class detected');
       return true;
     }
-    
+
     const loadingIndicator = this.manifest.selectors?.loading_indicator;
     if (!loadingIndicator) return false;
 
@@ -706,7 +706,7 @@ function resolveManifestFromCache(hostname) {
     for (const target of targets) {
       const selectors = target.inputSelector.split(',').map(s => s.trim());
       console.log(`[ModelDock v15.3] 🔍 Trying selectors for ${target.modelId}:`, selectors);
-      
+
       for (const selector of selectors) {
         let el = null;
 
@@ -753,7 +753,7 @@ function resolveManifestFromCache(hostname) {
 
     const { submitSelector, modelId: targetModelId, forceEnter, delayBeforeSubmit, submitKey } = matchedTarget;
     const effectiveModelId = modelId || targetModelId;
-    
+
     console.log('[ModelDock v15.3] ✅ Input found, proceeding with injection:', {
       elementType: foundInput.tagName,
       isContentEditable: foundInput.isContentEditable,
@@ -836,14 +836,20 @@ function resolveManifestFromCache(hostname) {
               if (btn) {
                 // OpenRouter 전용: 버튼이 완전히 활성화될 때까지 기다림
                 if (isOpenRouter) {
+                  const dataState = btn.getAttribute('data-state');
                   const isFullyEnabled = !btn.disabled &&
                     btn.getAttribute('aria-disabled') !== 'true' &&
                     isElementVisible(btn) &&
                     !btn.classList.contains('opacity-40') &&
-                    btn.getAttribute('disabled') !== '';
+                    !btn.classList.contains('pointer-events-none') &&
+                    dataState !== 'loading' &&
+                    dataState !== 'open' &&
+                    dataState !== 'pending' &&
+                    (!dataState || dataState === 'closed') &&
+                    !btn.hasAttribute('disabled');
 
                   if (!isFullyEnabled) {
-                    console.log(`[ModelDock] OpenRouter: Button not ready yet (attempt ${attemptCount}): disabled=${btn.disabled}, aria-disabled=${btn.getAttribute('aria-disabled')}, visible=${isElementVisible(btn)}, opacity-40=${btn.classList.contains('opacity-40')}`);
+                    console.log(`[ModelDock] OpenRouter: Button not ready yet (attempt ${attemptCount}): disabled=${btn.disabled}, aria-disabled=${btn.getAttribute('aria-disabled')}, visible=${isElementVisible(btn)}, opacity-40=${btn.classList.contains('opacity-40')}, data-state=${btn.getAttribute('data-state')}`);
                     continue; // 아직 준비 안 됨, 다음 시도
                   }
                 } else {
@@ -968,17 +974,17 @@ function resolveManifestFromCache(hostname) {
     else if (modelId === 'chatgpt' || modelId === 'codex' ||
       element.classList.contains('ProseMirror') || element.classList.contains('tiptap')) {
       console.log('[ModelDock v15.4] Using ChatGPT/Codex ProseMirror injection');
-      
+
       // New ChatGPT structure: ProseMirror contenteditable div
       if (element.classList.contains('ProseMirror') && element.id === 'prompt-textarea') {
         console.log('[ModelDock v15.4] 📝 Detected new ChatGPT ProseMirror structure');
-        
+
         // Find and update the paragraph element
         let paragraph = element.querySelector('p[data-placeholder]');
         if (!paragraph) {
           paragraph = element.querySelector('p');
         }
-        
+
         if (paragraph) {
           // Remove placeholder attributes
           paragraph.removeAttribute('data-placeholder');
@@ -995,10 +1001,10 @@ function resolveManifestFromCache(hostname) {
           element.innerHTML = '';
           element.appendChild(p);
         }
-        
+
         // Trigger input events
         triggerInputEvents(element);
-        
+
         // Move cursor to end
         element.focus();
         const range = document.createRange();
@@ -1007,10 +1013,10 @@ function resolveManifestFromCache(hostname) {
         range.collapse(false);
         sel.removeAllRanges();
         sel.addRange(range);
-        
+
         return true;
       }
-      
+
       // Fallback: try paste event for older ChatGPT or TipTap editors
       console.log('[ModelDock v15.4] Using paste event fallback');
       try {
@@ -2282,7 +2288,7 @@ function resolveManifestFromCache(hostname) {
       stabilizationTime: 60000,
       excludeUserMessage: true
     },
-    // === OpenRouter (Custom Parser) - 2025 Final Fix v7 (Deep Shadow Search) ===
+    // === OpenRouter (Custom Parser) - 2025 Final Fix v8 (Simplified Selectors) ===
     {
       hosts: ['openrouter.ai'],
       customParser: dynamicParser,
@@ -2291,8 +2297,9 @@ function resolveManifestFromCache(hostname) {
         'button[aria-label="Stop generating"]',
         'button[aria-label*="Stop"]'
       ],
-      inputSelector: '[data-testid="playground-composer"] textarea, textarea',
-      submitSelector: '[data-testid="playground-composer"] button.bg-primary, button[type="submit"]',
+      inputSelector: 'textarea',
+      // 🔧 v15.8b: broadened submit selectors (new UI variants)
+      submitSelector: 'button.bg-primary.h-9.w-9, button.bg-primary, [data-testid="playground-composer"] button.bg-primary, button[aria-label*="Send"], button[type="submit"], button.bg-primary:has(svg[data-lucide="send"])',
       stabilizationTime: 60000,
       excludeUserMessage: true
     },
@@ -2588,8 +2595,8 @@ function resolveManifestFromCache(hostname) {
     const manifest = manifestFromCaller || resolveManifestFromCache(hostname);
     const manifestSelectors = manifest?.selectors;
 
-    // Strategy 0: Thinking/Generating Text Check (Reasoning Models)
-    // 화면에 'Thinking...' 같은 텍스트가 있으면 무조건 실행 중으로 간주
+    // Strategy 0: Thinking/Generating Status Nodes (avoid full-body false positives)
+    // Only look at visible status/loader nodes instead of full page text to prevent stuck states
     let thinkingTexts = [
       'Thinking...', 'Generating...', 'Reasoning...',
       '생성 중...', '생각 중...', '답변 생성 중',
@@ -2597,19 +2604,20 @@ function resolveManifestFromCache(hostname) {
       '검색 중', '분석 중', '답변 준비', '대기 중', '잠시만'
     ];
 
-    // Add manifest-specific thinking patterns
     if (manifest?.completion?.thinking?.enabled && manifest?.completion?.thinking?.patterns) {
       thinkingTexts = [...thinkingTexts, ...manifest.completion.thinking.patterns];
     }
 
-    // 성능을 위해 body 텍스트의 마지막 3000자만 검사 (Increased scan depth)
-    const bodyText = document.body.innerText || '';
-    // Deep search for reasoning models that might output long checks before answer
-    const recentText = bodyText.slice(-3000);
+    const statusNodes = Array.from(document.querySelectorAll('[role="status"], [aria-live], [class*="loading"], [class*="spinner"], [class*="typing"], [class*="thinking"], [data-testid*="loading"], [data-testid*="status"], button'))
+      .slice(-120); // cap to avoid heavy scans
 
-    if (thinkingTexts.some(t => recentText.includes(t))) {
-      // console.log('[UI Lock] Thinking text detected');
-      return true;
+    for (const node of statusNodes) {
+      if (!isElementVisible(node)) continue;
+      const text = (node.innerText || '').trim();
+      if (!text) continue;
+      if (thinkingTexts.some(t => text.includes(t))) {
+        return true;
+      }
     }
 
     // ====================================================================
@@ -2782,6 +2790,14 @@ function resolveManifestFromCache(hostname) {
         return true;
       }
 
+      // 추가: 로딩/생성 인디케이터 감지 (스피너/typing/generating 클래스)
+      const loadingNodes = Array.from(document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="typing"], [class*="generating"], .animate-spin'));
+      const visibleLoading = loadingNodes.find(node => isElementVisible(node));
+      if (visibleLoading) {
+        console.log('[LMArena UI Lock] Loading indicator visible');
+        return true;
+      }
+
       // 추가: textarea 비활성화 체크
       const textarea = document.querySelector('textarea');
       if (textarea && textarea.disabled) {
@@ -2895,19 +2911,20 @@ function resolveManifestFromCache(hostname) {
         const markdownContent = lastMessageContent.querySelector('.markdown');
         const textLength = markdownContent ? markdownContent.textContent?.trim().length || 0 : 0;
 
-        // 생성 중: aria-busy=true
+        // 생성 중: aria-busy=true (명시적으로 true인 경우만)
         if (ariaBusy === 'true') {
           result.confidence = 0;
           result.signal = 'gemini:aria-busy=true (generating)';
           return result;
         }
 
-        // 완료: aria-busy=false + 충분한 텍스트
-        if (ariaBusy === 'false' && textLength > 50) {
+        // 🔧 v15.8 CRITICAL: 완료 - aria-busy가 'false'이거나 아예 없는 경우 + 충분한 텍스트
+        // geminichat.md 분석 결과: 완료 상태에서는 aria-busy 속성이 없음
+        if ((ariaBusy === 'false' || ariaBusy === null) && textLength > 50) {
           result.isComplete = true;
           result.confidence = 90;
-          result.signal = `gemini:complete (aria-busy=false + text=${textLength})`;
-          console.log('[Dynamic Completion v15.1] Gemini: Complete');
+          result.signal = `gemini:complete (aria-busy=${ariaBusy} + text=${textLength})`;
+          console.log('[Dynamic Completion v15.8] Gemini: Complete');
           return result;
         }
 
@@ -2915,6 +2932,24 @@ function resolveManifestFromCache(hostname) {
           result.confidence = 30;
           result.signal = `gemini:short-text (${textLength}chars)`;
         }
+      }
+
+      // 🔧 v15.8 CRITICAL: bard-avatar.thinking 클래스 체크 (Gemini가 생각 중)
+      // geminithinking.md 분석: 진행 중일 때 .bard-avatar.thinking 클래스 존재
+      const bardAvatarThinking = document.querySelector('.bard-avatar.thinking');
+      if (bardAvatarThinking && isElementVisible(bardAvatarThinking)) {
+        result.confidence = 0;
+        result.signal = 'gemini:bard-avatar.thinking (generating)';
+        return result;
+      }
+
+      // 🔧 v15.9: 로딩 점/스피너 가시 상태도 생성 중 신호로 사용
+      const geminiLoading = Array.from(document.querySelectorAll('.loading-dots, .response-loading, [aria-label="Generating"], mat-progress-spinner'))
+        .find(node => isElementVisible(node));
+      if (geminiLoading) {
+        result.confidence = 0;
+        result.signal = 'gemini:loading-indicator-visible';
+        return result;
       }
 
       // model-thoughts 패널 체크 (생각 중)
@@ -2956,7 +2991,7 @@ function resolveManifestFromCache(hostname) {
       // ChatGPT는 응답 생성 중일 때 마크다운 컨테이너에 'streaming-animation' 클래스를 추가함
       const streamingAnimationElement = document.querySelector('.streaming-animation');
       const isStreamingAnimation = streamingAnimationElement !== null && isElementVisible(streamingAnimationElement);
-      
+
       const streamingIndicator = document.querySelector('[data-testid="streaming-indicator"], .result-streaming, .cursor-blink');
       const textarea = document.querySelector('#prompt-textarea');
 
@@ -3029,7 +3064,7 @@ function resolveManifestFromCache(hostname) {
     }
 
     // === Qwen 전용: 복사 버튼 출현 감지 ===
-    // === Qwen 전용: 🔧 v14.7 완료 감지 (입력창 + 중지버튼 + 액션버튼 기반) ===
+    // === Qwen 전용: 🔧 v15.8 완료 감지 (qwen-chat-package-comp-new-action-control-icons 기반) ===
     if (hostname.includes('chat.qwen.ai') || hostname.includes('qwen.alibaba')) {
       // 1. 마지막 AI 응답 컨테이너 찾기
       const assistantMessages = document.querySelectorAll('.qwen-chat-message-assistant');
@@ -3046,25 +3081,38 @@ function resolveManifestFromCache(hostname) {
         return result;
       }
 
-      // 3. 🔑 1순위: 액션 버튼 존재 확인 (완료 시에만 표시됨)
-      // 좋아요, 싫어요, 재생성 버튼은 응답 완료 후에만 나타남
-      const actionContainer = lastAssistant.querySelector('.response-message-footer .qwen-chat-package-comp-new-action-control');
-      const hasGoodButton = !!lastAssistant.querySelector('[class*="action-control-container-good"]');
-      const hasBadButton = !!lastAssistant.querySelector('[class*="action-control-container-bad"]');
-      const hasRegenerateButton = !!lastAssistant.querySelector('[class*="action-control-container-regenerate"]');
+      // 3. 🔧 v15.8 CRITICAL: qwen-chat-package-comp-new-action-control-icons 컨테이너 확인
+      // 완료 시 이 컨테이너 안에 6개 버튼 (copy, good, bad, share, regenerate, more)이 나타남
+      const actionIconsContainer = lastAssistant?.querySelector('.qwen-chat-package-comp-new-action-control-icons');
+      const actionControlContainers = actionIconsContainer?.querySelectorAll('.qwen-chat-package-comp-new-action-control-container') || [];
+      const hasActionIconsContainer = actionControlContainers.length >= 4; // 최소 4개 이상 (good, bad, regenerate, more 등)
+
+      // 4. 기존 방식 폴백: 액션 버튼 존재 확인 (완료 시에만 표시됨)
+      const actionContainer = lastAssistant?.querySelector('.response-message-footer .qwen-chat-package-comp-new-action-control');
+      const hasGoodButton = !!lastAssistant?.querySelector('[class*="action-control-container-good"]');
+      const hasBadButton = !!lastAssistant?.querySelector('[class*="action-control-container-bad"]');
+      const hasRegenerateButton = !!lastAssistant?.querySelector('[class*="action-control-container-regenerate"]');
       const hasActionButtons = hasGoodButton || hasBadButton || hasRegenerateButton || !!copyButton;
 
-      // 4. 2순위: 입력창 상태 확인
+      // 5. 입력창 상태 확인
       const inputField = document.querySelector('#chat-input, textarea.chat-input');
       const isInputEnabled = inputField && !inputField.disabled;
 
-      // 5. 3순위: 전송 버튼 상태 (완료 시 disabled, 생성 중 활성화)
+      // 6. 전송 버튼 상태 (완료 시 disabled, 생성 중 활성화)
       const sendButton = document.querySelector('button.send-button');
       const isSendButtonDisabled = sendButton && (sendButton.disabled || sendButton.classList.contains('disabled'));
 
-      // 6. 생성 중 신호: Stop 버튼 존재 여부
+      // 7. 생성 중 신호: Stop 버튼 존재 여부
       const stopButton = document.querySelector('button.send-button:not(.disabled):not([disabled]) [class*="stop"], button[aria-label*="Stop"], button[aria-label*="停止"]');
       const hasStopButton = !!stopButton;
+
+      // 디버그 로그
+      console.log('[Qwen v15.8] Completion check:', {
+        hasActionIconsContainer,
+        actionControlCount: actionControlContainers.length,
+        hasGoodButton, hasBadButton, hasRegenerateButton,
+        hasStopButton
+      });
 
       // 🎯 완료 판정 로직
       if (hasStopButton) {
@@ -3074,12 +3122,21 @@ function resolveManifestFromCache(hostname) {
         return result;
       }
 
+      // 🔧 v15.8 CRITICAL: action-control-icons 컨테이너가 있으면 완료 (가장 확실한 신호)
+      if (hasActionIconsContainer && hasResponseText) {
+        result.isComplete = true;
+        result.confidence = 98;
+        result.signal = `qwen:complete (action-icons-container with ${actionControlContainers.length} buttons)`;
+        console.log('[Dynamic Completion v15.8] Qwen: Complete (action-icons-container detected)');
+        return result;
+      }
+
       if (hasActionButtons && hasResponseText) {
         // 액션 버튼(좋아요/싫어요/재생성) + 응답 텍스트 = 완료 (최고 신뢰도)
         result.isComplete = true;
         result.confidence = 95;
         result.signal = `qwen:complete (action-buttons: good=${hasGoodButton}, bad=${hasBadButton}, regen=${hasRegenerateButton})`;
-        console.log('[Dynamic Completion v14.7] Qwen: Complete (action buttons + response text)');
+        console.log('[Dynamic Completion v15.8] Qwen: Complete (action buttons + response text)');
         return result;
       }
 
@@ -3096,7 +3153,7 @@ function resolveManifestFromCache(hostname) {
         result.isComplete = true;
         result.confidence = 85;
         result.signal = 'qwen:complete (input-enabled + send-disabled + text-exists)';
-        console.log('[Dynamic Completion v14.7] Qwen: Complete (fallback - input/send state)');
+        console.log('[Dynamic Completion v15.8] Qwen: Complete (fallback - input/send state)');
         return result;
       }
 
@@ -3157,7 +3214,11 @@ function resolveManifestFromCache(hostname) {
         ? actionContent.querySelectorAll('.icon-button')
         : actionContainer?.querySelectorAll('.icon-button') || [];
 
-      const hasActionButtons = iconButtons.length >= 2 && isElementVisible(actionContainer);
+      // 🔧 v15.9: 일부 상태에서 actions 컨테이너가 visibility:hidden 이지만 버튼 DOM은 존재하므로 가시성 검사 완화
+      const actionsVisible = isElementVisible(actionContainer) || isElementVisible(actionContent) || !!actionContainer || !!actionContent;
+
+      // 🔧 v15.9: icon-button이 4개 이상이면 완료 후보 (Copy/Refresh/Share/Like/Dislike 중 최소 4개)
+      const hasActionButtons = iconButtons.length >= 4 && actionsVisible;
 
       // 2. 응답 텍스트 체크 - .markdown-container .markdown 또는 .markdown
       const markdownContainer = lastAssistant.querySelector('.markdown-container');
@@ -3203,9 +3264,9 @@ function resolveManifestFromCache(hostname) {
       }
     }
 
-    // === DeepSeek 전용: 🔧 v14.12 마지막 메시지 기반 액션 버튼 + 전송버튼 상태 완료 감지 ===
+    // === DeepSeek 전용: 🔧 v15.8 마지막 메시지 기반 완료 감지 (_43c05b5 클래스 체크 추가) ===
     if (hostname.includes('chat.deepseek.com')) {
-      // 🔑 핵심 변경: 마지막 AI 메시지 컨테이너에서만 액션 버튼 확인 (조기 완료 방지)
+      // 🔑 핵심 변경 v15.8: _43c05b5 클래스가 완료 신호, d7dc56a8 클래스가 진행중 신호
 
       // 1. 모든 메시지 컨테이너 가져오기 (ds-message 또는 _4f9bf79 클래스)
       const messageCandidates = Array.from(document.querySelectorAll('._4f9bf79, .ds-message'));
@@ -3217,6 +3278,20 @@ function resolveManifestFromCache(hostname) {
           lastMessage = candidate;
           break;
         }
+      }
+
+      // 🔧 v15.8 CRITICAL: _43c05b5 vs d7dc56a8 클래스로 완료 여부 판단
+      // 완료된 메시지: _4f9bf79 _43c05b5 클래스 조합
+      // 진행중 메시지: _4f9bf79 d7dc56a8 클래스 조합
+      const hasCompletedClass = lastMessage?.classList.contains('_43c05b5');
+      const hasGeneratingClass = lastMessage?.classList.contains('d7dc56a8');
+
+      if (hasGeneratingClass && !hasCompletedClass) {
+        // d7dc56a8 클래스만 있고 _43c05b5 없으면 아직 생성 중
+        result.confidence = 0;
+        result.signal = 'deepseek:generating (d7dc56a8 class present, no _43c05b5)';
+        console.log('[DeepSeek v15.8] 🔴 Still generating: d7dc56a8 class detected');
+        return result;
       }
 
       // 2. 마지막 메시지 내에서 액션 버튼 확인 (시맨틱 클래스 우선, 해시 클래스는 폴백)
@@ -3276,12 +3351,21 @@ function resolveManifestFromCache(hostname) {
         return result;
       }
 
+      // 🔧 v15.8 CRITICAL: _43c05b5 클래스가 있으면 완료 (가장 확실한 신호)
+      if (hasCompletedClass && textLength > 0) {
+        result.isComplete = true;
+        result.confidence = 98;
+        result.signal = `deepseek:complete (_43c05b5 class + text=${textLength})`;
+        console.log('[Dynamic Completion v15.8] DeepSeek: Complete (_43c05b5 class detected)');
+        return result;
+      }
+
       // 🔑 최우선: 마지막 메시지 내 액션 버튼 + 텍스트 존재 = 완료 (최고 신뢰도)
       if (hasActionButtonsInLastMessage && textLength > 0) {
         result.isComplete = true;
         result.confidence = 95;
         result.signal = `deepseek:complete (last-msg-actions + text=${textLength})`;
-        console.log('[Dynamic Completion v14.11] DeepSeek: Complete (action buttons in last message)');
+        console.log('[Dynamic Completion v15.8] DeepSeek: Complete (action buttons in last message)');
         return result;
       }
 
@@ -3345,14 +3429,18 @@ function resolveManifestFromCache(hostname) {
       ];
       const stopBtn = stopSelectors.map(s => document.querySelector(s)).find(el => el && isElementVisible(el));
 
+      // 3.5 로딩/생성 인디케이터 존재 여부 확인
+      const loadingNodes = Array.from(document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="typing"], [class*="generating"], .animate-spin'));
+      const visibleLoading = loadingNodes.find(node => isElementVisible(node));
+
       // 4. 입력창 상태 확인
       const textarea = document.querySelector('textarea:not([disabled])');
       const isTextareaEnabled = textarea && !textarea.disabled;
 
       // 생성 중
-      if (stopBtn) {
+      if (stopBtn || visibleLoading) {
         result.confidence = 0;
-        result.signal = 'lmarena:generating (stop-button visible)';
+        result.signal = 'lmarena:generating (stop/loader visible)';
         return result;
       }
 
@@ -3376,6 +3464,103 @@ function resolveManifestFromCache(hostname) {
       // 대기 중
       result.confidence = responseTextLen > 0 ? 30 : 0;
       result.signal = responseTextLen > 0 ? `lmarena:short-text (${responseTextLen}chars)` : 'lmarena:waiting';
+      return result;
+    }
+
+    // === Mistral 전용: 🔧 v15.8 완료 감지 (fade-in + inert + disabled 기반) ===
+    if (hostname.includes('chat.mistral.ai')) {
+      // 1. 마지막 assistant 메시지 찾기
+      const assistantMessages = document.querySelectorAll('[data-message-author-role="assistant"]');
+      const lastAssistant = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
+
+      // 2. 응답 텍스트 존재 확인
+      const responseArea = lastAssistant?.querySelector('[data-message-part-type="answer"], .markdown-container-style');
+      const responseText = responseArea?.textContent?.trim() || '';
+      const hasResponseText = responseText.length > 0;
+
+      // 3. 🔧 v15.9 CRITICAL: fade-in/inert 스코프를 마지막 assistant로 한정해 오탐 감소
+      // 진행중 상태: .fade-in 클래스가 존재함
+      const fadeInElements = lastAssistant ? lastAssistant.querySelectorAll('.fade-in') : [];
+      const hasFadeInClass = fadeInElements.length > 0;
+
+      // 4. inert 속성 체크 (생성 중에는 일부 요소에 inert 속성이 추가됨)
+      const inertElements = lastAssistant ? lastAssistant.querySelectorAll('[inert]') : [];
+      const hasInertAttribute = inertElements.length > 0;
+
+      // 5. 액션 버튼 상태 확인 (완료 시: aria-disabled="false", 생성 중: aria-disabled="true")
+      const actionButtons = lastAssistant?.querySelectorAll('button[aria-label="Like"], button[aria-label="Dislike"], button[aria-label="Rewrite"]') || [];
+      let hasDisabledButtons = false;
+      let hasEnabledActionButtons = false;
+
+      for (const btn of actionButtons) {
+        if (btn.getAttribute('aria-disabled') === 'true' || btn.disabled) {
+          hasDisabledButtons = true;
+        } else if (btn.getAttribute('aria-disabled') === 'false') {
+          hasEnabledActionButtons = true;
+        }
+      }
+
+      // 6. 입력창 상태 확인 (ProseMirror contenteditable)
+      const inputField = document.querySelector('div.ProseMirror[contenteditable="true"]');
+      const isInputEnabled = inputField !== null && inputField.getAttribute('contenteditable') === 'true';
+
+      // 디버그 로그
+      console.log('[Mistral v15.8] Completion check:', {
+        hasFadeInClass,
+        fadeInCount: fadeInElements.length,
+        hasInertAttribute,
+        inertCount: inertElements.length,
+        hasDisabledButtons,
+        hasEnabledActionButtons,
+        hasResponseText,
+        responseLength: responseText.length
+      });
+
+      // 🎯 완료 판정 로직
+
+      // fade-in 클래스 또는 inert 속성이 있으면 아직 생성 중
+      if (hasFadeInClass) {
+        result.confidence = 0;
+        result.signal = `mistral:generating (fade-in class present: ${fadeInElements.length} elements)`;
+        console.log('[Mistral v15.8] 🔴 Still generating: fade-in class detected');
+        return result;
+      }
+
+      if (hasInertAttribute) {
+        result.confidence = 0;
+        result.signal = `mistral:generating (inert attribute present: ${inertElements.length} elements)`;
+        console.log('[Mistral v15.8] 🔴 Still generating: inert attribute detected');
+        return result;
+      }
+
+      // 버튼이 disabled 상태면 아직 생성 중
+      if (hasDisabledButtons && !hasEnabledActionButtons) {
+        result.confidence = 0;
+        result.signal = 'mistral:generating (action buttons disabled)';
+        return result;
+      }
+
+      // 완료: fade-in 없음 + inert 없음 + 액션 버튼 enabled + 응답 텍스트 존재
+      if (!hasFadeInClass && !hasInertAttribute && hasEnabledActionButtons && hasResponseText) {
+        result.isComplete = true;
+        result.confidence = 98;
+        result.signal = `mistral:complete (no-fade-in + no-inert + enabled-buttons + text=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v15.8] Mistral: Complete');
+        return result;
+      }
+
+      // 폴백: fade-in/inert 없음 + 충분한 텍스트
+      if (!hasFadeInClass && !hasInertAttribute && hasResponseText && responseText.length > 50) {
+        result.isComplete = true;
+        result.confidence = 85;
+        result.signal = `mistral:complete-fallback (no-generating-signals + text=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v15.8] Mistral: Complete (fallback)');
+        return result;
+      }
+
+      // 대기 중
+      result.confidence = hasResponseText ? 30 : 0;
+      result.signal = hasResponseText ? `mistral:uncertain (text=${responseText.length}chars)` : 'mistral:waiting';
       return result;
     }
 
@@ -3431,7 +3616,7 @@ function resolveManifestFromCache(hostname) {
       return result;
     }
 
-    // === Grok 전용: 🔧 v15.2 완료 감지 (last-response 클래스 기반 정밀 감지) ===
+    // === Grok 전용: 🔧 v15.7 완료 감지 (animate-gaussian 클래스 체크 추가) ===
     if (hostname.includes('grok.com') || hostname.includes('x.ai')) {
       // 1. 모든 응답 컨테이너에서 마지막 응답 찾기
       const allResponses = document.querySelectorAll('[id^="response-"]');
@@ -3444,11 +3629,16 @@ function resolveManifestFromCache(hostname) {
       const responseText = responseMarkdown?.textContent?.trim() || '';
       const hasResponseText = responseText.length > 0;
 
-      // 3. 🔧 v15.2: 마지막 응답에만 있는 .last-response 클래스 활용
+      // 3. 🔧 v15.7 CRITICAL: animate-gaussian 클래스 체크 (생성 중 가장 확실한 신호)
+      // Grok은 응답 생성 중 텍스트에 animate-gaussian 클래스를 추가함
+      const animateGaussianElements = document.querySelectorAll('.animate-gaussian');
+      const hasAnimateGaussian = animateGaussianElements.length > 0;
+
+      // 4. 🔧 v15.2: 마지막 응답에만 있는 .last-response 클래스 활용
       // action-buttons.last-response는 완료 시에만 나타남 (이전 메시지 버튼 혼동 방지)
       const lastResponseActions = document.querySelector('.action-buttons.last-response');
 
-      // 4. 마지막 응답에서만 액션 버튼 확인 (완료 시에만 나타남)
+      // 5. 마지막 응답에서만 액션 버튼 확인 (완료 시에만 나타남)
       // 복사, 좋아요, 싫어요, 재생성 버튼이 .last-response 내에 있으면 완료
       const copyButton = lastResponseActions?.querySelector('button[aria-label="복사"], button[aria-label="Copy"]');
       const likeButton = lastResponseActions?.querySelector('button[aria-label="Like"]');
@@ -3460,36 +3650,56 @@ function resolveManifestFromCache(hostname) {
         dislikeButton !== null || regenerateButton !== null ||
         readAloudButton !== null;
 
-      // 5. 입력창 상태 확인 (contenteditable="true")
+      // 6. 입력창 상태 확인 (contenteditable="true")
       const inputField = document.querySelector('.tiptap.ProseMirror[contenteditable="true"]');
       const isInputEnabled = inputField !== null;
 
-      // 6. 제출 버튼 상태 확인 (disabled면 입력 없음, enabled면 전송 가능)
+      // 7. 제출 버튼 상태 확인 (disabled면 입력 없음, enabled면 전송 가능)
       const submitButton = document.querySelector('button[type="submit"][aria-label="제출"], button[type="submit"][aria-label="Submit"]');
       const isSubmitDisabled = submitButton?.disabled || false;
 
-      // 7. 생성 중 신호: 로딩 스피너 또는 sonner-spinner 확인
+      // 8. 생성 중 신호: 로딩 스피너 또는 sonner-spinner 확인
       const spinnerVisible = document.querySelector('.sonner-spinner:not([data-visible="false"])');
-      const isGenerating = spinnerVisible !== null;
+      const hasSpinner = spinnerVisible !== null;
+
+      // 9. 🔧 v15.7: 종합적 생성 중 판단 (animate-gaussian이 가장 확실한 신호)
+      const isGenerating = hasAnimateGaussian || hasSpinner;
 
       // 디버그 로그
-      console.log(`[Grok v15.2] responses=${allResponses.length}, text=${responseText.length}, last-actions=${!!lastResponseActions}, actions=${hasActionButtons} (copy=${!!copyButton}, like=${!!likeButton}, regen=${!!regenerateButton}), input=${isInputEnabled}, submitDisabled=${isSubmitDisabled}, generating=${isGenerating}`);
+      console.log(`[Grok v15.7] responses=${allResponses.length}, text=${responseText.length}, animate-gaussian=${hasAnimateGaussian}, last-actions=${!!lastResponseActions}, actions=${hasActionButtons} (copy=${!!copyButton}, like=${!!likeButton}, regen=${!!regenerateButton}), input=${isInputEnabled}, submitDisabled=${isSubmitDisabled}, spinner=${hasSpinner}, generating=${isGenerating}`);
 
       // 🎯 완료 판정 로직 (우선순위 기반 + 명시적 return)
 
-      // 생성 중이면 미완료
-      if (isGenerating) {
+      // 🔧 v15.7 CRITICAL: animate-gaussian이 있으면 무조건 생성 중 (가장 확실한 신호)
+      if (hasAnimateGaussian) {
+        result.confidence = 0;
+        result.signal = `grok:generating (animate-gaussian=${animateGaussianElements.length} elements)`;
+        console.log('[Grok v15.7] 🔴 Generating: animate-gaussian class detected');
+        return result;
+      }
+
+      // 스피너가 보이면 생성 중
+      if (hasSpinner) {
         result.confidence = 0;
         result.signal = 'grok:generating (spinner visible)';
         return result;
       }
 
-      // 🔑 최우선: .last-response 내 액션 버튼 존재 + 응답 텍스트 = 완료 (최고 신뢰도)
+      // 🔑 최우선: animate-gaussian 없음 + 텍스트 존재 = 완료 (즉시 판정)
+      if (!hasAnimateGaussian && hasResponseText && responseText.length > 50) {
+        result.isComplete = true;
+        result.confidence = 95;
+        result.signal = `grok:streaming-stopped (no-animate-gaussian + text=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v15.7] 🎯 Grok: STREAMING STOPPED - Immediate completion');
+        return result;
+      }
+
+      // .last-response 내 액션 버튼 존재 + 응답 텍스트 = 완료 (최고 신뢰도)
       if (lastResponseActions && hasActionButtons && hasResponseText) {
         result.isComplete = true;
         result.confidence = 98;
         result.signal = `grok:complete (last-response-actions + text=${responseText.length}chars)`;
-        console.log('[Dynamic Completion v15.2] Grok: Complete (last-response action buttons detected)');
+        console.log('[Dynamic Completion v15.7] Grok: Complete (last-response action buttons detected)');
         return result;
       }
 
@@ -3498,7 +3708,7 @@ function resolveManifestFromCache(hostname) {
         result.isComplete = true;
         result.confidence = 85;
         result.signal = `grok:complete (input-enabled + submit-disabled + text=${responseText.length}chars)`;
-        console.log('[Dynamic Completion v15.2] Grok: Complete (submit disabled)');
+        console.log('[Dynamic Completion v15.7] Grok: Complete (submit disabled)');
         return result;
       }
 
@@ -3507,7 +3717,7 @@ function resolveManifestFromCache(hostname) {
         result.isComplete = true;
         result.confidence = 75;
         result.signal = `grok:complete-fallback (input-enabled + text=${responseText.length}chars)`;
-        console.log('[Dynamic Completion v15.2] Grok: Complete (fallback)');
+        console.log('[Dynamic Completion v15.7] Grok: Complete (fallback)');
         return result;
       }
 
@@ -4432,7 +4642,7 @@ function resolveManifestFromCache(hostname) {
       // heartbeat에서 streaming-animation이 없으면 즉시 완료 처리
       const streamingAnimationEl = document.querySelector('.streaming-animation');
       const isStreamingNow = streamingAnimationEl && isElementVisible(streamingAnimationEl);
-      
+
       // 디버깅 로그 추가
       if (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) {
         console.log(`[UI State v15.6] ChatGPT Check:`, {
@@ -4443,9 +4653,9 @@ function resolveManifestFromCache(hostname) {
           elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
         });
       }
-      
-      if ((hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) && 
-          hasReceivedNewResponse && currentNewResponseLength > 50 && !isStreamingNow) {
+
+      if ((hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) &&
+        hasReceivedNewResponse && currentNewResponseLength > 50 && !isStreamingNow) {
         console.log(`[UI State v15.6] 🎯 ChatGPT STREAMING STOPPED! Immediate completion`, {
           responseLength: currentNewResponseLength,
           hasStreaming: !!streamingAnimationEl,
@@ -4455,11 +4665,11 @@ function resolveManifestFromCache(hostname) {
         finish();
         return;
       }
-      
+
       // 🔧 v15.6: hasReceivedNewResponse가 false인 경우에도 텍스트가 있으면 완료 처리
       // ChatGPT에서 getResponseText()가 baseline과 동일하게 시작해서 hasReceivedNewResponse가 false일 수 있음
-      if ((hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) && 
-          !hasReceivedNewResponse && lastText && lastText.length > 100 && !isStreamingNow) {
+      if ((hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) &&
+        !hasReceivedNewResponse && lastText && lastText.length > 100 && !isStreamingNow) {
         console.log(`[UI State v15.6] 🎯 ChatGPT STREAMING STOPPED (baseline fallback)!`, {
           lastTextLength: lastText.length,
           baseline: baselineText.length
@@ -4468,6 +4678,162 @@ function resolveManifestFromCache(hostname) {
         completionReason = `CHATGPT_STREAMING_STOPPED_FALLBACK(text=${lastText.length})`;
         finish();
         return;
+      }
+
+      // 🔧 v15.7 CRITICAL: Grok animate-gaussian 직접 체크 (최우선)
+      // heartbeat에서 animate-gaussian이 없으면 즉시 완료 처리
+      if (hostname.includes('grok.com') || hostname.includes('x.ai')) {
+        const grokAnimateGaussian = document.querySelectorAll('.animate-gaussian');
+        const hasGrokStreaming = grokAnimateGaussian.length > 0;
+
+        console.log(`[UI State v15.7] Grok Check:`, {
+          hasReceivedNewResponse,
+          currentNewResponseLength,
+          animateGaussianCount: grokAnimateGaussian.length,
+          hasGrokStreaming,
+          elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+        });
+
+        if (hasReceivedNewResponse && currentNewResponseLength > 50 && !hasGrokStreaming) {
+          console.log(`[UI State v15.7] 🎯 Grok STREAMING STOPPED! Immediate completion`, {
+            responseLength: currentNewResponseLength,
+            animateGaussianCount: 0
+          });
+          completionReason = `GROK_STREAMING_STOPPED(text=${currentNewResponseLength})`;
+          finish();
+          return;
+        }
+      }
+
+      // 🔧 v15.7 -> v15.8 CRITICAL: Gemini 체크 강화
+      // heartbeat에서 aria-busy가 false/없고 bard-avatar.thinking도 없으면 완료
+      if (hostname.includes('gemini.google.com')) {
+        const geminiMessageContents = document.querySelectorAll('message-content');
+        const lastGeminiContent = geminiMessageContents.length > 0 ? geminiMessageContents[geminiMessageContents.length - 1] : null;
+        const geminiAriaBusy = lastGeminiContent?.getAttribute('aria-busy');
+        const isGeminiStreaming = geminiAriaBusy === 'true';
+
+        // 🔧 v15.8: bard-avatar.thinking 클래스 체크 추가
+        const bardAvatarThinking = document.querySelector('.bard-avatar.thinking');
+        const isGeminiThinking = bardAvatarThinking !== null;
+
+        console.log(`[UI State v15.8] Gemini Check:`, {
+          hasReceivedNewResponse,
+          currentNewResponseLength,
+          ariaBusy: geminiAriaBusy,
+          isGeminiStreaming,
+          isGeminiThinking,
+          elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+        });
+
+        // aria-busy=true 또는 bard-avatar.thinking이 있으면 아직 진행 중
+        if (isGeminiStreaming || isGeminiThinking) {
+          // 아직 진행 중, 완료 처리하지 않음
+        } else if (hasReceivedNewResponse && currentNewResponseLength > 50) {
+          console.log(`[UI State v15.8] 🎯 Gemini STREAMING STOPPED! Immediate completion`, {
+            responseLength: currentNewResponseLength,
+            ariaBusy: geminiAriaBusy,
+            isGeminiThinking
+          });
+          completionReason = `GEMINI_STREAMING_STOPPED(text=${currentNewResponseLength})`;
+          finish();
+          return;
+        }
+      }
+
+      // 🔧 v15.7 CRITICAL: Claude data-is-streaming 직접 체크 (최우선)
+      // heartbeat에서 data-is-streaming이 false/없으면 즉시 완료 처리
+      if (hostname.includes('claude.ai')) {
+        const claudeStreamingNodes = document.querySelectorAll('[data-is-streaming]');
+        const lastClaudeStreamingNode = claudeStreamingNodes.length > 0 ? claudeStreamingNodes[claudeStreamingNodes.length - 1] : null;
+        const isClaudeStreaming = lastClaudeStreamingNode?.getAttribute('data-is-streaming') === 'true';
+        const claudeStopBtn = document.querySelector('button[aria-label="Stop generating"], button[aria-label*="Stop"], button[aria-label*="중지"]');
+        const hasClaudeStop = claudeStopBtn && isElementVisible(claudeStopBtn);
+
+        console.log(`[UI State v15.7] Claude Check:`, {
+          hasReceivedNewResponse,
+          currentNewResponseLength,
+          dataIsStreaming: lastClaudeStreamingNode?.getAttribute('data-is-streaming'),
+          hasStopButton: hasClaudeStop,
+          elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+        });
+
+        if (hasReceivedNewResponse && currentNewResponseLength > 50 && !isClaudeStreaming && !hasClaudeStop) {
+          console.log(`[UI State v15.7] 🎯 Claude STREAMING STOPPED! Immediate completion`, {
+            responseLength: currentNewResponseLength,
+            dataIsStreaming: 'false'
+          });
+          completionReason = `CLAUDE_STREAMING_STOPPED(text=${currentNewResponseLength})`;
+          finish();
+          return;
+        }
+      }
+
+      // 🔧 v15.7 CRITICAL: DeepSeek Stop 버튼 직접 체크 (최우선)
+      // heartbeat에서 Stop 버튼이 없고 액션 버튼이 있으면 즉시 완료 처리
+      if (hostname.includes('chat.deepseek.com')) {
+        // Stop 버튼 아이콘이 정사각형(정지)인지 체크
+        const deepseekStopSquare = document.querySelector('._7436101.ds-icon-button svg path[d^="M2 4.88"]')?.closest('._7436101.ds-icon-button');
+        const hasDeepSeekStop = deepseekStopSquare && isElementVisible(deepseekStopSquare);
+
+        // 마지막 메시지에서 액션 버튼 확인
+        const deepseekMessages = Array.from(document.querySelectorAll('._4f9bf79, .ds-message'));
+        let deepseekLastMsg = null;
+        for (let i = deepseekMessages.length - 1; i >= 0; i--) {
+          if (deepseekMessages[i].querySelector('.ds-markdown')) {
+            deepseekLastMsg = deepseekMessages[i];
+            break;
+          }
+        }
+        const deepseekActionBtns = deepseekLastMsg?.querySelectorAll('.ds-icon-button[role="button"]') || [];
+        const hasDeepSeekActions = deepseekActionBtns.length > 0;
+
+        console.log(`[UI State v15.7] DeepSeek Check:`, {
+          hasReceivedNewResponse,
+          currentNewResponseLength,
+          hasStopButton: hasDeepSeekStop,
+          hasActionButtons: hasDeepSeekActions,
+          actionCount: deepseekActionBtns.length,
+          elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+        });
+
+        if (hasReceivedNewResponse && currentNewResponseLength > 50 && !hasDeepSeekStop && hasDeepSeekActions) {
+          console.log(`[UI State v15.7] 🎯 DeepSeek STREAMING STOPPED! Immediate completion`, {
+            responseLength: currentNewResponseLength,
+            hasStop: false,
+            actionCount: deepseekActionBtns.length
+          });
+          completionReason = `DEEPSEEK_STREAMING_STOPPED(text=${currentNewResponseLength})`;
+          finish();
+          return;
+        }
+      }
+
+      // 🔧 v15.7 CRITICAL: LMArena Stop 버튼 직접 체크 (최우선)
+      if (hostname.includes('lmarena.ai')) {
+        const lmarenaStopSelectors = [
+          'button[aria-label*="Stop"]',
+          'button[aria-label*="중지"]',
+          'button[data-testid*="stop"]'
+        ];
+        const lmarenaStopBtn = lmarenaStopSelectors.map(s => document.querySelector(s)).find(el => el && isElementVisible(el));
+        const hasLmarenaStop = !!lmarenaStopBtn;
+
+        console.log(`[UI State v15.7] LMArena Check:`, {
+          hasReceivedNewResponse,
+          currentNewResponseLength,
+          hasStopButton: hasLmarenaStop,
+          elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+        });
+
+        if (hasReceivedNewResponse && currentNewResponseLength > 50 && !hasLmarenaStop) {
+          console.log(`[UI State v15.7] 🎯 LMArena STREAMING STOPPED! Immediate completion`, {
+            responseLength: currentNewResponseLength
+          });
+          completionReason = `LMARENA_STREAMING_STOPPED(text=${currentNewResponseLength})`;
+          finish();
+          return;
+        }
       }
 
       // 🔧 v14.2: 모델 생성 시작 감지를 먼저 수행 (동적 완료 신호 전에)
@@ -4612,12 +4978,12 @@ function resolveManifestFromCache(hostname) {
         // UI가 idle이거나, finalStableThreshold 이상 텍스트가 안정화되었으면 완료
         if (uiStateResult.restored || timeSinceLastChange > finalStableThreshold) {
           stableIdleCount++;
-          
+
           // 🔧 v15.5: ChatGPT streaming-animation 완료 시 즉시 처리 (1회 검증으로 단축)
-          const requireVerifications = (dynamicCompletionSignal.confidence >= 95 && 
-                                       (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')))
-                                       ? 1 : 3;
-          
+          const requireVerifications = (dynamicCompletionSignal.confidence >= 95 &&
+            (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')))
+            ? 1 : 3;
+
           if (stableIdleCount >= requireVerifications) {
             console.log(`[UI State v15.5] ✅ TEXT-BASED COMPLETION (${requireVerifications} verification${requireVerifications > 1 ? 's' : ''}):`, {
               model: hostname,
@@ -4752,5 +5118,5 @@ function resolveManifestFromCache(hostname) {
     }
   }
 
-  console.log('[ModelDock] Content Script Loaded (v15.0 - Enhanced Completion Detection)');
+  console.log('[ModelDock] Content Script Loaded (v15.8 - Multi-Model Completion Detection Fix)');
 })();

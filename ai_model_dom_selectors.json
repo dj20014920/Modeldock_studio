@@ -423,6 +423,15 @@
           ],
           "disabled_detection": "textarea:disabled, .ant-input-disabled"
         },
+        "action_buttons": {
+          "primary": ".qwen-chat-package-comp-new-action-control-icons",
+          "alternatives": [
+            ".qwen-chat-package-comp-new-action-control-container",
+            ".response-message-footer .qwen-chat-package-comp-new-action-control",
+            "button.qwen-chat-package-comp-new-action-control-container-copy",
+            "button.qwen-chat-package-comp-new-action-control-container-regenerate"
+          ]
+        },
         "response_area": {
           "primary": ".response-message-content",
           "alternatives": [
@@ -725,10 +734,13 @@
           ]
         },
         "submit_button": {
-          "primary": "button.submit-btn",
+          "primary": "button.bg-primary.h-9.w-9",
           "alternatives": [
+            "button.bg-primary",
+            "[data-testid='playground-composer'] button.bg-primary",
+            "button[aria-label*='Send']",
             "button[type='submit']",
-            "[aria-label='Send']"
+            "button.bg-primary:has(svg[data-lucide='send'])"
           ]
         }
       },

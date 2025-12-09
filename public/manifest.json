@@ -11,8 +11,13 @@
     "activeTab",
     "scripting",
     "webNavigation",
-    "cookies"
+    "cookies",
+    "sidePanel",
+    "contextMenus"
   ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "host_permissions": [
     "<all_urls>"
   ],
