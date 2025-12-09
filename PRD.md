@@ -140,12 +140,15 @@ const availableModels = [...cachedModels, ...userModels]
 ⸻
 
 기능 및 구성
-2.1 다중 AI 모델 지원 및 선택 • 지원 모델 (2025-01-04 기준): • iframe 내장 방식: ChatGPT, Claude, Gemini, DeepSeek, Qwen, Grok, LM Arena, Kimi, Mistral, OpenRouter • API 방식: ChatGPT API, Claude API, Gemini API, DeepSeek API, Perplexity API, Grok API • 하이브리드 방식: 사용자가 Webapp 또는 API 모드를 선택 가능 • 로그인 계정을 통해 구독한 모델을 기반으로 선택할 수 있으며, 무료 사용자는 일부 모델만 선택 가능. • 수동 복사/붙여넣기 방식과 자동 라우팅 방식을 토글식으로 선택 가능. • 사용자가 모델에 입력한 프롬프트를 직접 복사하여 붙여넣기 또는 자동 라우팅을 통해 전달.
+2.1 다중 AI 모델 지원 및 선택 
+• 지원 모델 (2025-12-09 기준): 
+• iframe 내장 방식: ChatGPT, Claude, Gemini, DeepSeek, Qwen, Grok, LM Arena, Kimi, Mistral, OpenRouter 등
+• API 방식: ChatGPT API, Claude API, Gemini API, DeepSeek API, Perplexity API, Grok API 등
+• 하이브리드 방식: 사용자가 Webapp 또는 API 모드를 선택 가능 
+• 로그인 계정을 통해 구독한 모델을 기반으로 선택할 수 있으며, 무료 사용자는 일부 모델만 선택 가능(회사마다 규정이 다름). 
+• 수동 복사/붙여넣기 방식과 자동 라우팅 방식을 토글식으로 선택 가능. 
+• 사용자가 모델에 입력한 프롬프트를 직접 복사하여 붙여넣기 또는 자동 라우팅을 통해 전달.
 
-•    **최근 추가된 모델 (2025-01-04)**:
-•    **Kimi (Moonshot AI)**: https://kimi.moonshot.cn - iframe 방식, 긴 문맥 처리 특화
-•    **Mistral**: https://chat.mistral.ai/chat - iframe 방식, Le Chat 브랜딩
-•    **OpenRouter**: https://openrouter.ai/chat - iframe 방식, 다중 모델 라우터
 ### 2.2 BrainFlow™ 협업 추론 엔진
 
 #### 2.2.1 아키텍처 개요
