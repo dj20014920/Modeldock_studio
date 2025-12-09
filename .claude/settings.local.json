@@ -15,7 +15,9 @@
       "mcp__exa__web_search_exa",
       "mcp__chrome-devtools__list_pages",
       "mcp__chrome-devtools__new_page",
-      "Skill(flutter-init:codex)"
+      "Skill(flutter-init:codex)",
+      "mcp__desktop-commander__read_file",
+      "mcp__desktop-commander__get_file_info"
     ],
     "deny": [],
     "ask": []

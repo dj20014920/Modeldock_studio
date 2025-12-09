@@ -1,10 +1,25 @@
 // ModelDock Content Script v8.0 (The "Reference Implementation" Port)
-// Ported from text-injection-bridge.ts.back to solve v0, Codex, Claude, and Grok issues.
+// Ported from text-injection-bridge.ts.back
+// 2025.12.06: Refactored for robust completion detection and manifest-first parsing
+// 2025.12.09: Fixed LMArena user message copying and Skip/Empty response issues
 
 // ============================================================
 // 🎯 Phase 1: Model Manifest Loader
 // ============================================================
 let MODEL_MANIFESTS = null;
+// 미리 로드해서 동기 코드 경로에서 활용
+const MODEL_MANIFESTS_READY = loadModelManifests();
+
+// 수동 호스트 → 매니페스트 ID 매핑 (자동 매핑 보완)
+const MANIFEST_HOST_MAP = {
+  'claude.ai': 'claude',
+  'chat.openai.com': 'chatgpt',
+  'chatgpt.com': 'chatgpt',
+  'gemini.google.com': 'gemini',
+  'kimi.moonshot.cn': 'kimi',
+  'kimi.com': 'kimi',
+  'chat.mistral.ai': 'mistral'
+};
 
 /**
  * Load and parse ai_model_dom_selectors.json
@@ -53,6 +68,7 @@ class DefaultMonitor {
       inputEnabled: this._checkInputEnabled(),
       loadingIndicator: this._checkLoadingIndicator(),
       submitButton: this._checkSubmitButton(),
+      actionButtons: this._checkActionButtons(),
       timestamp: Date.now()
     };
     return signals;
@@ -63,6 +79,14 @@ class DefaultMonitor {
     if (!stopButton) return false;
     const button = this._querySelectors(stopButton);
     return Boolean(button && button.offsetParent !== null);
+  }
+
+  _checkActionButtons() {
+    const actionButtons = this.manifest.selectors?.action_buttons;
+    if (!actionButtons) return false;
+    const buttons = this._querySelectors(actionButtons);
+    // Action buttons typically appear AFTER generation is done
+    return Boolean(buttons && buttons.offsetParent !== null);
   }
 
   _checkInputEnabled() {
@@ -135,10 +159,26 @@ class DefaultMonitor {
     if (checks.includes('inputEnabled') && !signals.inputEnabled) return false;
     if (checks.includes('loadingIndicator') && signals.loadingIndicator) return false;
 
-    // Thinking mode 체크
+    // Action Buttons check (Mistral, Kimi etc): must be present to be complete
+    if (checks.includes('actionButtons') && !signals.actionButtons) return false;
+
+    // Thinking mode 체크 (Claude 등)
     if (completion.thinking?.enabled) {
-      const thinkingPatterns = completion.thinking.patterns;
-      // TODO: 응답 텍스트에서 thinking 패턴 확인
+      const thinkingPatterns = completion.thinking.patterns || [];
+      const responseArea = this.manifest.selectors?.response_area;
+
+      if (responseArea && thinkingPatterns.length > 0) {
+        const responseElement = this._querySelectors(responseArea);
+        if (responseElement) {
+          const text = responseElement.textContent || '';
+          // "Thinking...", "Reasoning...\" 등의 패턴이 보이면 아직 생각 중
+          const isThinking = thinkingPatterns.some(pattern => text.includes(pattern));
+          if (isThinking) {
+            console.log('[DefaultMonitor] ⏳ Thinking mode detected:', thinkingPatterns.find(p => text.includes(p)));
+            return false;
+          }
+        }
+      }
     }
 
     return true;
@@ -172,7 +212,203 @@ class DefaultMonitor {
 }
 
 /**
+ * ChatGPTMonitor - ChatGPT 전용 모니터 클래스
+ * 100% DOM 동적 감지 기반 응답 완료 판정
+ *
+ * 핵심 원칙:
+ * 1. manifest 기반 셀렉터 사용 (하드코딩 제거)
+ * 2. 다층 신호 수집 (Stop, Streaming, Copy, Input)
+ * 3. 우선순위 기반 완료 판정
+ * 4. 최소 응답 길이 검증
+ */
+class ChatGPTMonitor extends DefaultMonitor {
+  constructor(manifest, requestId) {
+    super(manifest, requestId);
+    this.MIN_COMPLETION_LENGTH = 50; // 최소 응답 길이
+    this.lastTextLength = 0;
+    this.stableChecks = 0; // 안정화 카운터
+    this.STABLE_THRESHOLD = 3; // 3회 연속 동일하면 완료로 간주
+  }
+
+  /**
+   * ChatGPT 전용 신호 수집 (override)
+   * 기본 신호 + ChatGPT 특화 신호
+   */
+  collectSignals() {
+    const baseSignals = super.collectSignals();
+
+    // ChatGPT 전용 추가 신호
+    const copyButton = this._checkCopyButtonInLastMessage();
+    const lastAssistantMessage = this._getLastAssistantMessage();
+    const textLength = lastAssistantMessage
+      ? (lastAssistantMessage.textContent || '').trim().length
+      : 0;
+
+    // 텍스트 안정성 체크 (변화 없으면 완료 가능성 높음)
+    if (textLength > 0 && textLength === this.lastTextLength) {
+      this.stableChecks++;
+    } else {
+      this.stableChecks = 0;
+    }
+    this.lastTextLength = textLength;
+
+    return {
+      ...baseSignals,
+      // baseSignals.loadingIndicator를 재사용 (DRY 원칙)
+      copyButton,
+      lastAssistantMessage,
+      textLength,
+      isTextStable: this.stableChecks >= this.STABLE_THRESHOLD,
+      timestamp: Date.now()
+    };
+  }
+
+  /**
+   * ChatGPT 전용 완료 판정 (override)
+   * 우선순위 기반 다층 검증
+   * 🔧 v15.2: streaming-animation 클래스 직접 체크 추가
+   */
+  shouldComplete(signals) {
+    // === Priority 0: streaming-animation 클래스 직접 체크 (가장 확실한 신호) ===
+    const streamingAnimationElement = document.querySelector('.streaming-animation');
+    if (streamingAnimationElement && streamingAnimationElement.offsetParent !== null) {
+      console.log('[ChatGPTMonitor v15.2] 🔴 Generating: streaming-animation class detected');
+      return false;
+    }
+    
+    // === Priority 1: 생성 중 명확 신호 → 즉시 false ===
+
+    // 1-1. Stop 버튼 visible
+    if (signals.stopButton) {
+      console.log('[ChatGPTMonitor] 🔴 Generating: Stop button visible');
+      return false;
+    }
+
+    // 1-2. Loading indicator visible (animation 포함)
+    if (signals.loadingIndicator) {
+      console.log('[ChatGPTMonitor] 🔴 Generating: Loading indicator visible');
+      return false;
+    }
+
+    // 1-3. Input disabled (생성 중에는 입력창 비활성화)
+    if (!signals.inputEnabled) {
+      console.log('[ChatGPTMonitor] 🔴 Generating: Input disabled');
+      return false;
+    }
+
+    // === Priority 2: 최소 길이 검증 ===
+    if (signals.textLength < this.MIN_COMPLETION_LENGTH) {
+      console.log(`[ChatGPTMonitor] ⏳ Waiting: Text too short (${signals.textLength}/${this.MIN_COMPLETION_LENGTH})`);
+      return false;
+    }
+
+    // === Priority 3: 완료 신호 검증 ===
+
+    // 3-1. Copy 버튼 + 충분한 텍스트 (최고 신뢰도)
+    if (signals.copyButton && signals.textLength > this.MIN_COMPLETION_LENGTH) {
+      console.log(`[ChatGPTMonitor] ✅ COMPLETE: Copy button + text (${signals.textLength} chars, confidence: 95%)`);
+      return true;
+    }
+
+    // 3-2. 텍스트 안정화 + 충분한 텍스트 (높은 신뢰도)
+    if (signals.isTextStable && signals.textLength > this.MIN_COMPLETION_LENGTH) {
+      console.log(`[ChatGPTMonitor] ✅ COMPLETE: Text stable for ${this.stableChecks} checks (${signals.textLength} chars, confidence: 90%)`);
+      return true;
+    }
+
+    // 3-3. Loading 신호 없음 + Input 활성화 + 충분한 텍스트 (폴백, 중간 신뢰도)
+    if (!signals.loadingIndicator &&
+      !signals.stopButton &&
+      signals.inputEnabled &&
+      signals.textLength > this.MIN_COMPLETION_LENGTH * 1.5) { // 더 긴 텍스트 요구
+      console.log(`[ChatGPTMonitor] ✅ COMPLETE: Stable fallback (${signals.textLength} chars, confidence: 80%)`);
+      return true;
+    }
+
+    // 아직 완료 아님
+    console.log(`[ChatGPTMonitor] ⏳ Waiting: stableChecks=${this.stableChecks}, textLen=${signals.textLength}`);
+    return false;
+  }
+
+  /**
+   * Loading indicator 체크 (override)
+   * ChatGPT는 streaming-animation 클래스 + CSS animation도 함께 체크
+   * 🔧 v15.2: streaming-animation 클래스 직접 감지 추가
+   */
+  _checkLoadingIndicator() {
+    // 🔧 v15.2 CRITICAL: streaming-animation 클래스 직접 체크 (가장 확실한 신호)
+    const streamingAnimationElement = document.querySelector('.streaming-animation');
+    if (streamingAnimationElement && streamingAnimationElement.offsetParent !== null) {
+      console.log('[ChatGPTMonitor v15.2] 🔴 streaming-animation class detected');
+      return true;
+    }
+    
+    const loadingIndicator = this.manifest.selectors?.loading_indicator;
+    if (!loadingIndicator) return false;
+
+    const indicator = this._querySelectors(loadingIndicator);
+    if (!indicator || indicator.offsetParent === null) return false;
+
+    // ChatGPT 특화: CSS animation/pulse도 생성 중 신호로 간주
+    const style = window.getComputedStyle(indicator);
+    const hasAnimation = style.animation !== 'none' ||
+      indicator.classList.contains('animate-pulse') ||
+      indicator.classList.contains('animate-spin');
+
+    return hasAnimation || true; // visible하면 무조건 true
+  }
+
+  /**
+   * 마지막 assistant 메시지에서만 Copy 버튼 체크
+   * 이전 메시지의 Copy 버튼을 잘못 감지하는 것 방지
+   */
+  _checkCopyButtonInLastMessage() {
+    const lastMsg = this._getLastAssistantMessage();
+    if (!lastMsg) return false;
+
+    // 마지막 메시지 내부에서만 Copy 버튼 검색
+    const copyButton = lastMsg.querySelector(
+      'button[aria-label*="Copy"], ' +
+      'button[data-testid*="copy"], ' +
+      'button[class*="copy"], ' +
+      '[data-sentry-component="CopyButton"]'
+    );
+
+    return Boolean(copyButton && copyButton.offsetParent !== null);
+  }
+
+  /**
+   * 정확한 마지막 assistant 메시지 식별
+   * querySelectorAll + [length-1] 패턴으로 확실하게 마지막 메시지만 선택
+   */
+  _getLastAssistantMessage() {
+    const messages = document.querySelectorAll('div[data-message-author-role="assistant"]');
+    if (messages.length === 0) return null;
+
+    // 마지막 메시지 반환
+    const lastMessage = messages[messages.length - 1];
+
+    // .markdown 컨테이너가 있으면 그것을 반환 (텍스트 추출용)
+    const markdownContent = lastMessage.querySelector('.markdown') || lastMessage;
+    return markdownContent;
+  }
+
+  /**
+   * Adaptive delay 계산 (override)
+   * ChatGPT는 빠른 응답이므로 짧은 딜레이
+   */
+  deriveAdaptiveDelay() {
+    const completion = this.manifest.completion || { minWaitMs: 1000, adaptiveMultiplier: 1.0 };
+    const { minWaitMs, adaptiveMultiplier } = completion;
+
+    // ChatGPT는 일반적으로 빠르므로 기본 1초 체크 간격
+    return Math.max(1000, minWaitMs + (adaptiveMultiplier * this.activityStats.avgChunkInterval));
+  }
+}
+
+/**
  * MonitorFactory - 모니터 생성 팩토리
+ * Plugin 시스템으로 모델별 전용 Monitor 반환
  */
 class MonitorFactory {
   static async createMonitor(hostname, requestId) {
@@ -183,12 +419,32 @@ class MonitorFactory {
       return null;
     }
 
-    // Plugin 지원 (향후 확장)
+    // Plugin 기반 Monitor 선택
     if (manifest.plugin) {
-      console.log('[MonitorFactory] Plugin support:', manifest.plugin);
-      // TODO Phase 3: Plugin 시스템 구현
+      console.log('[MonitorFactory] Creating monitor for plugin:', manifest.plugin);
+
+      switch (manifest.plugin) {
+        case 'chatgpt':
+          console.log('[MonitorFactory] ✅ Using ChatGPTMonitor');
+          return new ChatGPTMonitor(manifest, requestId);
+
+        case 'claude':
+          // TODO: ClaudeMonitor 구현 후 활성화
+          console.log('[MonitorFactory] ⚠️ ClaudeMonitor not implemented yet, using default');
+          break;
+
+        case 'gemini':
+          // TODO: GeminiMonitor 구현 후 활성화
+          console.log('[MonitorFactory] ⚠️ GeminiMonitor not implemented yet, using default');
+          break;
+
+        default:
+          console.log('[MonitorFactory] ⚠️ Unknown plugin:', manifest.plugin);
+      }
     }
 
+    // Fallback: DefaultMonitor
+    console.log('[MonitorFactory] Using DefaultMonitor');
     return new DefaultMonitor(manifest, requestId);
   }
 }
@@ -199,26 +455,42 @@ class MonitorFactory {
  * @returns {Promise<Object|null>} Model manifest or null
  */
 async function getManifestForHost(hostname) {
-  const manifests = await loadModelManifests();
+  await MODEL_MANIFESTS_READY.catch(() => { /* handled below */ });
+  const manifest = resolveManifestFromCache(hostname);
+  if (manifest) return manifest;
 
-  // Match hostname to model ID
-  const modelMapping = {
-    'claude.ai': 'claude',
-    'chat.openai.com': 'chatgpt',
-    'chatgpt.com': 'chatgpt',
-    'gemini.google.com': 'gemini'
-  };
+  console.log('[BrainFlow] No manifest found for:', hostname);
+  return null;
+}
 
-  const modelId = modelMapping[hostname];
-  if (!modelId || !manifests[modelId]) {
-    console.log('[BrainFlow] No manifest found for:', hostname);
+function parseHostnameSafe(url) {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch (e) {
     return null;
   }
+}
 
-  const manifest = manifests[modelId];
-  if (!manifest.id) manifest.id = modelId;
-  console.log('[BrainFlow] Using manifest for:', modelId);
-  return manifest;
+function resolveManifestFromCache(hostname) {
+  const manifests = MODEL_MANIFESTS || {};
+  const normalizedHost = (hostname || '').toLowerCase();
+
+  const manualId = MANIFEST_HOST_MAP[normalizedHost];
+  if (manualId && manifests[manualId]) {
+    return { ...manifests[manualId], id: manifests[manualId].id || manualId };
+  }
+
+  // URL 기반 자동 매핑 (manifest.url 우선)
+  for (const [modelId, manifest] of Object.entries(manifests)) {
+    const urlHost = parseHostnameSafe(manifest.url);
+    if (!urlHost) continue;
+    if (normalizedHost === urlHost || normalizedHost.endsWith(`.${urlHost}`)) {
+      return { ...manifest, id: manifest.id || modelId };
+    }
+  }
+
+  return null;
 }
 
 // TODO Phase 2: Replace RESPONSE_CONFIGS with manifest-based system
@@ -417,12 +689,24 @@ async function getManifestForHost(hostname) {
     let matchedTarget = null;
     let foundInput = null;
 
+    // 🔧 v15.3: 디버깅 로그 추가 (BrainFlow 주입 문제 추적)
+    console.log('[ModelDock v15.3] 📥 handleInjection called:', {
+      hostname: window.location.hostname,
+      modelId,
+      textLength: text?.length || 0,
+      targetsCount: targets?.length || 0,
+      submit,
+      skipInject
+    });
+
     // AI Studio detection (Shadow DOM 깊이 탐색 필요)
     const isAIStudio = window.location.hostname.includes('aistudio.google.com');
 
     // 1. Find Input
     for (const target of targets) {
       const selectors = target.inputSelector.split(',').map(s => s.trim());
+      console.log(`[ModelDock v15.3] 🔍 Trying selectors for ${target.modelId}:`, selectors);
+      
       for (const selector of selectors) {
         let el = null;
 
@@ -438,7 +722,10 @@ async function getManifestForHost(hostname) {
         if (el && isElementVisible(el)) {
           matchedTarget = target;
           foundInput = el;
+          console.log(`[ModelDock v15.3] ✅ Found input with selector: ${selector}`, el);
           break;
+        } else if (el) {
+          console.log(`[ModelDock v15.3] ⚠️ Found element but not visible: ${selector}`);
         }
       }
       if (foundInput) break;
@@ -460,11 +747,18 @@ async function getManifestForHost(hostname) {
     }
 
     if (!foundInput || !matchedTarget) {
+      console.error('[ModelDock v15.3] ❌ No input found! Tried all selectors.');
       return { status: 'no_target_match', host: window.location.host };
     }
 
     const { submitSelector, modelId: targetModelId, forceEnter, delayBeforeSubmit, submitKey } = matchedTarget;
     const effectiveModelId = modelId || targetModelId;
+    
+    console.log('[ModelDock v15.3] ✅ Input found, proceeding with injection:', {
+      elementType: foundInput.tagName,
+      isContentEditable: foundInput.isContentEditable,
+      modelId: effectiveModelId
+    });
 
     try {
       // 2. Inject Text
@@ -506,11 +800,14 @@ async function getManifestForHost(hostname) {
           return false;
         };
 
+        // 🔧 OpenRouter 전송 버튼 활성화 대기 로직 추가
+        const isOpenRouter = effectiveModelId === 'openrouter' || window.location.hostname.includes('openrouter.ai');
+
         if (submitSelector) {
           const selectors = submitSelector.split(',').map(s => s.trim());
-          // Poll for button (강화된 폴링: 3초, 디버깅 로그 추가)
+          // OpenRouter의 경우 더 긴 폴링 시간과 활성화 체크 강화
+          const maxPollTime = isOpenRouter ? 10000 : 3000; // OpenRouter: 10초, 기타: 3초
           const startTime = Date.now();
-          const maxPollTime = 3000; // AI Studio 등을 위해 3초로 증가
           let attemptCount = 0;
 
           while (Date.now() - startTime < maxPollTime && !submitted) {
@@ -536,7 +833,26 @@ async function getManifestForHost(hostname) {
                 btn = queryShadow(document.body, sel);
               }
 
-              if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true' && isElementVisible(btn)) {
+              if (btn) {
+                // OpenRouter 전용: 버튼이 완전히 활성화될 때까지 기다림
+                if (isOpenRouter) {
+                  const isFullyEnabled = !btn.disabled &&
+                    btn.getAttribute('aria-disabled') !== 'true' &&
+                    isElementVisible(btn) &&
+                    !btn.classList.contains('opacity-40') &&
+                    btn.getAttribute('disabled') !== '';
+
+                  if (!isFullyEnabled) {
+                    console.log(`[ModelDock] OpenRouter: Button not ready yet (attempt ${attemptCount}): disabled=${btn.disabled}, aria-disabled=${btn.getAttribute('aria-disabled')}, visible=${isElementVisible(btn)}, opacity-40=${btn.classList.contains('opacity-40')}`);
+                    continue; // 아직 준비 안 됨, 다음 시도
+                  }
+                } else {
+                  // 일반 모델: 기존 조건
+                  if (btn.disabled || btn.getAttribute('aria-disabled') === 'true' || !isElementVisible(btn)) {
+                    continue;
+                  }
+                }
+
                 if (isSidebarButton(btn)) {
                   console.warn('[ModelDock] Ignoring sidebar button:', sel);
                   continue;
@@ -556,7 +872,11 @@ async function getManifestForHost(hostname) {
           }
 
           if (!submitted && submitSelector) {
-            console.warn(`[ModelDock] Button polling timeout after ${attemptCount} attempts (${maxPollTime}ms)`);
+            if (isOpenRouter) {
+              console.warn(`[ModelDock] OpenRouter: Button polling timeout after ${attemptCount} attempts (${maxPollTime}ms) - trying fallback`);
+            } else {
+              console.warn(`[ModelDock] Button polling timeout after ${attemptCount} attempts (${maxPollTime}ms)`);
+            }
           }
         }
 
@@ -644,10 +964,55 @@ async function getManifestForHost(hostname) {
       }
     }
 
-    // 🎯 ChatGPT / Codex (Code editor - TipTap)
+    // 🎯 ChatGPT / Codex (Code editor - TipTap / ProseMirror)
     else if (modelId === 'chatgpt' || modelId === 'codex' ||
       element.classList.contains('ProseMirror') || element.classList.contains('tiptap')) {
-      console.log('[ModelDock v14] Using ChatGPT/Codex-specific injection (paste event)');
+      console.log('[ModelDock v15.4] Using ChatGPT/Codex ProseMirror injection');
+      
+      // New ChatGPT structure: ProseMirror contenteditable div
+      if (element.classList.contains('ProseMirror') && element.id === 'prompt-textarea') {
+        console.log('[ModelDock v15.4] 📝 Detected new ChatGPT ProseMirror structure');
+        
+        // Find and update the paragraph element
+        let paragraph = element.querySelector('p[data-placeholder]');
+        if (!paragraph) {
+          paragraph = element.querySelector('p');
+        }
+        
+        if (paragraph) {
+          // Remove placeholder attributes
+          paragraph.removeAttribute('data-placeholder');
+          paragraph.removeAttribute('class');
+          // Set text content
+          paragraph.textContent = text;
+          // Remove the trailing break if exists
+          const br = paragraph.querySelector('br.ProseMirror-trailingBreak');
+          if (br) br.remove();
+        } else {
+          // Create new paragraph if doesn't exist
+          const p = document.createElement('p');
+          p.textContent = text;
+          element.innerHTML = '';
+          element.appendChild(p);
+        }
+        
+        // Trigger input events
+        triggerInputEvents(element);
+        
+        // Move cursor to end
+        element.focus();
+        const range = document.createRange();
+        const sel = window.getSelection();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        
+        return true;
+      }
+      
+      // Fallback: try paste event for older ChatGPT or TipTap editors
+      console.log('[ModelDock v15.4] Using paste event fallback');
       try {
         const dataTransfer = new DataTransfer();
         dataTransfer.setData('text/plain', text);
@@ -721,11 +1086,36 @@ async function getManifestForHost(hostname) {
       }
     }
 
-    // 🎯 Kimi (Moonshot) - contenteditable 기반, 중국어 UI
+    // 🎯 Kimi (Moonshot) - Lexical 에디터 기반 (contenteditable)
     else if (modelId === 'kimi') {
-      console.log('[ModelDock v14] Using Kimi-specific injection');
-      if (element.isContentEditable) {
-        // Kimi는 execCommand가 가장 안정적
+      console.log('[ModelDock v15] Using Kimi Lexical editor injection');
+      if (element.isContentEditable && element.getAttribute('data-lexical-editor') === 'true') {
+        // Lexical 에디터는 focus + selection + execCommand 순서 필요
+        element.focus();
+
+        // 기존 내용 선택 후 교체 (빈 상태면 바로 삽입)
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        // execCommand로 텍스트 삽입
+        const success = document.execCommand('insertText', false, text);
+        if (!success) {
+          // fallback: 직접 textContent 설정
+          element.textContent = text;
+        }
+
+        // Lexical은 input/change 이벤트 외에 beforeinput도 필요할 수 있음
+        element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+
+        console.log('[ModelDock v15] Kimi Lexical injection complete');
+        return true;
+      } else if (element.isContentEditable) {
+        // 일반 contenteditable fallback
+        element.focus();
         const success = document.execCommand('insertText', false, text);
         if (!success) {
           element.textContent = text;
@@ -770,8 +1160,55 @@ async function getManifestForHost(hostname) {
       }
     }
 
-    // 🎯 LM Arena / OpenRouter / Mistral (Textarea)
-    else if (modelId === 'lmarena' || modelId === 'openrouter' || modelId === 'mistral') {
+    // 🎯 Mistral Le Chat - ProseMirror 에디터 기반 (contenteditable)
+    else if (modelId === 'mistral') {
+      console.log('[ModelDock v15] Using Mistral ProseMirror editor injection');
+      if (element.isContentEditable && element.classList.contains('ProseMirror')) {
+        // ProseMirror는 paste 이벤트가 가장 안정적
+        try {
+          element.focus();
+          const dataTransfer = new DataTransfer();
+          dataTransfer.setData('text/plain', text);
+          const pasteEvent = new ClipboardEvent('paste', {
+            bubbles: true, cancelable: true, clipboardData: dataTransfer
+          });
+          element.dispatchEvent(pasteEvent);
+          triggerInputEvents(element);
+          console.log('[ModelDock v15] Mistral ProseMirror injection via paste event');
+          return true;
+        } catch (e) {
+          console.warn('[ModelDock v15] Paste failed, falling back to execCommand');
+          element.focus();
+          const success = document.execCommand('insertText', false, text);
+          if (!success) element.textContent = text;
+          triggerInputEvents(element);
+          return true;
+        }
+      }
+      // 일반 contenteditable fallback
+      else if (element.isContentEditable) {
+        element.focus();
+        const success = document.execCommand('insertText', false, text);
+        if (!success) element.textContent = text;
+        triggerInputEvents(element);
+        return true;
+      }
+      // textarea fallback (레거시 UI)
+      else if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        const proto = window.HTMLTextAreaElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(element, text);
+        } else {
+          element.value = text;
+        }
+        triggerInputEvents(element);
+        return true;
+      }
+    }
+
+    // 🎯 LM Arena / OpenRouter  (Textarea)
+    else if (modelId === 'lmarena' || modelId === 'openrouter') {
       console.log(`[ModelDock v14] Using ${modelId}-specific injection (native textarea)`);
       if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
         const proto = window.HTMLTextAreaElement.prototype;
@@ -845,6 +1282,534 @@ async function getManifestForHost(hostname) {
     });
   }
 
+  // ============================================================
+  // 🎯 통합 파서 유틸리티 (ParserUtils) - 중복 제거 리팩토링
+  // ============================================================
+  const ParserUtils = {
+    /**
+     * Shadow DOM을 포함한 깊은 쿼리
+     */
+    deepQuerySelectorAll: (selector, root = document) => {
+      const results = Array.from(root.querySelectorAll(selector));
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.shadowRoot) {
+          results.push(...ParserUtils.deepQuerySelectorAll(selector, node.shadowRoot));
+        }
+      }
+      return results;
+    },
+
+    /**
+     * UI 요소를 제거한 클린 텍스트 추출
+     */
+    cleanText: (node, additionalSelectors = []) => {
+      if (!node) return '';
+      const clone = node.cloneNode(true);
+      const baseSelectors = [
+        'button', 'svg', 'textarea', 'input',
+        '[class*="button"]', '[class*="action"]', '[class*="toolbar"]',
+        '[class*="control"]', '[class*="copy"]', '[class*="footer"]',
+        '[data-state]', '[data-sentry-component="CopyButton"]',
+        '[aria-label*="Copy"]', '[aria-label="복사"]',
+        '[aria-label*="Stop"]', '[aria-label*="중지"]'
+      ];
+      const allSelectors = [...baseSelectors, ...additionalSelectors];
+      clone.querySelectorAll(allSelectors.join(', ')).forEach(el => el.remove());
+      return (clone.innerText || clone.textContent || '').trim();
+    },
+
+    /**
+     * 시스템/슬레이브 프롬프트 감지
+     */
+    isSystemPrompt: (text, additionalPatterns = []) => {
+      if (!text) return false;
+      const basePatterns = [
+        '페르소나:', '명령:', '[SLAVE:', '사용자가 제시한',
+        '입력 데이터:', '출력 형식:', 'persona:', 'instruction:',
+        '슬레이브 봇들을 총괄', '[목적]', '[역할]', '메인 브레인',
+        '당신은 슬레이브', '슬레이브 봇 목록', 'context:', 'input data:',
+        'output format:'
+      ];
+      const patterns = [...basePatterns, ...additionalPatterns];
+      const head = text.substring(0, 200).toLowerCase();
+      const matchCount = patterns.filter(p => head.includes(p.toLowerCase())).length;
+      return matchCount >= 1;
+    },
+
+    /**
+     * 사용자 메시지 컨테이너 감지 (Enhanced for LMArena/Mistral/Claude)
+     */
+    isUserMessageContainer: (el, maxDepth = 5) => {
+      if (!el) return false;
+
+      const className = (el.className || '').toLowerCase();
+      // Common standard markers
+      if (className.includes('user') || className.includes('human')) return true;
+      if (el.getAttribute('data-role') === 'user') return true;
+      if (el.getAttribute('data-message-author-role') === 'user') return true;
+
+      // LMArena specific
+      if (el.dataset.testid && el.dataset.testid.includes('user')) return true;
+
+      let parent = el.parentElement;
+      for (let i = 0; i < maxDepth && parent; i++) {
+        const pClass = (parent.className || '').toLowerCase();
+
+        // Tailwind/CSS checks
+        if (pClass.includes('user') || pClass.includes('human')) return true;
+        if (parent.getAttribute('data-role') === 'user') return true;
+        if (parent.getAttribute('data-message-author-role') === 'user') return true;
+
+        // LMArena specific style classes (gray background often indicates user in some themes)
+        if (pClass.includes('bg-surface-secondary')) return true;
+
+        // Specific LMArena Chat User Message
+        if (pClass.includes('chat-message-user')) return true;
+        if (parent.dataset.testid && parent.dataset.testid.includes('chat-user-message')) return true;
+
+        parent = parent.parentElement;
+      }
+      return false;
+    },
+
+    /**
+     * 봇 응답 컨테이너 감지
+     */
+    isBotResponseContainer: (el, maxDepth = 5) => {
+      if (!el) return false;
+
+      const className = (el.className || '').toLowerCase();
+      if (className.includes('assistant') || className.includes('bot') || className.includes('model')) return true;
+      if (el.getAttribute('data-role') === 'assistant') return true;
+      if (el.getAttribute('data-message-author-role') === 'assistant') return true;
+
+      let parent = el.parentElement;
+      for (let i = 0; i < maxDepth && parent; i++) {
+        const pClass = (parent.className || '').toLowerCase();
+        if (pClass.includes('assistant') || pClass.includes('bot') || pClass.includes('model-response')) return true;
+        if (parent.getAttribute('data-role') === 'assistant') return true;
+        parent = parent.parentElement;
+      }
+      return false;
+    }
+  };
+
+  // ============================================================
+  // 🎯 완전 동적 파서 (createDynamicParser) - 호스트 분기 없음
+  // 기능/역할 기반 휴리스틱으로 모든 AI 챗봇에서 작동
+  // ============================================================
+
+  /**
+   * 완전 동적 응답 파서
+   * 
+   * 설계 원칙:
+   * 1. 호스트명 분기 없음 (No hostname branching)
+   * 2. 시맨틱 속성 우선 (Semantic attributes first)
+   * 3. 기능 기반 탐색 (Feature-based detection)
+   * 4. 범용 휴리스틱 (Universal heuristics)
+   * 
+   * 탐색 우선순위:
+   * P1: 역할 기반 탐색 (data-role, data-message-author-role)
+   * P2: Copy 버튼 역추적 (봇 응답 = Copy 버튼 존재)
+   * P3: 텍스트 컨테이너 휴리스틱 (.prose, .markdown, [class*="response"])
+   * P4: 일반 메시지 패턴 ([class*="message"])
+   * P5: Deep Text Scan (마지막 폴백)
+   * 
+   * 필터:
+   * - 사용자 메시지 제외 (user, human, request)
+   * - 시스템 프롬프트 제외 (ParserUtils.isSystemPrompt)
+   */
+  function createDynamicParser() {
+    return () => {
+      const utils = ParserUtils;
+      const startTime = performance.now();
+      console.log('[DynamicParser] 🚀 Starting universal detection...');
+
+      // ========================================
+      // P1: 역할 기반 탐색 (Role-based Detection)
+      // 가장 신뢰도 높은 시맨틱 속성 우선
+      // ========================================
+      const roleBasedResult = (() => {
+        // 시맨틱 속성 조합 (aria 표준 + 커스텀 data 속성)
+        const roleSelectors = [
+          '[data-message-author-role="assistant"]',
+          '[data-role="assistant"]',
+          '[data-testid*="assistant"]',
+          '[data-testid="message-content"]',
+          '[aria-label*="assistant" i]'
+        ];
+
+        for (const selector of roleSelectors) {
+          const elements = Array.from(document.querySelectorAll(selector));
+          if (elements.length === 0) continue;
+
+          // 마지막 요소부터 역순 검사
+          for (let i = elements.length - 1; i >= 0; i--) {
+            const el = elements[i];
+
+            // 사용자 메시지 컨테이너 제외
+            if (utils.isUserMessageContainer(el)) continue;
+
+            // 텍스트 컨테이너 찾기 (.markdown, .prose, [class*="content"])
+            const textContainer = el.querySelector('.markdown, .prose, [class*="content"]') || el;
+            const text = utils.cleanText(textContainer);
+
+            if (text && text.length > 10 && !utils.isSystemPrompt(text)) {
+              console.log(`[DynamicParser] ✅ P1 Success (${selector}): ${text.length} chars`);
+              return text;
+            }
+          }
+        }
+        return null;
+      })();
+
+      if (roleBasedResult) {
+        console.log(`[DynamicParser] ⏱️ Completed in ${(performance.now() - startTime).toFixed(1)}ms`);
+        return roleBasedResult;
+      }
+
+      // ========================================
+      // P2: Copy 버튼 역추적 (Copy Button Reverse Traversal)
+      // Copy 버튼이 있는 컨테이너 = 봇 응답
+      // ========================================
+      const copyButtonResult = (() => {
+        // 범용 Copy 버튼 셀렉터 (다국어 지원)
+        const copyButtonSelectors = [
+          'button[aria-label*="Copy" i]',
+          'button[aria-label*="복사"]',
+          'button[aria-label*="コピー"]',
+          'button[aria-label*="复制"]',
+          '[data-sentry-component="CopyButton"]',
+          'button[class*="copy" i]',
+          '.copy-response-button',
+          '.copy-button'
+        ];
+
+        let allCopyButtons = [];
+        for (const selector of copyButtonSelectors) {
+          const buttons = document.querySelectorAll(selector);
+          allCopyButtons.push(...Array.from(buttons));
+        }
+
+        // 중복 제거
+        allCopyButtons = [...new Set(allCopyButtons)];
+
+        if (allCopyButtons.length === 0) return null;
+
+        console.log(`[DynamicParser] P2: Found ${allCopyButtons.length} copy buttons`);
+
+        // 마지막 Copy 버튼에서 역추적
+        for (let i = allCopyButtons.length - 1; i >= 0; i--) {
+          const btn = allCopyButtons[i];
+
+          // 부모 컨테이너 탐색 (최대 15단계)
+          let parent = btn.parentElement;
+          for (let depth = 0; depth < 15 && parent && parent !== document.body; depth++) {
+            // 사용자 메시지 컨테이너면 스킵
+            if (utils.isUserMessageContainer(parent)) break;
+
+            // 텍스트 후보 영역 찾기
+            const textCandidates = [
+              parent.querySelector('.prose, .markdown, [class*="content"], [class*="message"]'),
+              parent
+            ].filter(Boolean);
+
+            for (const candidate of textCandidates) {
+              const text = utils.cleanText(candidate);
+              if (text && text.length > 20 && !utils.isSystemPrompt(text)) {
+                console.log(`[DynamicParser] ✅ P2 Success (copy btn depth ${depth}): ${text.length} chars`);
+                return text;
+              }
+            }
+
+            parent = parent.parentElement;
+          }
+        }
+        return null;
+      })();
+
+      if (copyButtonResult) {
+        console.log(`[DynamicParser] ⏱️ Completed in ${(performance.now() - startTime).toFixed(1)}ms`);
+        return copyButtonResult;
+      }
+
+      // ========================================
+      // P3: 텍스트 컨테이너 휴리스틱 (Text Container Heuristic)
+      // .prose, .markdown, [class*="response"] 등
+      // ========================================
+      const textContainerResult = (() => {
+        const containerSelectors = [
+          '.prose',
+          '.markdown',
+          '[class*="response" i]:not([class*="user" i])',
+          '[class*="assistant" i]',
+          '[class*="bot" i]:not([class*="robot" i])',
+          '.font-claude-message',
+          '.message-bubble',
+          '[class*="svelte-"][class*="message" i]'
+        ];
+
+        // Shadow DOM 포함 탐색
+        let allContainers = [];
+        for (const selector of containerSelectors) {
+          try {
+            const elements = utils.deepQuerySelectorAll(selector);
+            allContainers.push(...elements);
+          } catch (e) {
+            // 선택자 오류 무시
+          }
+        }
+
+        console.log(`[DynamicParser] P3: Found ${allContainers.length} text containers`);
+
+        // 마지막부터 역순 탐색
+        for (let i = allContainers.length - 1; i >= 0; i--) {
+          const container = allContainers[i];
+
+          // 사용자 메시지 제외
+          if (utils.isUserMessageContainer(container)) continue;
+
+          const text = utils.cleanText(container);
+          if (text && text.length > 30 && !utils.isSystemPrompt(text)) {
+            console.log(`[DynamicParser] ✅ P3 Success (container ${i}): ${text.length} chars`);
+            return text;
+          }
+        }
+        return null;
+      })();
+
+      if (textContainerResult) {
+        console.log(`[DynamicParser] ⏱️ Completed in ${(performance.now() - startTime).toFixed(1)}ms`);
+        return textContainerResult;
+      }
+
+      // ========================================
+      // P4: 일반 메시지 패턴 ([class*="message"])
+      // 사용자/봇 구분 포함
+      // ========================================
+      const generalMessageResult = (() => {
+        const messageElements = Array.from(document.querySelectorAll(
+          '[class*="message" i], [class*="chat" i], [class*="turn" i], [class*="bubble" i]'
+        ));
+
+        console.log(`[DynamicParser] P4: Found ${messageElements.length} message elements`);
+
+        // 마지막부터 역순 탐색
+        for (let i = messageElements.length - 1; i >= 0; i--) {
+          const msg = messageElements[i];
+          const className = (msg.className || '').toLowerCase();
+
+          // 사용자 메시지 명시적 제외
+          if (className.includes('user') ||
+            className.includes('human') ||
+            className.includes('request') ||
+            className.includes('input')) continue;
+
+          // 사용자 컨테이너 체크
+          if (utils.isUserMessageContainer(msg)) continue;
+
+          const text = utils.cleanText(msg);
+          if (text && text.length > 30 && !utils.isSystemPrompt(text)) {
+            console.log(`[DynamicParser] ✅ P4 Success (message ${i}): ${text.length} chars`);
+            return text;
+          }
+        }
+        return null;
+      })();
+
+      if (generalMessageResult) {
+        console.log(`[DynamicParser] ⏱️ Completed in ${(performance.now() - startTime).toFixed(1)}ms`);
+        return generalMessageResult;
+      }
+
+      // ========================================
+      // P5: Deep Text Scan (마지막 폴백)
+      // 모든 텍스트 노드 탐색, 가장 긴 유효 텍스트 반환
+      // ========================================
+      const deepTextResult = (() => {
+        console.log('[DynamicParser] P5: Starting deep text scan...');
+
+        const allTextNodes = [];
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        while (walker.nextNode()) {
+          allTextNodes.push(walker.currentNode);
+        }
+
+        let bestText = '';
+        for (let i = allTextNodes.length - 1; i >= 0 && bestText.length < 500; i--) {
+          const node = allTextNodes[i];
+          const text = (node.nodeValue || '').trim();
+
+          if (text.length < 50) continue;
+          if (utils.isSystemPrompt(text)) continue;
+
+          // 부모가 사용자 메시지가 아닌지 확인
+          const parent = node.parentElement;
+          if (parent && utils.isUserMessageContainer(parent)) continue;
+
+          if (text.length > bestText.length) {
+            bestText = text;
+          }
+        }
+
+        if (bestText) {
+          console.log(`[DynamicParser] ✅ P5 Success (deep scan): ${bestText.length} chars`);
+          return bestText;
+        }
+        return null;
+      })();
+
+      if (deepTextResult) {
+        console.log(`[DynamicParser] ⏱️ Completed in ${(performance.now() - startTime).toFixed(1)}ms`);
+        return deepTextResult;
+      }
+
+      // ========================================
+      // 실패: 응답 없음
+      // ========================================
+      console.log(`[DynamicParser] ❌ No response found (${(performance.now() - startTime).toFixed(1)}ms)`);
+      return '';
+    };
+  }
+
+  // 단일 동적 파서 인스턴스 (모든 모델에서 공유)
+  const dynamicParser = createDynamicParser();
+
+  // ===========================================
+  // 🔄 하위 호환성: createUnifiedCustomParser 래퍼
+  // 기존 코드에서 호출하는 경우 동적 파서로 위임
+  // ===========================================
+  function createUnifiedCustomParser(hostname) {
+    // 호스트명 무시, 동적 파서 반환
+    console.log(`[DynamicParser] Legacy call from ${hostname}, using dynamic parser`);
+    return dynamicParser;
+  }
+
+  // === Claude 공통 헬퍼 (파싱/완료 감지 공유) ===
+  const CLAUDE_PROMPT_PATTERNS = [
+    /^페르소나:/i,
+    /^\[SLAVE:/i,
+    /^당신은.*역할을/i,
+    /^다음 지시사항을 따라/i,
+    /^Please respond to/i,
+    /^You are assigned/i
+  ];
+
+  function isClaudePromptText(text) {
+    if (!text || text.length < 10) return false;
+    return CLAUDE_PROMPT_PATTERNS.some(pattern => pattern.test(text.trim()));
+  }
+
+  function stripClaudeUIElements(root) {
+    if (!root) return;
+    const toRemove = root.querySelectorAll(
+      'button, ' +
+      '[class*="button"], ' +
+      '[class*="action"], ' +
+      '[class*="toolbar"], ' +
+      '[class*="control"], ' +
+      '[class*="copy"], ' +
+      '[data-state], ' +
+      '[data-sentry-component="CopyButton"], ' +
+      'svg, ' +
+      '[aria-label*="Copy"], ' +
+      '[aria-label="복사"], ' +
+      '[aria-label*="Stop"], ' +
+      '[aria-label*="중지"]'
+    );
+    toRemove.forEach(el => el.remove());
+  }
+
+  function isClaudeUserMessageContainer(element) {
+    if (!element) return false;
+
+    let parent = element;
+    for (let i = 0; i < 15 && parent; i++) {
+      const className = (parent.className || '').toLowerCase();
+      const role = (parent.getAttribute('data-message-author-role') || '').toLowerCase();
+
+      if (className.includes('human') ||
+        className.includes('user-message') ||
+        role === 'user' ||
+        role === 'human') {
+        return true;
+      }
+
+      if (className.includes('assistant') ||
+        className.includes('claude') ||
+        role === 'assistant') {
+        return false;
+      }
+
+      parent = parent.parentElement;
+    }
+    return false;
+  }
+
+  /**
+   * Claude 최신 응답 스냅샷을 반환 (파싱/완료 감지 공용)
+   * @param {Object} options
+   * @param {boolean} options.cleanText - UI 제거 후 텍스트 추출 여부
+   * @returns {{text: string, responseTextLength: number, isStreaming: boolean, hasCopyButton: boolean, isInputEnabled: boolean}}
+   */
+  function getClaudeLatestSnapshot(options = {}) {
+    const { cleanText = false } = options;
+
+    const streamingNodes = document.querySelectorAll('[data-is-streaming]');
+    const lastStreamingNode = streamingNodes.length > 0 ? streamingNodes[streamingNodes.length - 1] : null;
+    const hasStreamingAttr = lastStreamingNode?.getAttribute('data-is-streaming') === 'true';
+    const stopButton = document.querySelector('button[aria-label="Stop generating"], button[aria-label*="Stop"], button[data-testid="stop-button"], button[aria-label*="중지"]');
+    const isStreaming = hasStreamingAttr || !!stopButton;
+
+    const candidates = [
+      ...document.querySelectorAll('[data-is-streaming] .font-claude-response'),
+      ...document.querySelectorAll('.font-claude-response'),
+      ...document.querySelectorAll('.font-claude-response-body'),
+      ...document.querySelectorAll('.font-claude-message'),
+      ...document.querySelectorAll('div[data-testid="message-content"]'),
+      ...document.querySelectorAll('.prose')
+    ];
+
+    let contentEl = null;
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const candidate = candidates[i];
+      if (isClaudeUserMessageContainer(candidate)) continue;
+      contentEl = candidate;
+      break;
+    }
+
+    const container = contentEl?.closest('[data-message-author-role="assistant"]') ||
+      contentEl?.closest('.group') ||
+      contentEl;
+
+    const copyButton = container?.querySelector('[data-testid="action-bar-copy"], button[data-sentry-component="CopyButton"], button[aria-label*="Copy"], button[aria-label*="복사"]') ||
+      document.querySelector('[data-testid="action-bar-copy"]');
+
+    const inputField = document.querySelector('[data-testid="chat-input"][contenteditable="true"]') ||
+      document.querySelector('div[contenteditable="true"].ProseMirror') ||
+      document.querySelector('div[contenteditable="true"]');
+    const isInputEnabled = !!inputField;
+
+    let text = '';
+    if (contentEl) {
+      const source = cleanText ? contentEl.cloneNode(true) : contentEl;
+      if (cleanText) stripClaudeUIElements(source);
+      text = source.innerText?.trim() || source.textContent?.trim() || '';
+      if (isClaudePromptText(text)) text = '';
+    }
+
+    return {
+      text,
+      responseTextLength: text.length,
+      isStreaming: !!isStreaming,
+      hasCopyButton: !!copyButton,
+      isInputEnabled,
+      hasStopButton: !!stopButton
+    };
+  }
+
   // --- Response Monitoring (Added for Brain Flow) ---
   // === RESPONSE_CONFIGS v4.0 - 동적 감지 시스템 (2025) ===
   // 🔧 v14.0 변경사항:
@@ -859,6 +1824,7 @@ async function getManifestForHost(hostname) {
     // 🚨 CRITICAL: chatgpt.com/codex는 경로까지 매칭되어야 함
     {
       hosts: ['chatgpt.com/codex', 'codex.openai.com'],
+      customParser: dynamicParser,
       responseSelectors: [
         // 🔧 Codex: assistant 명시 셀렉터 우선 (user 혼동 방지)
         // Priority 1: 명확한 data 속성
@@ -891,6 +1857,7 @@ async function getManifestForHost(hostname) {
     // 🚨 CRITICAL: claude.ai/code는 경로까지 매칭되어야 함
     {
       hosts: ['claude.ai/code', 'code.anthropic.com'],
+      customParser: dynamicParser,
       responseSelectors: [
         // 🔧 Claude Code: assistant 명시 셀렉터 우선 (user 혼동 방지)
         // Priority 1: 명확한 data 속성
@@ -920,128 +1887,37 @@ async function getManifestForHost(hostname) {
       stabilizationTime: 30000
     },
 
-    // === ChatGPT (일반) - 2025 Enhanced v2 ===
+    // === ChatGPT (Generic) - 2025 Enhanced v2 ===
+    // ✅ NEW: Precise selectors based on actual DOM structure
     {
       hosts: ['chatgpt.com', 'chat.openai.com'],
-      customParser: () => {
-        console.log('[ChatGPT Parser v2] Starting...');
-
-        // Strategy 1: data-message-author-role="assistant" 역추적
-        const assistantMessages = Array.from(
-          document.querySelectorAll('div[data-message-author-role="assistant"]')
-        );
-        console.log(`[ChatGPT Parser v2] Found ${assistantMessages.length} assistant messages`);
-
-        if (assistantMessages.length > 0) {
-          const lastAssistant = assistantMessages[assistantMessages.length - 1];
-
-          // .markdown 컨테이너 우선 탐색
-          const markdownContainer = lastAssistant.querySelector('.markdown') || lastAssistant;
-
-          const clone = markdownContainer.cloneNode(true);
-
-          // 🔧 CRITICAL: UI 요소 제거 (버튼, 툴바, SVG 등)
-          const toRemove = clone.querySelectorAll(
-            'button, ' +
-            '[class*="button"], ' +
-            '[class*="action"], ' +
-            '[class*="toolbar"], ' +
-            '[class*="control"], ' +
-            '[class*="copy"], ' +
-            '[data-state], ' +
-            'svg, ' +
-            '[aria-label*="Copy"], ' +
-            '[aria-label="복사"], ' +
-            '[aria-label*="Stop"], ' +
-            '[aria-label*="중지"]'
-          );
-          toRemove.forEach(el => el.remove());
-
-          const text = clone.innerText?.trim();
-          if (text && text.length > 0) {
-            console.log(`[ChatGPT Parser v2] Success (assistant): ${text.length} chars`);
-            return text;
-          }
-        }
-
-        // Strategy 2: conversation-turn 기반
-        const conversationTurns = Array.from(
-          document.querySelectorAll('div[data-testid*="conversation-turn"]')
-        );
-
-        for (let i = conversationTurns.length - 1; i >= 0; i--) {
-          const turn = conversationTurns[i];
-
-          // assistant role이 있는지 확인
-          const hasAssistant = turn.querySelector('[data-message-author-role="assistant"]');
-          if (hasAssistant) {
-            const markdownEl = turn.querySelector('.markdown') || turn;
-            const clone = markdownEl.cloneNode(true);
-
-            const toRemove = clone.querySelectorAll(
-              'button, [class*="button"], [class*="action"], ' +
-              '[class*="toolbar"], [class*="control"], [class*="copy"], ' +
-              '[data-state], svg, [aria-label*="Copy"], [aria-label="복사"]'
-            );
-            toRemove.forEach(el => el.remove());
-
-            const text = clone.innerText?.trim();
-            if (text && text.length > 0) {
-              console.log(`[ChatGPT Parser v2] Success (conversation-turn): ${text.length} chars`);
-              return text;
-            }
-          }
-        }
-
-        // Strategy 3: .markdown Fallback (역순)
-        const markdowns = Array.from(document.querySelectorAll('.markdown'));
-        for (let i = markdowns.length - 1; i >= 0; i--) {
-          const md = markdowns[i];
-
-          // 사용자 메시지 제외 (부모에 user role이 있으면 제외)
-          const userParent = md.closest('[data-message-author-role="user"]');
-          if (userParent) {
-            console.log('[ChatGPT Parser v2] Skipping user message');
-            continue;
-          }
-
-          const clone = md.cloneNode(true);
-
-          const toRemove = clone.querySelectorAll(
-            'button, [class*="button"], [class*="action"], ' +
-            '[class*="toolbar"], [class*="control"], [class*="copy"], ' +
-            '[data-state], svg, [aria-label*="Copy"], [aria-label="복사"]'
-          );
-          toRemove.forEach(el => el.remove());
-
-          const text = clone.innerText?.trim();
-          if (text && text.length > 20) {  // 최소 길이 체크
-            console.log(`[ChatGPT Parser v2] Success (markdown): ${text.length} chars`);
-            return text;
-          }
-        }
-
-        console.log('[ChatGPT Parser v2] No response found');
-        return '';
-      },
+      customParser: dynamicParser,
       responseSelectors: [
-        // Fallback selectors (Custom Parser 실패 시)
-        'div[data-message-author-role="assistant"]:last-of-type .markdown',
-        'div[data-message-author-role="assistant"]:last-of-type',
-        'div[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"]):last-of-type .markdown'
+        // Exact match for assistant message
+        '[data-message-author-role="assistant"] .markdown',
+        '[data-message-author-role="assistant"] .prose',
+        // Fallback for structure
+        'div[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"]):last-of-type .markdown',
+        // Streaming state specifically
+        '.result-streaming',
+        '.streaming-animation'
       ],
       stopSelectors: [
         'button[aria-label*="Stop"]',
         'button[data-testid="stop-button"]',
-        'button[aria-label*="중지"]'
+        'button[aria-label*="중지"]',
+        // New explicit generating signals
+        '[class*="result-streaming"]',
+        '[class*="streaming-animation"]'
       ],
       inputSelector: 'textarea[data-id="conversation-input"], textarea[data-testid="prompt-textarea"]',
       submitSelector: 'button[data-testid="send-button"]',
-      stabilizationTime: 15000  // 12초 → 15초로 증가
+      stabilizationTime: 15000
     },
     // === Claude ===
     {
       hosts: ['claude.ai'],
+      customParser: dynamicParser,
       responseSelectors: [
         // 🔧 Claude 봇 응답 전용 셀렉터 (더 정밀하게)
         'div[data-testid="message-content"]:last-of-type',
@@ -1066,6 +1942,7 @@ async function getManifestForHost(hostname) {
     // === Gemini / AI Studio ===
     {
       hosts: ['gemini.google.com', 'aistudio.google.com'],
+      customParser: dynamicParser,
       responseSelectors: [
         // 🔧 Gemini/AIStudio: assistant/model 명시 셀렉터 우선
         // Priority 1: 명확한 custom elements & data 속성
@@ -1101,6 +1978,7 @@ async function getManifestForHost(hostname) {
     // === Perplexity ===
     {
       hosts: ['perplexity.ai', 'www.perplexity.ai'],
+      customParser: dynamicParser,
       responseSelectors: [
         'div.prose:last-of-type',
         'div[dir="auto"]:last-of-type',
@@ -1116,95 +1994,21 @@ async function getManifestForHost(hostname) {
       stabilizationTime: 15000
     },
     // === Grok (X/Twitter AI) ===
-    // 🔧 v12.4 CRITICAL FIX: 실제 Grok DOM 구조 기반 Custom Parser
+    // 🔧 v15.2 UPDATE: 실제 Grok DOM 구조 기반 (last-response + ProseMirror)
     {
-      hosts: ['grok.com', 'x.com'],
-      customParser: () => {
-        console.log('[Grok Parser v2] Starting with real DOM structure...');
-
-        // 🎯 실제 Grok DOM 구조:
-        // - .message-bubble = 메시지 컨테이너 (사용자/봇 공통)
-        // - p.break-words = 응답 텍스트
-        // - button[aria-label="복사"] = 복사 버튼 (봇 응답에만 존재!)
-
-        // Strategy 1: 복사 버튼이 있는 마지막 메시지 버블 찾기
-        // 복사 버튼이 있으면 봇 응답임 (사용자 메시지에는 복사 버튼 없음)
-        const allBubbles = document.querySelectorAll('.message-bubble');
-        console.log(`[Grok Parser v2] Found ${allBubbles.length} message bubbles`);
-
-        // 역순으로 검사 (최신 메시지부터)
-        for (let i = allBubbles.length - 1; i >= 0; i--) {
-          const bubble = allBubbles[i];
-
-          // 복사 버튼이 있는지 확인 (봇 응답 식별)
-          const copyButton = bubble.querySelector('button[aria-label="복사"], button[aria-label="Copy"]');
-
-          if (!copyButton) {
-            console.log(`[Grok Parser v2] Bubble ${i}: No copy button (user message)`);
-            continue;
-          }
-
-          // 응답 텍스트 추출
-          const textElement = bubble.querySelector('p.break-words') || bubble.querySelector('p');
-          const text = textElement ? textElement.innerText.trim() : bubble.innerText.trim();
-
-          if (!text || text.length < 10) {
-            console.log(`[Grok Parser v2] Bubble ${i}: Text too short (${text?.length || 0} chars)`);
-            continue;
-          }
-
-          // 🔧 CRITICAL: 시스템 프롬프트 필터링
-          const systemPromptKeywords = [
-            '슬레이브 봇들을 총괄',
-            'SLAVE:',
-            '[목적]',
-            '[역할]',
-            '메인 브레인',
-            '출력 형식 규칙',
-            '당신은 슬레이브',
-            '슬레이브 봇 목록'
-          ];
-
-          const isSystemPrompt = systemPromptKeywords.some(kw => text.includes(kw));
-          if (isSystemPrompt) {
-            console.log(`[Grok Parser v2] Bubble ${i}: System prompt detected, skipping`);
-            continue;
-          }
-
-          // 유효한 봇 응답!
-          console.log(`[Grok Parser v2] ✅ SUCCESS: Found bot response (${text.length} chars)`);
-          console.log(`[Grok Parser v2] First 100 chars: "${text.substring(0, 100)}..."`);
-          return text;
-        }
-
-        // Strategy 2: Fallback - prose 클래스 사용
-        const proseElements = document.querySelectorAll('.prose');
-        console.log(`[Grok Parser v2] Fallback: Found ${proseElements.length} .prose elements`);
-
-        for (let i = proseElements.length - 1; i >= 0; i--) {
-          const el = proseElements[i];
-          const text = el.innerText?.trim();
-
-          if (!text || text.length < 20) continue;
-
-          // 시스템 프롬프트 체크
-          const isSystemPrompt = [
-            '슬레이브 봇들을 총괄', 'SLAVE:', '[목적]', '메인 브레인'
-          ].some(kw => text.includes(kw));
-
-          if (isSystemPrompt) continue;
-
-          console.log(`[Grok Parser v2] Fallback SUCCESS: ${text.length} chars`);
-          return text;
-        }
-
-        console.log('[Grok Parser v2] ❌ No valid response found');
-        return '';
-      },
+      hosts: ['grok.com', 'x.ai'],
+      customParser: dynamicParser,
       responseSelectors: [
-        // Fallback selectors (Custom Parser 실패 시)
+        // Priority 1: .last-response 내부 복사 버튼 포함된 응답 (최신 응답 보장)
+        '.action-buttons.last-response + .response-content-markdown',
+        '.last-response .response-content-markdown',
+        // Priority 2: 마지막 응답 ID 기반
+        '[id^="response-"]:last-of-type .response-content-markdown',
+        '[id^="response-"]:last-of-type .message-bubble',
+        // Priority 3: 복사 버튼 포함된 메시지 버블 (일반 케이스)
         '.message-bubble:has(button[aria-label="복사"]) p.break-words',
         '.message-bubble:has(button[aria-label="Copy"]) p.break-words',
+        // Fallback: 마지막 메시지 버블
         '.message-bubble p.break-words:last-of-type',
         '.prose:last-of-type'
       ],
@@ -1212,12 +2016,12 @@ async function getManifestForHost(hostname) {
         'button[aria-label*="Stop"]',
         'button[aria-label*="stop"]',
         'button[aria-label*="중지"]',
-        // Grok 생성 중 표시되는 요소
+        '.sonner-spinner:not([data-visible="false"])',
         '[class*="loading"]',
         '[class*="generating"]'
       ],
-      inputSelector: 'textarea, div[role="textbox"][contenteditable="true"]',
-      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+      inputSelector: 'div.tiptap.ProseMirror[contenteditable="true"], textarea, div[role="textbox"][contenteditable="true"]',
+      submitSelector: 'button[aria-label="제출"], button[aria-label="Submit"], button[type="submit"]',
       excludeUserMessage: true,
       strictAssistantCheck: true,
       stabilizationTime: 20000
@@ -1226,6 +2030,7 @@ async function getManifestForHost(hostname) {
     // 🔧 핵심 수정: stabilizationTime 대폭 증가 (토큰 간격이 긴 경우 대응)
     {
       hosts: ['chat.qwen.ai'],
+      customParser: dynamicParser,
       responseSelectors: [
         // 🔧 Qwen CRITICAL FIX: 더 구체적인 셀렉터 우선 적용
         // ISSUE: 부분 파싱 문제 - 응답 중간에 완료 판정
@@ -1256,40 +2061,10 @@ async function getManifestForHost(hostname) {
       stabilizationTime: 35000,
       excludeUserMessage: true
     },
-    // === Mistral ===
-    // 🔧 수정: 더 정밀한 셀렉터
-    {
-      hosts: ['chat.mistral.ai'],
-      responseSelectors: [
-        // Mistral 전용 셀렉터 (data 속성 우선)
-        'div[data-message-author-role="assistant"]:last-of-type',
-        'div[data-testid="assistant-message"]:last-of-type',
-        'div[data-role="assistant"]:last-of-type',
-        // 구조 기반
-        'div[data-message-author-role="user"]:last-of-type ~ div[data-message-author-role="assistant"]',
-        // 클래스 기반
-        'div[class*="assistant-message"]:last-of-type',
-        'div[class*="bot-message"]:last-of-type',
-        'div[class*="assistant-content"]:last-of-type',
-        // Prose/markdown 영역 (부모 확인)
-        'div[data-message-author-role="assistant"] div.prose:last-of-type',
-        'div[class*="assistant"] div[class*="message-content"]:last-of-type',
-        'div.prose:last-of-type'
-      ],
-      stopSelectors: [
-        'button[aria-label*="Stop"]',
-        'button[aria-label*="stop"]',
-        'button:has(svg[class*="stop"])',
-        'button[data-testid="stop-button"]'
-      ],
-      inputSelector: 'textarea[placeholder*="Message"], textarea',
-      submitSelector: 'button[type="submit"], button[aria-label="Send"]',
-      excludeUserMessage: true,
-      stabilizationTime: 18000
-    },
     // === DeepSeek ===
     {
       hosts: ['chat.deepseek.com'],
+      customParser: dynamicParser,
       responseSelectors: [
         'div.ds-markdown:last-of-type',
         'div[class*="message-content"]:last-of-type',
@@ -1308,6 +2083,7 @@ async function getManifestForHost(hostname) {
     // 🔧 수정: 더 정밀한 셀렉터
     {
       hosts: ['github.com/copilot', 'copilot.github.com', 'github.com'],
+      customParser: dynamicParser,
       responseSelectors: [
         // GitHub Copilot 전용 (data 속성 우선)
         'div[data-testid="copilot-response"]:last-of-type',
@@ -1334,11 +2110,13 @@ async function getManifestForHost(hostname) {
       inputSelector: 'textarea[class*="ChatInput"], textarea',
       submitSelector: 'button[aria-label="Send"], button[type="submit"]',
       excludeUserMessage: true,
-      stabilizationTime: 20000
+      stabilizationTime: 20000,
+      thinkingPatterns: ["DeepSeek-R1", "Thinking...", "Reasoning..."]
     },
     // === Replit ===
     {
       hosts: ['replit.com'],
+      customParser: dynamicParser,
       responseSelectors: [
         'div[class*="markdown"]:last-of-type',
         'div[class*="message-body"]:last-of-type',
@@ -1357,6 +2135,7 @@ async function getManifestForHost(hostname) {
     // 🔧 수정: 조기 종료 방지를 위한 안정화 시간 증가
     {
       hosts: ['v0.dev'],
+      customParser: dynamicParser,
       responseSelectors: [
         // v0 전용 셀렉터
         'div[data-testid="message"]:last-of-type',
@@ -1382,6 +2161,7 @@ async function getManifestForHost(hostname) {
     // 🔧 수정: 더 정밀한 셀렉터
     {
       hosts: ['lovable.dev'],
+      customParser: dynamicParser,
       responseSelectors: [
         // Lovable 전용 셀렉터 (data 속성 우선)
         'div[data-message-author-role="assistant"]:last-of-type',
@@ -1410,28 +2190,21 @@ async function getManifestForHost(hostname) {
       // 🔧 Lovable: 코드 생성이 길 수 있음
       stabilizationTime: 30000
     },
-    // === LM Arena ===
+    // === LM Arena (Synced with JSON) ===
     {
       hosts: ['lmarena.ai'],
+      customParser: dynamicParser,
       responseSelectors: [
-        'div[data-message-author-role="assistant"]:last-of-type',
-        'div[data-testid="assistant-message"]:last-of-type',
-        'div[data-testid="model-response"]:last-of-type',
-        'div[data-role="assistant"]:last-of-type',
-        'div[class*="assistant-message"]:last-of-type',
-        'div[class*="bot-message"]:last-of-type',
-        'div[class*="model-response"]:last-of-type',
-        'div[class*="ai-response"]:last-of-type'
+        '.prose',
+        '[data-testid*="message"]:not([data-testid*="user"])',
+        '.chat-message:not(.user-message)'
       ],
-      stopSelectors: [
-        'button[aria-label*="Stop"]',
-        'button:has(svg[class*="stop"])'
-      ],
-      inputSelector: 'textarea', // LMArena often has multiple inputs, need care
+      stopSelectors: ['button[aria-label*="Stop"]'],
+      inputSelector: 'textarea',
       submitSelector: 'button.send-button',
-      stabilizationTime: 15000,
+      stabilizationTime: 8000,
       excludeUserMessage: true,
-      strictAssistantCheck: true // 🚨 Assistant 마커 필수
+      strictAssistantCheck: true
     },
     // === ChatGPT ===
     {
@@ -1451,216 +2224,7 @@ async function getManifestForHost(hostname) {
     // === Claude (Custom Parser) - 2025 Enhanced v3 ===
     {
       hosts: ['claude.ai'],
-      customParser: () => {
-        console.log('[Claude Parser v3] Starting...');
-
-        // 🔧 CRITICAL: UI 요소 제거 헬퍼 함수
-        const removeUIElements = (clone) => {
-          const toRemove = clone.querySelectorAll(
-            'button, ' +
-            '[class*="button"], ' +
-            '[class*="action"], ' +
-            '[class*="toolbar"], ' +
-            '[class*="control"], ' +
-            '[class*="copy"], ' +
-            '[data-state], ' +
-            '[data-sentry-component="CopyButton"], ' +
-            'svg, ' +
-            '[aria-label*="Copy"], ' +
-            '[aria-label="복사"], ' +
-            '[aria-label*="Stop"], ' +
-            '[aria-label*="중지"]'
-          );
-          toRemove.forEach(el => el.remove());
-        };
-
-        // 🔧 v3: 프롬프트 텍스트 필터 (Brain Flow에서 주입된 프롬프트 구분)
-        const isPromptText = (text) => {
-          if (!text || text.length < 10) return false;
-
-          const promptPatterns = [
-            /^페르소나:/i,
-            /^\[SLAVE:/i,
-            /^당신은.*역할을/i,
-            /^다음 지시사항을 따라/i,
-            /^Please respond to/i,
-            /^You are assigned/i
-          ];
-
-          return promptPatterns.some(pattern => pattern.test(text.trim()));
-        };
-
-        // 🔧 v3: 사용자 메시지 컨테이너인지 확인
-        const isUserMessageContainer = (element) => {
-          if (!element) return false;
-
-          // 부모 탐색하여 사용자 메시지 컨테이너 여부 확인
-          let parent = element;
-          for (let i = 0; i < 15 && parent; i++) {
-            const className = (parent.className || '').toLowerCase();
-            const role = parent.getAttribute('data-message-author-role');
-
-            // 사용자 메시지 표시
-            if (className.includes('human') ||
-              className.includes('user-message') ||
-              role === 'user' ||
-              role === 'human') {
-              return true;
-            }
-
-            // Claude 봇 메시지 표시 (확실히 봇 메시지면 false)
-            if (className.includes('assistant') ||
-              className.includes('claude') ||
-              role === 'assistant') {
-              return false;
-            }
-
-            parent = parent.parentElement;
-          }
-          return false;
-        };
-
-        // 🔧 v3: 대화 메시지 블록들을 찾아 마지막 봇 응답 찾기
-        const conversationBlocks = Array.from(document.querySelectorAll(
-          '[data-message-author-role], ' +
-          '.group[class*="message"], ' +
-          'div[class*="conversation"] > div'
-        ));
-
-        console.log(`[Claude Parser v3] Found ${conversationBlocks.length} conversation blocks`);
-
-        // 마지막부터 역순 탐색하여 봇 응답 찾기
-        for (let i = conversationBlocks.length - 1; i >= 0; i--) {
-          const block = conversationBlocks[i];
-          const role = block.getAttribute('data-message-author-role');
-
-          if (role === 'assistant') {
-            const content = block.querySelector('.font-claude-message') ||
-              block.querySelector('[data-testid="message-content"]') ||
-              block.querySelector('.prose');
-            if (content) {
-              const clone = content.cloneNode(true);
-              removeUIElements(clone);
-              const text = clone.innerText?.trim();
-              if (text && text.length > 10 && !isPromptText(text)) {
-                console.log(`[Claude Parser v3] Success (role=assistant): ${text.length} chars`);
-                return text;
-              }
-            }
-          }
-        }
-
-        // Strategy 1: .font-claude-message 직접 탐색 - 봇 메시지만
-        const claudeMessages = Array.from(document.querySelectorAll('.font-claude-message'));
-        console.log(`[Claude Parser v3] Found ${claudeMessages.length} claude messages`);
-
-        // 마지막부터 역순으로 탐색
-        for (let i = claudeMessages.length - 1; i >= 0; i--) {
-          const message = claudeMessages[i];
-
-          // 사용자 메시지 컨테이너 스킵
-          if (isUserMessageContainer(message)) {
-            console.log('[Claude Parser v3] Skipping user message container');
-            continue;
-          }
-
-          const clone = message.cloneNode(true);
-          removeUIElements(clone);
-
-          const text = clone.innerText?.trim();
-          if (text && text.length > 10 && !isPromptText(text)) {
-            console.log(`[Claude Parser v3] Success (.font-claude-message): ${text.length} chars`);
-            return text;
-          }
-        }
-
-        // Strategy 2: data-testid="message-content" - 봇 메시지만
-        const messageContents = Array.from(document.querySelectorAll('div[data-testid="message-content"]'));
-        console.log(`[Claude Parser v3] Found ${messageContents.length} message-content divs`);
-
-        for (let i = messageContents.length - 1; i >= 0; i--) {
-          const content = messageContents[i];
-
-          if (isUserMessageContainer(content)) {
-            continue;
-          }
-
-          const clone = content.cloneNode(true);
-          removeUIElements(clone);
-
-          const text = clone.innerText?.trim();
-          if (text && text.length > 10 && !isPromptText(text)) {
-            console.log(`[Claude Parser v3] Success (message-content): ${text.length} chars`);
-            return text;
-          }
-        }
-
-        // Strategy 3: Copy 버튼 역추적 (최신 복사 버튼 = 최신 응답)
-        const copyBtns = Array.from(document.querySelectorAll('button[data-sentry-component="CopyButton"]'));
-        console.log(`[Claude Parser v3] Found ${copyBtns.length} copy buttons`);
-
-        if (copyBtns.length > 0) {
-          const lastBtn = copyBtns[copyBtns.length - 1];
-
-          // 부모 탐색 (최대 15단계)
-          let parent = lastBtn.parentElement;
-          for (let i = 0; i < 15 && parent; i++) {
-            const content = parent.querySelector('.font-claude-message') ||
-              parent.querySelector('[data-testid="message-content"]');
-            if (content && !isUserMessageContainer(content)) {
-              const clone = content.cloneNode(true);
-              removeUIElements(clone);
-
-              const text = clone.innerText?.trim();
-              if (text && text.length > 10 && !isPromptText(text)) {
-                console.log(`[Claude Parser v3] Success (copy btn traverse): ${text.length} chars`);
-                return text;
-              }
-            }
-
-            if (parent.classList?.contains('group') && !isUserMessageContainer(parent)) {
-              const content = parent.querySelector('.font-claude-message');
-              if (content) {
-                const clone = content.cloneNode(true);
-                removeUIElements(clone);
-
-                const text = clone.innerText?.trim();
-                if (text && text.length > 10 && !isPromptText(text)) {
-                  console.log(`[Claude Parser v3] Success (.group): ${text.length} chars`);
-                  return text;
-                }
-              }
-            }
-
-            parent = parent.parentElement;
-          }
-        }
-
-        // Strategy 4: prose 클래스 기반
-        const proseElements = Array.from(document.querySelectorAll('.prose'));
-        console.log(`[Claude Parser v3] Found ${proseElements.length} prose elements`);
-
-        for (let i = proseElements.length - 1; i >= 0; i--) {
-          const prose = proseElements[i];
-
-          if (isUserMessageContainer(prose)) {
-            console.log('[Claude Parser v3] Skipping user prose');
-            continue;
-          }
-
-          const clone = prose.cloneNode(true);
-          removeUIElements(clone);
-
-          const text = clone.innerText?.trim();
-          if (text && text.length > 20 && !isPromptText(text)) {
-            console.log(`[Claude Parser v3] Success (prose): ${text.length} chars`);
-            return text;
-          }
-        }
-
-        console.log('[Claude Parser v3] No response found');
-        return '';
-      },
+      customParser: dynamicParser,
       responseSelectors: [
         '.font-claude-message:last-of-type',
         'div[data-testid="message-content"]:last-of-type',
@@ -1687,362 +2251,31 @@ async function getManifestForHost(hostname) {
       submitSelector: 'button[aria-label*="Send"]',
       stabilizationTime: 10000
     },
-    // === Grok (Custom Parser) - 2025 v12.5 ===
-    // 실제 DOM 구조 기반 (사용자 제공):
-    // <div class="message-bubble ...">
-    //   <p class="break-words ...">응답 텍스트</p>
-    //   <button aria-label="복사">복사</button>  ← 봇 응답에만 존재!
-    // </div>
+    // === Qwen (Synced with JSON) ===
     {
-      hosts: ['grok.com', 'x.com'],
-      customParser: () => {
-        console.log('[Grok Parser v3] Starting with real DOM structure...');
-
-        // Strategy 1: .message-bubble 컨테이너 + 복사 버튼으로 봇 응답 식별
-        const allBubbles = document.querySelectorAll('.message-bubble');
-        console.log(`[Grok Parser v3] Found ${allBubbles.length} message bubbles`);
-
-        if (allBubbles.length === 0) {
-          // Fallback: 다른 가능한 셀렉터 시도
-          const altBubbles = document.querySelectorAll('[class*="message"]');
-          console.log(`[Grok Parser v3] Fallback: Found ${altBubbles.length} [class*="message"] elements`);
-        }
-
-        // 역순으로 탐색 (최신 응답부터)
-        for (let i = allBubbles.length - 1; i >= 0; i--) {
-          const bubble = allBubbles[i];
-
-          // 🔑 핵심: 복사 버튼이 있으면 봇 응답 (사용자 메시지에는 복사 버튼 없음!)
-          const copyButton = bubble.querySelector('button[aria-label="복사"], button[aria-label="Copy"]');
-
-          if (!copyButton) {
-            // 복사 버튼 없음 = 사용자 메시지 → 스킵
-            continue;
-          }
-
-          console.log(`[Grok Parser v3] Found bot response at index ${i} (has copy button)`);
-
-          // 텍스트 추출: p.break-words 또는 전체 innerText
-          let text = '';
-
-          // 1차: p.break-words 태그에서 추출
-          const paragraphs = bubble.querySelectorAll('p.break-words, p[class*="break-words"]');
-          if (paragraphs.length > 0) {
-            text = Array.from(paragraphs).map(p => p.innerText || p.textContent).join('\n').trim();
-            console.log(`[Grok Parser v3] Extracted from p.break-words: ${text.length} chars`);
-          }
-
-          // 2차: innerText fallback (버튼 텍스트 제외)
-          if (!text || text.length < 50) {
-            const clone = bubble.cloneNode(true);
-            // 버튼 및 UI 요소 제거
-            clone.querySelectorAll('button, [role="button"], svg, [class*="icon"], [class*="action"]').forEach(el => el.remove());
-            text = clone.innerText?.trim() || '';
-            console.log(`[Grok Parser v3] Extracted from innerText: ${text.length} chars`);
-          }
-
-          // 시스템 프롬프트 필터링
-          const systemPromptIndicators = [
-            '당신은 ',
-            'You are ',
-            '역할:',
-            'Role:',
-            '시스템 프롬프트',
-            'System prompt',
-            '[SLAVE:',  // BrainFlow 시스템 프롬프트 일부
-          ];
-
-          const isSystemPrompt = systemPromptIndicators.some(indicator =>
-            text.substring(0, 100).includes(indicator)
-          );
-
-          if (isSystemPrompt && i > 0) {
-            console.log(`[Grok Parser v3] Skipping system prompt at index ${i}`);
-            continue;
-          }
-
-          if (text && text.length > 10) {
-            console.log(`[Grok Parser v3] ✅ SUCCESS: Found bot response (${text.length} chars)`);
-            console.log(`[Grok Parser v3] First 200 chars: ${text.substring(0, 200)}...`);
-            return text;
-          }
-        }
-
-        console.log('[Grok Parser v3] ❌ No valid bot response found');
-        return '';
-      },
+      hosts: ['chat.qwen.ai', 'tongyi.aliyun.com'],
+      customParser: dynamicParser,
       responseSelectors: [
-        // Custom Parser가 실패할 경우 fallback
-        '.message-bubble:last-of-type',
-        'div[class*="message"]:last-of-type'
-      ],
-      stopSelectors: ['button[aria-label*="Stop"]', 'button[aria-label*="중지"]'],
-      inputSelector: 'div[role="textbox"], textarea',
-      submitSelector: 'button[aria-label="Send"], button[type="submit"]',
-      stabilizationTime: 20000
-    },
-    // === Qwen (Custom Parser) - 2025 Enhanced v2 ===
-    {
-      hosts: ['chat.qwen.ai'],
-      customParser: () => {
-        // 🔧 2025 Enhanced v2: 사용자 제공 HTML 구조 기반 정밀 파싱
-        // 실제 구조:
-        // <div id="message-xxx" class="response-meesage-container svelte-1av26cy">
-        //   <div class="response-button-list-item">
-        //     <button class="copy-response-button ...">
-        console.log('[Qwen Parser v2] Starting...');
-
-        // Strategy 1: .copy-response-button 역추적 (가장 확실) - 강화됨
-        const copyButtons = Array.from(document.querySelectorAll('.copy-response-button'));
-        console.log(`[Qwen Parser v2] Found ${copyButtons.length} copy buttons`);
-
-        if (copyButtons.length > 0) {
-          // 마지막 복사 버튼 = 가장 최근 응답
-          const lastCopyBtn = copyButtons[copyButtons.length - 1];
-
-          // .response-meesage-container 찾기 (오타 포함된 실제 클래스명)
-          const messageContainer =
-            lastCopyBtn.closest('.response-meesage-container') ||
-            lastCopyBtn.closest('.response-message-container') ||
-            lastCopyBtn.closest('div[id^="message-"][class*="response"]') ||
-            lastCopyBtn.closest('div[id^="message-"]');
-
-          if (messageContainer) {
-            // 사용자 메시지 제외 (강화된 체크)
-            const classes = (messageContainer.className || '').toLowerCase();
-            const id = (messageContainer.id || '').toLowerCase();
-
-            if (classes.includes('user') || classes.includes('request') ||
-              id.includes('user') || id.includes('request')) {
-              console.log('[Qwen Parser v2] Skipping user message');
-            } else {
-              // 텍스트 추출 (버튼 영역 제외) - 강화된 제거 로직
-              const clone = messageContainer.cloneNode(true);
-
-              // 🔧 CRITICAL FIX: 더 포괄적인 버튼/UI 요소 제거
-              const toRemove = clone.querySelectorAll(
-                'button, ' +
-                '.response-button-list-item, ' +
-                '.copy-response-button, ' +
-                '.message-footer-button-item, ' +
-                '.response-message-control-item-visible, ' +
-                '[class*="button"], ' +
-                '[class*="action"], ' +
-                '[class*="toolbar"], ' +
-                '[class*="footer"], ' +
-                '[class*="control"], ' +
-                '[aria-label="복사"], ' +
-                '[aria-label*="Copy"]'
-              );
-              toRemove.forEach(el => el.remove());
-
-              // innerText 사용 (가시적 텍스트만)
-              const text = clone.innerText?.trim();
-              if (text && text.length > 0) {
-                console.log(`[Qwen Parser v2] Success (container): ${text.length} chars`);
-                return text;
-              }
-            }
-          }
-        }
-
-        // Strategy 2: div[id^="message-"] 직접 탐색
-        const messageDivs = Array.from(document.querySelectorAll('div[id^="message-"]'));
-        console.log(`[Qwen Parser] Found ${messageDivs.length} message divs`);
-
-        // 역순으로 응답 메시지 찾기
-        for (let i = messageDivs.length - 1; i >= 0; i--) {
-          const msgDiv = messageDivs[i];
-          const classes = (msgDiv.className || '').toLowerCase();
-
-          // 사용자 메시지 제외
-          if (classes.includes('user') || classes.includes('request')) {
-            continue;
-          }
-
-          // 응답 메시지 컨테이너 확인
-          if (classes.includes('response') || msgDiv.querySelector('.copy-response-button')) {
-            const clone = msgDiv.cloneNode(true);
-            const buttons = clone.querySelectorAll('button, [class*="button"]');
-            buttons.forEach(btn => btn.remove());
-
-            const text = clone.innerText?.trim();
-            if (text && text.length > 0) {
-              console.log(`[Qwen Parser] Success (message div): ${text.length} chars`);
-              return text;
-            }
-          }
-        }
-
-        // Strategy 3: Svelte 컴포넌트 클래스 기반 (svelte-xxx)
-        const svelteMessages = Array.from(document.querySelectorAll('[class*="svelte-"][class*="message"], [class*="svelte-"][class*="response"]'));
-        for (let i = svelteMessages.length - 1; i >= 0; i--) {
-          const msg = svelteMessages[i];
-          const classes = (msg.className || '').toLowerCase();
-
-          if (!classes.includes('user')) {
-            const clone = msg.cloneNode(true);
-            const buttons = clone.querySelectorAll('button');
-            buttons.forEach(btn => btn.remove());
-
-            const text = clone.innerText?.trim();
-            if (text && text.length > 50) {
-              console.log(`[Qwen Parser] Success (svelte): ${text.length} chars`);
-              return text;
-            }
-          }
-        }
-
-        console.log('[Qwen Parser] No response found');
-        return '';
-      },
-      responseSelectors: [
-        'div[id^="message-"].response-meesage-container:last-of-type',
-        'div[class*="response-message"]:last-of-type',
-        'div[class*="svelte-"]:last-of-type'
+        '.response-message-content',
+        '.qwen-markdown',
+        'div[class*="response-message"]'
       ],
       stopSelectors: [
-        'button[class*="stop"]',
-        'div[class*="stop"]',
-        '[class*="generating"]',
-        '[class*="loading"]'
+        'button.ant-btn-dangerous',
+        'button[class*="stop"]'
       ],
-      inputSelector: 'textarea',
-      submitSelector: 'button[class*="send"], button[type="submit"]',
-      // 🔧 CRITICAL: Qwen은 토큰 생성 간격이 매우 길 수 있음 (60초)
-      stabilizationTime: 60000
+      inputSelector: 'textarea.ant-input',
+      submitSelector: 'button.ant-btn-primary',
+      stabilizationTime: 3000
     },
-    // === LMArena (Custom Parser) - 2025 Final Fix v8 (User/Bot Distinction) ===
+    // === LMArena (Standard Selectors) - 2025 Final Fix v9 (Manifest-First) ===
     {
       hosts: ['lmarena.ai'],
-      customParser: () => {
-        console.log('[LMArena Parser v8] Starting with User/Bot distinction...');
-
-        // 🔧 Helper: Shadow DOM까지 뚫고 들어가는 탐색기
-        const deepQuerySelectorAll = (selector, root = document) => {
-          const results = Array.from(root.querySelectorAll(selector));
-          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
-          while (walker.nextNode()) {
-            const node = walker.currentNode;
-            if (node.shadowRoot) {
-              results.push(...deepQuerySelectorAll(selector, node.shadowRoot));
-            }
-          }
-          return results;
-        };
-
-        const cleanText = (node) => {
-          if (!node) return '';
-          const clone = node.cloneNode(true);
-          const removable = clone.querySelectorAll('button, svg, textarea, input, [data-sentry-component="CopyButton"]');
-          removable.forEach(el => el.remove());
-          return (clone.innerText || clone.textContent || '').trim();
-        };
-
-        // 🔧 CRITICAL FIX: 슬레이브 프롬프트 패턴 감지 (Brain Flow에서 전송한 지시문)
-        const isSlavePromptText = (text) => {
-          if (!text) return false;
-          const head = text.substring(0, 200).toLowerCase();
-          const patterns = [
-            '페르소나:', '명령:', '[slave:', '입력 데이터:', '출력 형식:',
-            'persona:', 'instruction:', 'input data:', 'output format:',
-            '사용자가 제시한', '맥락:', 'context:'
-          ];
-          // 2개 이상의 패턴이 포함되면 슬레이브 프롬프트로 판정
-          const matchCount = patterns.filter(p => head.includes(p.toLowerCase())).length;
-          return matchCount >= 2;
-        };
-
-        // 🔧 CRITICAL FIX: 사용자 메시지 컨테이너 감지
-        const isUserMessageContainer = (el) => {
-          if (!el) return false;
-
-          // 1. 직접적인 user 마커 확인
-          const className = (el.className || '').toLowerCase();
-          if (className.includes('user') || className.includes('human')) return true;
-
-          // 2. data 속성 확인
-          if (el.getAttribute('data-role') === 'user') return true;
-          if (el.getAttribute('data-message-author-role') === 'user') return true;
-
-          // 3. 조상 요소에서 user 마커 확인 (최대 5단계)
-          let parent = el.parentElement;
-          for (let i = 0; i < 5 && parent; i++) {
-            const pClass = (parent.className || '').toLowerCase();
-            if (pClass.includes('user') || pClass.includes('human')) return true;
-            if (parent.getAttribute('data-role') === 'user') return true;
-
-            // LMArena 특유의 사용자 메시지 배경색 클래스
-            if (pClass.includes('bg-surface-secondary')) return true;
-
-            parent = parent.parentElement;
-          }
-
-          return false;
-        };
-
-        // 🔧 CRITICAL FIX: 봇 응답 컨테이너 감지
-        const isBotResponseContainer = (el) => {
-          if (!el) return false;
-
-          // 1. 직접적인 assistant/bot 마커 확인
-          const className = (el.className || '').toLowerCase();
-          if (className.includes('assistant') || className.includes('bot') || className.includes('model')) return true;
-
-          // 2. data 속성 확인
-          if (el.getAttribute('data-role') === 'assistant') return true;
-          if (el.getAttribute('data-message-author-role') === 'assistant') return true;
-
-          // 3. 조상 요소에서 assistant 마커 확인
-          let parent = el.parentElement;
-          for (let i = 0; i < 5 && parent; i++) {
-            const pClass = (parent.className || '').toLowerCase();
-            if (pClass.includes('assistant') || pClass.includes('bot') || pClass.includes('model-response')) return true;
-            if (parent.getAttribute('data-role') === 'assistant') return true;
-            parent = parent.parentElement;
-          }
-
-          return false;
-        };
-
-        // 1. Shadow DOM 포함 모든 .prose 요소 수집
-        const allProses = deepQuerySelectorAll('.prose');
-        console.log(`[LMArena Parser v8] Found ${allProses.length} .prose elements`);
-
-        // 2. 뒤에서부터 탐색 - 봇 응답만 찾기
-        for (let i = allProses.length - 1; i >= 0; i--) {
-          const prose = allProses[i];
-
-          // 🔧 CRITICAL: 사용자 메시지 컨테이너면 건너뛰기
-          if (isUserMessageContainer(prose)) {
-            console.log(`[LMArena Parser v8] Skipping user message container at index ${i}`);
-            continue;
-          }
-
-          const text = cleanText(prose);
-
-          // 🔧 CRITICAL: 슬레이브 프롬프트 패턴이면 건너뛰기
-          if (isSlavePromptText(text)) {
-            console.log(`[LMArena Parser v8] Skipping slave prompt text at index ${i}: "${text.substring(0, 50)}..."`);
-            continue;
-          }
-
-          // 3. 유효한 응답 검증
-          if (text.length > 30) {
-            // 추가 검증: 봇 응답 컨테이너인지 확인 (선택적)
-            const isBot = isBotResponseContainer(prose);
-            console.log(`[LMArena Parser v8] Found text at index ${i}: ${text.length} chars, isBot: ${isBot}`);
-
-            // 봇 컨테이너가 아니더라도 슬레이브 프롬프트가 아니면 허용
-            console.log(`[LMArena Parser v8] Success: ${text.length} chars`);
-            return text;
-          }
-        }
-
-        console.log('[LMArena Parser v8] No valid bot response found');
-        return '';
-      },
-      responseSelectors: [],
+      // customParser remove: let manifest selectors work
+      responseSelectors: [
+        '[data-testid*="message"]:not([data-testid*="user"])',
+        '.chat-message:not(.user-message)'
+      ],
       stopSelectors: ['button[aria-label*="Stop"]'],
       inputSelector: 'textarea',
       submitSelector: 'button.send-button',
@@ -2052,97 +2285,21 @@ async function getManifestForHost(hostname) {
     // === OpenRouter (Custom Parser) - 2025 Final Fix v7 (Deep Shadow Search) ===
     {
       hosts: ['openrouter.ai'],
-      customParser: () => {
-        console.log('[OpenRouter Parser v7] Starting Deep Shadow Search...');
-
-        const deepQuerySelectorAll = (selector, root = document) => {
-          const results = Array.from(root.querySelectorAll(selector));
-          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
-          while (walker.nextNode()) {
-            const node = walker.currentNode;
-            if (node.shadowRoot) {
-              results.push(...deepQuerySelectorAll(selector, node.shadowRoot));
-            }
-          }
-          return results;
-        };
-
-        const cleanText = (node) => {
-          if (!node) return '';
-          const clone = node.cloneNode(true);
-          const toRemove = clone.querySelectorAll('button, svg, textarea, [aria-label*="Copy"]');
-          toRemove.forEach(el => el.remove());
-          return (clone.innerText || clone.textContent || '').trim();
-        };
-
-        const isPromptText = (text) => {
-          if (!text) return true;
-          const patterns = ['페르소나:', '명령:', '[SLAVE:', '사용자가 제시한', '입력 데이터:', '출력 형식:'];
-          const head = text.substring(0, 100);
-          return patterns.some(p => head.includes(p));
-        };
-
-        // 1. Shadow DOM 포함 모든 텍스트 컨테이너 수집
-        // OpenRouter는 div.rounded-tl-none, div.col-start-1 등을 사용
-        const candidates = deepQuerySelectorAll('div.rounded-tl-none, div.col-start-1, div.prose, div.markdown');
-        console.log(`[OpenRouter Parser v7] Found ${candidates.length} candidates (including shadow)`);
-
-        for (let i = candidates.length - 1; i >= 0; i--) {
-          const el = candidates[i];
-
-          // 사용자 메시지 제외
-          if (el.className.includes('rounded-tr-none') || el.closest('.rounded-tr-none, [data-role="user"]')) continue;
-
-          let text = cleanText(el);
-          if (!text) text = (el.innerText || el.textContent || '').trim();
-
-          if (text.length > 30 && !isPromptText(text)) {
-            console.log(`[OpenRouter Parser v7] Success: ${text.length} chars`);
-            return text;
-          }
-        }
-
-        // Fallback: Deep Text Scan (Shadow DOM 포함)
-        // 모든 텍스트 노드를 훑어서 가장 긴 것 찾기
-        const allTextNodes = [];
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-        while (walker.nextNode()) allTextNodes.push(walker.currentNode);
-
-        // 텍스트 노드의 부모 요소들을 검사
-        let bestText = '';
-        for (let i = allTextNodes.length - 1; i >= 0; i--) {
-          const node = allTextNodes[i];
-          const text = node.nodeValue.trim();
-          if (text.length > 50 && !isPromptText(text)) {
-            // 부모가 사용자 메시지가 아닌지 확인
-            const parent = node.parentElement;
-            if (parent && !parent.closest('.rounded-tr-none, [data-role="user"]')) {
-              if (text.length > bestText.length) bestText = text;
-            }
-          }
-        }
-
-        if (bestText) {
-          console.log(`[OpenRouter Parser v7] Success (Deep Text Scan): ${bestText.length} chars`);
-          return bestText;
-        }
-
-        console.log('[OpenRouter Parser v7] No valid text found');
-        return '';
-      },
+      customParser: dynamicParser,
       responseSelectors: [],
       stopSelectors: [
         'button[aria-label="Stop generating"]',
         'button[aria-label*="Stop"]'
       ],
-      inputSelector: 'textarea',
-      submitSelector: 'button[type="submit"]',
+      inputSelector: '[data-testid="playground-composer"] textarea, textarea',
+      submitSelector: '[data-testid="playground-composer"] button.bg-primary, button[type="submit"]',
       stabilizationTime: 60000,
       excludeUserMessage: true
     },
     // === Genspark / Vooster ===
     {
       hosts: ['genspark.ai', 'app.vooster.ai'],
+      customParser: dynamicParser,
       responseSelectors: ['div.prose:last-of-type'],
       stopSelectors: ['button[aria-label*="Stop"]'],
       inputSelector: 'textarea',
@@ -2169,7 +2326,33 @@ async function getManifestForHost(hostname) {
     '[data-testid*="stop"]'
   ];
 
-  function getResponseConfig() {
+  function selectorListFromManifest(selectorConfig) {
+    if (!selectorConfig) return [];
+    return [selectorConfig.primary, ...(selectorConfig.alternatives || [])].filter(Boolean);
+  }
+
+  function buildResponseConfigFromManifest(manifest) {
+    if (!manifest) return null;
+    const selectors = manifest.selectors || {};
+    const responseSelectors = selectorListFromManifest(selectors.response_area);
+    const stopSelectors = selectorListFromManifest(selectors.stop_button);
+    const inputSelectors = selectorListFromManifest(selectors.input_field).join(', ');
+    const submitSelectors = selectorListFromManifest(selectors.submit_button).join(', ');
+
+    return {
+      responseSelectors: [...responseSelectors, ...UNIVERSAL_RESPONSE_SELECTORS],
+      stopSelectors: [...stopSelectors, ...UNIVERSAL_STOP_SELECTORS],
+      inputSelector: inputSelectors,
+      submitSelector: submitSelectors,
+      stabilizationTime: manifest.completion?.minWaitMs || 12000,
+      excludeUserMessage: true,
+      // 🔧 CRITICAL FIX: Disable dynamicParser default to prioritize precise JSON selectors
+      // Only set customParser if explicitly requested in manifest (not supported yet)
+      customParser: null
+    };
+  }
+
+  function getLegacyResponseConfig() {
     const host = window.location.hostname;
     const path = window.location.pathname;
     const fullPath = host + path;
@@ -2233,6 +2416,17 @@ async function getManifestForHost(hostname) {
     };
   }
 
+  async function getResponseConfig(manifest) {
+    const manifestConfig = buildResponseConfigFromManifest(manifest);
+    if (manifestConfig) return manifestConfig;
+
+    const resolvedManifest = await getManifestForHost(window.location.hostname);
+    const resolvedConfig = buildResponseConfigFromManifest(resolvedManifest);
+    if (resolvedConfig) return resolvedConfig;
+
+    return getLegacyResponseConfig();
+  }
+
   // ============================================================================
   // 🧠 ADAPTIVE RESPONSE MONITOR SYSTEM (ARMS) - Functional Approach
   // ============================================================================
@@ -2242,12 +2436,13 @@ async function getManifestForHost(hostname) {
   // ============================================================================
 
   /**
-   * 모델별 Adaptive Threshold 계산 (명시적 if-else 분기)
-   * @param {string} hostname - window.location.hostname
-   * @param {Array} chunkIntervals - 최근 청크 간격 배열
-   * @returns {number} threshold (ms)
-   */
-  function getModelAdaptiveThreshold(hostname, chunkIntervals) {
+ * 모델별 Adaptive Threshold 계산 (명시적 if-else 분기)
+ * @param {string} hostname - window.location.hostname
+ * @param {Array} chunkIntervals - 최근 청크 간격 배열
+ * @param {Object} [manifest] - Model manifest configuration (Optional)
+ * @returns {number} threshold (ms)
+ */
+  function getModelAdaptiveThreshold(hostname, chunkIntervals, manifest = null) {
     // 평균 간격 계산
     const avgInterval = chunkIntervals.length > 0
       ? chunkIntervals.reduce((a, b) => a + b, 0) / chunkIntervals.length
@@ -2256,8 +2451,17 @@ async function getManifestForHost(hostname) {
     // 기본: 평균 간격의 3배 + 2초 여유
     let baseThreshold = (avgInterval * 3) + 2000;
 
+    // 🎯 Use Manifest Configuration if available (Priority)
+    // This aligns with the new data-driven architecture
+    if (manifest && manifest.completion) {
+      const { minWaitMs, adaptiveMultiplier } = manifest.completion;
+      const computedWait = (minWaitMs || 2000) + (avgInterval * (adaptiveMultiplier || 2.0));
+      // Ensure reasonable bounds
+      return Math.min(Math.max(computedWait, 2000), 90000);
+    }
+
     // ====================================================================
-    // Batch 1: Deep Implementation
+    // Batch 1: Deep Implementation (Legacy/Fallback)
     // ====================================================================
 
     if (hostname.includes('gemini.google.com')) {
@@ -2344,23 +2548,91 @@ async function getManifestForHost(hostname) {
     // 평균 간격의 3배 또는 최소 3~5초
     return Math.min(Math.max(baseThreshold, 3000), 15000);
   }
-
   /**
    * 모델별 UI Lock 체크 (명시적 if-else 분기)
    * @param {string} hostname - window.location.hostname
    * @param {Array} stopSelectors - config.stopSelectors
    * @returns {boolean} true if UI is locked (still generating)
    */
-  function checkModelUILocked(hostname, stopSelectors) {
+  function checkModelUILocked(hostname, stopSelectors, manifestFromCaller) {
+    const queryFirst = (selectorConfig, options = { requireVisible: false }) => {
+      if (!selectorConfig) return null;
+      const selectors = selectorListFromManifest(selectorConfig);
+      for (const sel of selectors) {
+        const el = document.querySelector(sel) || queryShadow(document.body, sel);
+        if (el && (!options.requireVisible || isElementVisible(el))) return el;
+      }
+      return null;
+    };
+
+    const isInputDisabledByManifest = (inputEl, fieldConfig) => {
+      if (!inputEl || !fieldConfig) return false;
+
+      const disabledDetection = fieldConfig.disabled_detection;
+      if (disabledDetection) {
+        try {
+          if (inputEl.matches(disabledDetection)) return true;
+          if (typeof inputEl.closest === 'function' && inputEl.closest(disabledDetection)) return true;
+        } catch (e) { /* ignore invalid selectors */ }
+      }
+
+      const inferredType = (fieldConfig.type || '').toLowerCase();
+      if (inferredType === 'contenteditable' || inputEl.isContentEditable || inputEl.getAttribute('contenteditable') !== null) {
+        const attr = (inputEl.getAttribute('contenteditable') || '').toLowerCase();
+        if (attr === 'false') return true;
+      }
+
+      return inputEl.disabled || inputEl.getAttribute('aria-disabled') === 'true';
+    };
+
+    const manifest = manifestFromCaller || resolveManifestFromCache(hostname);
+    const manifestSelectors = manifest?.selectors;
+
     // Strategy 0: Thinking/Generating Text Check (Reasoning Models)
     // 화면에 'Thinking...' 같은 텍스트가 있으면 무조건 실행 중으로 간주
-    const thinkingTexts = ['Thinking...', 'Generating...', 'Reasoning...', '생성 중...', '생각 중...', '답변 생성 중'];
-    // 성능을 위해 body 텍스트의 마지막 1000자만 검사
+    let thinkingTexts = [
+      'Thinking...', 'Generating...', 'Reasoning...',
+      '생성 중...', '생각 중...', '답변 생성 중',
+      'Searching', 'Researching', 'Analyzing', 'Grok is thinking',
+      '검색 중', '분석 중', '답변 준비', '대기 중', '잠시만'
+    ];
+
+    // Add manifest-specific thinking patterns
+    if (manifest?.completion?.thinking?.enabled && manifest?.completion?.thinking?.patterns) {
+      thinkingTexts = [...thinkingTexts, ...manifest.completion.thinking.patterns];
+    }
+
+    // 성능을 위해 body 텍스트의 마지막 3000자만 검사 (Increased scan depth)
     const bodyText = document.body.innerText || '';
-    const recentText = bodyText.slice(-1000);
+    // Deep search for reasoning models that might output long checks before answer
+    const recentText = bodyText.slice(-3000);
+
     if (thinkingTexts.some(t => recentText.includes(t))) {
       // console.log('[UI Lock] Thinking text detected');
       return true;
+    }
+
+    // ====================================================================
+    // Manifest 기반 범용 감지 (SSOT)
+    // ====================================================================
+    if (manifestSelectors) {
+      const stopEl = queryFirst(manifestSelectors.stop_button, { requireVisible: true });
+      const loadingEl = queryFirst(manifestSelectors.loading_indicator, { requireVisible: true });
+      const inputEl = queryFirst(manifestSelectors.input_field);
+      const inputDisabled = isInputDisabledByManifest(inputEl, manifestSelectors.input_field);
+      const actionButtons = queryFirst(manifestSelectors.action_buttons, { requireVisible: true });
+
+      // Stop/Loading이 보이면 생성 중으로 판정
+      if (stopEl || loadingEl) return true;
+
+      // 입력창이 비활성화된 경우 (Lexical, ProseMirror 포함)
+      if (inputEl && inputDisabled) return true;
+
+      // 액션 버튼이 보이면 생성 완료 쪽으로 간주 (Mistral/Kimi 등)
+      if (actionButtons) return false;
+
+      // 입력창이 살아있으면 생성 종료로 간주, 신호 없으면 계속 기존 분기로
+      if (inputEl) return false;
     }
     // ====================================================================
     // Batch 1
@@ -2432,10 +2704,29 @@ async function getManifestForHost(hostname) {
     }
 
     if (hostname.includes('chat.deepseek.com')) {
-      // DeepSeek: role="button" 방식
-      const stopBtn = document.querySelector('div[role="button"]:has(svg[class*="stop"])') ||
-        document.querySelector('button[aria-label*="Stop"]');
-      return stopBtn !== null;
+      // 🔧 v14.3: DeepSeek 생성 중 감지 개선
+      // Stop 버튼 또는 입력창 비활성화로 생성 중 감지
+      const stopSelectors = [
+        'div[role="button"]:has(svg[class*="stop"])',
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="중지"]',
+        '[class*="stop-button"]'
+      ];
+      const stopBtn = stopSelectors.map(s => document.querySelector(s)).find(el => el);
+      if (stopBtn) return true;
+
+      // 입력창이 비활성화 상태면 생성 중
+      // 🔧 v14.4: 선택자 견고성 강화
+      let textarea = document.querySelector('textarea[placeholder*="DeepSeek"]');
+      if (!textarea) textarea = document.querySelector('textarea._27c9245');
+      if (!textarea) {
+        const allTextareas = Array.from(document.querySelectorAll('textarea'));
+        textarea = allTextareas.find(el => el.offsetParent !== null);
+      }
+
+      if (textarea && textarea.disabled) return true;
+
+      return false;
     }
 
     // ====================================================================
@@ -2476,18 +2767,6 @@ async function getManifestForHost(hostname) {
         return true;
       }
 
-      // Strategy 4: response-meesage-container가 아직 버튼 영역 없음 (생성 초기)
-      const responseContainers = document.querySelectorAll('.response-meesage-container');
-      if (responseContainers.length > 0) {
-        const lastContainer = responseContainers[responseContainers.length - 1];
-        const hasCopyButton = lastContainer.querySelector('.copy-response-button');
-        if (!hasCopyButton) {
-          // 복사 버튼이 아직 없음 = 아직 생성 중
-          console.log('[Qwen UI Lock] Response generating (no copy button yet)');
-          return true;
-        }
-      }
-
       console.log('[Qwen UI Lock] No lock detected');
       return false;
     }
@@ -2514,22 +2793,9 @@ async function getManifestForHost(hostname) {
       return false;
     }
 
-    if (hostname.includes('kimi.moonshot.cn')) {
-      // Kimi: button[class*="stop"]
-      return document.querySelector('button[class*="stop"]') !== null;
-    }
-
     // ====================================================================
     // Batch 4: Quick Implementation (Explicit Branching)
     // ====================================================================
-
-    if (hostname.includes('chat.mistral.ai')) {
-      // Mistral: Stop 버튼 명확함
-      const stopBtn = document.querySelector('button[aria-label*="Stop"]') ||
-        document.querySelector('button[aria-label*="stop"]') ||
-        document.querySelector('button[data-testid="stop-button"]');
-      return stopBtn !== null;
-    }
 
     if (hostname.includes('openrouter.ai')) {
       // OpenRouter: 🔧 강화된 Stop 버튼 감지
@@ -2593,29 +2859,64 @@ async function getManifestForHost(hostname) {
 
   /**
    * 모델별 동적 완료 신호 감지
+   * 🔧 v14.2: modelStartedGenerating 필수 체크 추가
    * @param {string} hostname - window.location.hostname
+   * @param {boolean} hasStartedGenerating - 모델이 생성을 시작했는지 여부
+   * @param {number} responseLength - 현재 응답 길이
    * @returns {Object} { isComplete: boolean, confidence: number, signal: string }
    */
-  function detectDynamicCompletionSignal(hostname) {
+  function detectDynamicCompletionSignal(hostname, hasStartedGenerating = false, responseLength = 0) {
     const result = { isComplete: false, confidence: 0, signal: 'none' };
 
-    // === Gemini 전용: aria-busy 속성 감지 (BATCH1_ANALYSIS Line 106, 112) ===
+    // 🔧 v14.2 CRITICAL: 생성이 시작되지 않았으면 절대 완료로 판정하지 않음
+    if (!hasStartedGenerating) {
+      result.signal = 'waiting:generation-not-started';
+      return result;
+    }
+
+    // 🔧 v14.2: 최소 응답 길이 체크 (너무 짧으면 완료 아님) - 모델별 튜닝
+    const MIN_COMPLETION_LENGTH = getMinCompletionLength(hostname);
+    if (responseLength < MIN_COMPLETION_LENGTH) {
+      result.confidence = Math.min(30, responseLength / 5);
+      result.signal = 'partial:' + responseLength + 'chars (need ' + MIN_COMPLETION_LENGTH + ')';
+      return result;
+    }
+
+    // === Gemini 전용: 🔧 v15.1 강화된 완료 감지 (마지막 메시지 기반 + 입력창 상태) ===
     if (hostname.includes('gemini.google.com')) {
-      const messageContent = document.querySelector('message-content[aria-busy]');
-      if (messageContent) {
-        const ariaBusy = messageContent.getAttribute('aria-busy');
-        if (ariaBusy === 'false') {
-          result.isComplete = true;
-          result.confidence = 95;
-          result.signal = 'gemini:aria-busy=false';
-          console.log('[Dynamic Completion] Gemini: aria-busy=false detected');
-          return result;
-        } else if (ariaBusy === 'true') {
+      // 🔧 v15.1: 마지막 message-content 요소 정확히 찾기
+      const allMessageContents = document.querySelectorAll('message-content');
+      const lastMessageContent = allMessageContents.length > 0
+        ? allMessageContents[allMessageContents.length - 1]
+        : null;
+
+      if (lastMessageContent) {
+        const ariaBusy = lastMessageContent.getAttribute('aria-busy');
+        const markdownContent = lastMessageContent.querySelector('.markdown');
+        const textLength = markdownContent ? markdownContent.textContent?.trim().length || 0 : 0;
+
+        // 생성 중: aria-busy=true
+        if (ariaBusy === 'true') {
           result.confidence = 0;
           result.signal = 'gemini:aria-busy=true (generating)';
           return result;
         }
+
+        // 완료: aria-busy=false + 충분한 텍스트
+        if (ariaBusy === 'false' && textLength > 50) {
+          result.isComplete = true;
+          result.confidence = 90;
+          result.signal = `gemini:complete (aria-busy=false + text=${textLength})`;
+          console.log('[Dynamic Completion v15.1] Gemini: Complete');
+          return result;
+        }
+
+        if (textLength > 0 && textLength <= 50) {
+          result.confidence = 30;
+          result.signal = `gemini:short-text (${textLength}chars)`;
+        }
       }
+
       // model-thoughts 패널 체크 (생각 중)
       const modelThoughts = document.querySelector('model-thoughts[data-test-id="model-thoughts"]');
       if (modelThoughts && isElementVisible(modelThoughts)) {
@@ -2623,58 +2924,394 @@ async function getManifestForHost(hostname) {
         result.signal = 'gemini:model-thoughts visible (thinking)';
         return result;
       }
-    }
 
-    // === Qwen 전용: 복사 버튼 출현 감지 (BATCH1_ANALYSIS Line 234) ===
-    if (hostname.includes('chat.qwen.ai')) {
-      const responseContainers = document.querySelectorAll('.response-meesage-container, [class*="ChatItem"]');
-      if (responseContainers.length > 0) {
-        const lastContainer = responseContainers[responseContainers.length - 1];
-        const copyButton = lastContainer.querySelector('.copy-response-button, button[class*="copy"], [aria-label*="复制"], [aria-label*="Copy"]');
-        if (copyButton) {
+      // 🔧 v15.1: 입력창 상태도 확인
+      const richTextarea = document.querySelector('rich-textarea');
+      const isInputReady = richTextarea && !richTextarea.hasAttribute('disabled');
+      if (isInputReady && lastMessageContent && lastMessageContent.getAttribute('aria-busy') !== 'true') {
+        const textLen = lastMessageContent.textContent?.trim().length || 0;
+        if (textLen > 50) {
           result.isComplete = true;
-          result.confidence = 85;
-          result.signal = 'qwen:copy-button appeared';
-          console.log('[Dynamic Completion] Qwen: Copy button detected');
+          result.confidence = 75;
+          result.signal = `gemini:complete-fallback (input-ready + text=${textLen})`;
           return result;
         }
       }
     }
 
-    // === Kimi 전용: 복사 아이콘 출현 감지 (BATCH1_ANALYSIS Line 288) ===
-    if (hostname.includes('kimi.moonshot.cn')) {
-      const copyIcons = document.querySelectorAll('[class*="copy"], [aria-label*="复制"]');
-      if (copyIcons.length > 0) {
-        // 마지막 메시지에 복사 아이콘이 있으면 완료
-        const lastCopyIcon = copyIcons[copyIcons.length - 1];
-        if (isElementVisible(lastCopyIcon)) {
-          result.isComplete = true;
-          result.confidence = 80;
-          result.signal = 'kimi:copy-icon appeared';
-          console.log('[Dynamic Completion] Kimi: Copy icon detected');
+    // === ChatGPT 전용: 🔧 v15.2 강화된 완료 감지 (streaming-animation 클래스 직접 체크) ===
+    if (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) {
+      // 🔧 v15.2: 더 다양한 Stop 버튼 셀렉터
+      const stopSelectors = [
+        'button[aria-label="Stop generating"]',
+        'button[aria-label="Stop"]',
+        'button[aria-label="중지"]',
+        'button[data-testid="stop-button"]',
+        'button[data-testid="cancel-button"]',
+        'button:has(svg[data-icon="stop"])'
+      ];
+      const stopBtn = stopSelectors.map(s => document.querySelector(s)).find(el => el && isElementVisible(el));
+
+      // 🔧 v15.2 CRITICAL: streaming-animation 클래스 직접 체크 (가장 확실한 생성 중 신호)
+      // ChatGPT는 응답 생성 중일 때 마크다운 컨테이너에 'streaming-animation' 클래스를 추가함
+      const streamingAnimationElement = document.querySelector('.streaming-animation');
+      const isStreamingAnimation = streamingAnimationElement !== null && isElementVisible(streamingAnimationElement);
+      
+      const streamingIndicator = document.querySelector('[data-testid="streaming-indicator"], .result-streaming, .cursor-blink');
+      const textarea = document.querySelector('#prompt-textarea');
+
+      // 🔧 v15.1: 정확한 마지막 assistant 메시지 식별 (querySelectorAll + [length-1] 패턴)
+      const assistantMessages = document.querySelectorAll('div[data-message-author-role="assistant"]');
+      const lastAssistantContainer = assistantMessages.length > 0
+        ? assistantMessages[assistantMessages.length - 1]
+        : null;
+      const lastAssistantContent = lastAssistantContainer?.querySelector('.markdown') || lastAssistantContainer;
+      const textLen = lastAssistantContent ? (lastAssistantContent.textContent || '').trim().length : 0;
+
+      // 🔧 v15.1: 마지막 메시지에서 Copy 버튼 확인 (이전 메시지 버튼 감지 방지)
+      const copyButtonInLastMsg = lastAssistantContainer?.querySelector(
+        'button[aria-label*="Copy"], button[data-testid*="copy"], button[class*="copy"]'
+      );
+
+      // 스트리밍 중 명확 신호 (우선순위 순서로 체크)
+      // 🔧 v15.2 CRITICAL: streaming-animation 클래스가 가장 확실한 생성 중 신호
+      if (isStreamingAnimation) {
+        result.confidence = 0;
+        result.signal = 'chatgpt:streaming-animation (generating)';
+        console.log('[ChatGPT v15.2] 🔴 Generating: streaming-animation class detected');
+        return result;
+      }
+      if (stopBtn) {
+        result.confidence = 0;
+        result.signal = 'chatgpt:stop-visible';
+        return result;
+      }
+      if (streamingIndicator && isElementVisible(streamingIndicator)) {
+        result.confidence = 0;
+        result.signal = 'chatgpt:streaming-indicator';
+        return result;
+      }
+
+      // 입력창 비활성화면 아직 생성 중
+      if (textarea && textarea.disabled) {
+        result.confidence = 0;
+        result.signal = 'chatgpt:textarea-disabled';
+        return result;
+      }
+
+      // 🔧 v15.5 CRITICAL: streaming-animation 없음 = 즉시 완료 판정 (BrainFlow Phase 2 전환 최적화)
+      // ChatGPT는 응답 완료 시 streaming-animation 클래스를 제거하므로 이것이 가장 확실한 완료 신호
+      if (!isStreamingAnimation && textLen > 50) {
+        result.isComplete = true;
+        result.confidence = 95; // ← v15.5: confidence를 95%로 상향하여 즉시 완료 경로 활성화
+        result.signal = `chatgpt:streaming-stopped (no-streaming-animation + text=${textLen})`;
+        console.log('[Dynamic Completion v15.5] 🎯 ChatGPT: STREAMING STOPPED - Immediate completion', {
+          textLength: textLen,
+          hasCopyButton: !!copyButtonInLastMsg,
+          confidence: 95
+        });
+        return result;
+      }
+
+      // Copy 버튼 추가 확인 (더 높은 신뢰도)
+      if (!isStreamingAnimation && copyButtonInLastMsg && textLen > 50) {
+        result.isComplete = true;
+        result.confidence = 98;
+        result.signal = `chatgpt:complete (no-streaming + copy-btn + text=${textLen})`;
+        console.log('[Dynamic Completion v15.5] ✅ ChatGPT: Complete with copy button');
+        return result;
+      }
+
+      // 텍스트가 너무 짧음 → 대기
+      result.confidence = Math.min(40, textLen);
+      result.signal = `chatgpt:short-text (${textLen})`;
+      return result;
+    }
+
+    // === Qwen 전용: 복사 버튼 출현 감지 ===
+    // === Qwen 전용: 🔧 v14.7 완료 감지 (입력창 + 중지버튼 + 액션버튼 기반) ===
+    if (hostname.includes('chat.qwen.ai') || hostname.includes('qwen.alibaba')) {
+      // 1. 마지막 AI 응답 컨테이너 찾기
+      const assistantMessages = document.querySelectorAll('.qwen-chat-message-assistant');
+      const lastAssistant = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
+
+      // 2. 응답 텍스트 존재 확인
+      const responseContent = lastAssistant?.querySelector('.qwen-markdown, .response-message-content');
+      const hasResponseText = responseContent && responseContent.textContent?.trim().length > 0;
+      const copyButton = lastAssistant?.querySelector('.copy-response-button, button[aria-label="Copy"], button[aria-label="복사"]');
+
+      if (!hasResponseText) {
+        result.confidence = 0;
+        result.signal = 'qwen:no-response-text (waiting)';
+        return result;
+      }
+
+      // 3. 🔑 1순위: 액션 버튼 존재 확인 (완료 시에만 표시됨)
+      // 좋아요, 싫어요, 재생성 버튼은 응답 완료 후에만 나타남
+      const actionContainer = lastAssistant.querySelector('.response-message-footer .qwen-chat-package-comp-new-action-control');
+      const hasGoodButton = !!lastAssistant.querySelector('[class*="action-control-container-good"]');
+      const hasBadButton = !!lastAssistant.querySelector('[class*="action-control-container-bad"]');
+      const hasRegenerateButton = !!lastAssistant.querySelector('[class*="action-control-container-regenerate"]');
+      const hasActionButtons = hasGoodButton || hasBadButton || hasRegenerateButton || !!copyButton;
+
+      // 4. 2순위: 입력창 상태 확인
+      const inputField = document.querySelector('#chat-input, textarea.chat-input');
+      const isInputEnabled = inputField && !inputField.disabled;
+
+      // 5. 3순위: 전송 버튼 상태 (완료 시 disabled, 생성 중 활성화)
+      const sendButton = document.querySelector('button.send-button');
+      const isSendButtonDisabled = sendButton && (sendButton.disabled || sendButton.classList.contains('disabled'));
+
+      // 6. 생성 중 신호: Stop 버튼 존재 여부
+      const stopButton = document.querySelector('button.send-button:not(.disabled):not([disabled]) [class*="stop"], button[aria-label*="Stop"], button[aria-label*="停止"]');
+      const hasStopButton = !!stopButton;
+
+      // 🎯 완료 판정 로직
+      if (hasStopButton) {
+        // Stop 버튼이 있으면 무조건 생성 중
+        result.confidence = 0;
+        result.signal = 'qwen:generating (stop-button-present)';
+        return result;
+      }
+
+      if (hasActionButtons && hasResponseText) {
+        // 액션 버튼(좋아요/싫어요/재생성) + 응답 텍스트 = 완료 (최고 신뢰도)
+        result.isComplete = true;
+        result.confidence = 95;
+        result.signal = `qwen:complete (action-buttons: good=${hasGoodButton}, bad=${hasBadButton}, regen=${hasRegenerateButton})`;
+        console.log('[Dynamic Completion v14.7] Qwen: Complete (action buttons + response text)');
+        return result;
+      }
+
+      if (copyButton && hasResponseText && !hasStopButton) {
+        // 복사 버튼이 보이면 완료 상태로 간주 (신뢰도 높음)
+        result.isComplete = true;
+        result.confidence = 90;
+        result.signal = 'qwen:complete (copy button visible)';
+        return result;
+      }
+
+      if (isInputEnabled && isSendButtonDisabled && hasResponseText) {
+        // 입력창 활성화 + 전송버튼 비활성화 + 응답 텍스트 = 완료 (높은 신뢰도)
+        result.isComplete = true;
+        result.confidence = 85;
+        result.signal = 'qwen:complete (input-enabled + send-disabled + text-exists)';
+        console.log('[Dynamic Completion v14.7] Qwen: Complete (fallback - input/send state)');
+        return result;
+      }
+
+      // 아직 생성 중 또는 대기 + 명시적 return 추가 (v14.8)
+      const actionInfo = `good=${hasGoodButton}, bad=${hasBadButton}, regen=${hasRegenerateButton}, copy=${!!copyButton}`;
+      console.log(`[Qwen v14.8] actions: ${actionInfo}, input=${isInputEnabled}, sendDisabled=${isSendButtonDisabled}`);
+      result.confidence = 30;
+      result.signal = `qwen:uncertain (waiting for action buttons: ${actionInfo})`;
+      return result;
+    }
+
+    // === Kimi 전용: 🔧 v15.0 실제 DOM 기반 완료 감지 ===
+    if (hostname.includes('kimi.moonshot.cn') || hostname.includes('kimi.com')) {
+      const chatList = document.querySelector('.chat-content-list');
+
+      if (!chatList) {
+        // 리스트 컨테이너를 못 찾으면 기존 방식(가장 마지막 봇 세그먼트) 사용하되 신뢰도 낮춤
+        const assistants = document.querySelectorAll('.segment-assistant');
+        if (assistants.length === 0) {
+          result.signal = 'kimi:no-assistant-found';
+          return result;
+        }
+      } else {
+        // 리스트가 있으면 순서 검증 수행
+        const lastItem = chatList.lastElementChild;
+        if (!lastItem) {
+          result.signal = 'kimi:empty-chat-list';
+          return result;
+        }
+
+        // 마지막 항목이 사용자 메시지라면 -> 아직 봇 응답 생성 전임 (대기)
+        if (lastItem.classList.contains('chat-content-item-user') || lastItem.querySelector('.segment-user')) {
+          result.confidence = 0;
+          result.signal = 'kimi:last-item-is-user (waiting for response creation)';
+          return result;
+        }
+
+        // 마지막 항목이 봇 메시지가 아니라면? (예: 로딩 바, 에러 등)
+        if (!lastItem.classList.contains('chat-content-item-assistant') && !lastItem.querySelector('.segment-assistant')) {
+          result.confidence = 0;
+          result.signal = 'kimi:last-item-unknown (waiting)';
           return result;
         }
       }
+
+      // 여기까지 오면 마지막 항목이 봇 메시지임.
+      const assistantSegments = document.querySelectorAll('.segment-assistant');
+      const lastAssistant = assistantSegments[assistantSegments.length - 1];
+
+      if (!lastAssistant) return result;
+
+      // 1. "액션 버튼" 컨테이너 확인 - 🔧 v15.0: 실제 DOM 구조에 맞게 검색
+      const actionContainer = lastAssistant.querySelector('.segment-assistant-actions');
+      const actionContent = lastAssistant.querySelector('.segment-assistant-actions-content');
+
+      // .icon-button 클래스를 가진 버튼들 (Copy, Refresh, Share, Like, Dislike)
+      const iconButtons = actionContent
+        ? actionContent.querySelectorAll('.icon-button')
+        : actionContainer?.querySelectorAll('.icon-button') || [];
+
+      const hasActionButtons = iconButtons.length >= 2 && isElementVisible(actionContainer);
+
+      // 2. 응답 텍스트 체크 - .markdown-container .markdown 또는 .markdown
+      const markdownContainer = lastAssistant.querySelector('.markdown-container');
+      const markdownContent = markdownContainer?.querySelector('.markdown') || lastAssistant.querySelector('.markdown');
+      const responseTextLength = markdownContent ? markdownContent.textContent?.trim().length || 0 : 0;
+
+      // 3. 입력창 체크 - Lexical 에디터 기반
+      const chatInput = document.querySelector('.chat-input-editor[data-lexical-editor="true"][contenteditable="true"]');
+      const isInputEnabled = chatInput !== null && chatInput.getAttribute('contenteditable') === 'true';
+
+      // 4. 전송 버튼 상태 체크 - 🔧 v15.0: .send-button-container.disabled 체크
+      const sendButtonContainer = document.querySelector('.send-button-container');
+      const isSendDisabled = sendButtonContainer?.classList.contains('disabled') ?? true;
+
+      // 5. Stop 버튼 체크 (생성 중일 때 활성화됨)
+      const hasStopButton = !isSendDisabled; // disabled가 아닐 때 = 생성 중
+
+      // 디버그 로깅
+      console.log('[Dynamic Completion v15.0] Kimi:', {
+        iconButtonCount: iconButtons.length,
+        hasActionButtons,
+        responseTextLength,
+        isInputEnabled,
+        isSendDisabled,
+        hasStopButton
+      });
+
+      // 완료 판정: 액션버튼 있고, 텍스트 있고, 입력가능하고, 전송버튼이 disabled(=생성 완료) 상태
+      if (hasActionButtons && responseTextLength > 0 && isInputEnabled && isSendDisabled) {
+        result.isComplete = true;
+        result.confidence = 95;
+        result.signal = 'kimi:actions-verified + text=' + responseTextLength + ' + send-disabled';
+        console.log('[Dynamic Completion v15.0] Kimi: Complete (actions verified, text=' + responseTextLength + ')');
+        return result;
+      } else {
+        if (!isSendDisabled) result.signal = 'kimi:generating (send-button-active)';
+        else if (!hasActionButtons) result.signal = 'kimi:waiting-for-actions (icons=' + iconButtons.length + ')';
+        else if (responseTextLength === 0) result.signal = 'kimi:waiting-for-text';
+        else if (!isInputEnabled) result.signal = 'kimi:input-disabled';
+
+        result.confidence = 0;
+        return result;
+      }
     }
 
-    // === DeepSeek 전용: .ds-markdown 안정 감지 (BATCH1_ANALYSIS Line 204, 220) ===
+    // === DeepSeek 전용: 🔧 v14.12 마지막 메시지 기반 액션 버튼 + 전송버튼 상태 완료 감지 ===
     if (hostname.includes('chat.deepseek.com')) {
-      const dsMarkdown = document.querySelectorAll('.ds-markdown');
-      if (dsMarkdown.length > 0) {
-        const lastMarkdown = dsMarkdown[dsMarkdown.length - 1];
-        // 텍스트가 있고 stop 버튼이 없으면 완료 가능성
-        if (lastMarkdown.textContent && lastMarkdown.textContent.length > 10) {
-          const stopBtn = document.querySelector('div[role="button"]:has(svg[class*="stop"])') ||
-            document.querySelector('button[aria-label*="Stop"]');
-          if (!stopBtn) {
-            result.isComplete = true;
-            result.confidence = 75;
-            result.signal = 'deepseek:ds-markdown stable + no stop button';
-            console.log('[Dynamic Completion] DeepSeek: Markdown stable, no stop button');
-            return result;
-          }
+      // 🔑 핵심 변경: 마지막 AI 메시지 컨테이너에서만 액션 버튼 확인 (조기 완료 방지)
+
+      // 1. 모든 메시지 컨테이너 가져오기 (ds-message 또는 _4f9bf79 클래스)
+      const messageCandidates = Array.from(document.querySelectorAll('._4f9bf79, .ds-message'));
+      let lastMessage = null;
+      for (let i = messageCandidates.length - 1; i >= 0; i -= 1) {
+        const candidate = messageCandidates[i];
+        // ds-markdown 이 없는 경우(사용자 메시지 등) 건너뛰기
+        if (candidate.querySelector('.ds-markdown')) {
+          lastMessage = candidate;
+          break;
         }
       }
+
+      // 2. 마지막 메시지 내에서 액션 버튼 확인 (시맨틱 클래스 우선, 해시 클래스는 폴백)
+      let hasActionButtonsInLastMessage = false;
+      if (lastMessage) {
+        const iconButtons = lastMessage.querySelectorAll('.ds-icon-button[role="button"]');
+        hasActionButtonsInLastMessage = iconButtons.length > 0;
+        if (!hasActionButtonsInLastMessage) {
+          const actionBarInLast = lastMessage.querySelector('._0a3d93b, ._965abe9');
+          const actionButtonsInLast = actionBarInLast?.querySelectorAll('.db183363') || [];
+          hasActionButtonsInLastMessage = actionButtonsInLast.length > 0;
+        }
+      }
+
+      // 3. 전송 버튼 disabled 상태 확인 (완료 시 aria-disabled="true")
+      const sendButton = document.querySelector('._7436101[role="button"], .bf38813a .ds-icon-button[role="button"]');
+      const isSendButtonDisabled = !!(sendButton && sendButton.getAttribute('aria-disabled') === 'true');
+
+      // 4. Stop 버튼 확인 (생성 중에만 나타남)
+      const stopSelectors = [
+        'div[role="button"]:has(svg[class*="stop"])',
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="중지"]',
+        '[data-testid*="stop"]',
+        '[class*="stop-button"]'
+      ];
+      // 전송 버튼 아이콘이 정지(정사각형) 아이콘으로 변하는 케이스 대응
+      const stopBtnSquare = document
+        .querySelector('._7436101.ds-icon-button svg path[d^="M2 4.88"]')
+        ?.closest('._7436101.ds-icon-button');
+      const stopBtn =
+        (stopBtnSquare && isElementVisible(stopBtnSquare) && stopBtnSquare) ||
+        stopSelectors.map(s => document.querySelector(s)).find(el => el && isElementVisible(el));
+
+      // 5. DeepThink 모드 thinking 상태 감지 (생성 중)
+      const isThinking = document.querySelector('[class*="thinking"], [class*="Thinking"], .ds-typing-indicator') !== null;
+
+      // 6. 입력창 상태 확인
+      let textarea = document.querySelector('textarea[placeholder*="Message DeepSeek"], textarea[placeholder*="DeepSeek"]');
+      if (!textarea) textarea = document.querySelector('textarea._27c9245, textarea.d96f2d2a');
+      if (!textarea) {
+        const allTextareas = Array.from(document.querySelectorAll('textarea'));
+        textarea = allTextareas.find(el => el.offsetParent !== null && el.getAttribute('placeholder')?.toLowerCase().includes('deep'));
+      }
+      const isInputEnabled = !!(textarea && !textarea.disabled && textarea.offsetParent !== null);
+
+      // 7. 마크다운 텍스트 확인 (마지막 메시지 기준)
+      const lastMarkdown = lastMessage?.querySelector('.ds-markdown') || null;
+      const textLength = lastMarkdown ? lastMarkdown.textContent?.trim().length || 0 : 0;
+
+      // 🎯 완료 판정 로직 (우선순위 기반)
+
+      // 생성 중 신호가 있으면 무조건 미완료
+      if (stopBtn || isThinking) {
+        result.confidence = 0;
+        result.signal = stopBtn ? 'deepseek:generating (stop-button)' : 'deepseek:thinking (DeepThink mode)';
+        return result;
+      }
+
+      // 🔑 최우선: 마지막 메시지 내 액션 버튼 + 텍스트 존재 = 완료 (최고 신뢰도)
+      if (hasActionButtonsInLastMessage && textLength > 0) {
+        result.isComplete = true;
+        result.confidence = 95;
+        result.signal = `deepseek:complete (last-msg-actions + text=${textLength})`;
+        console.log('[Dynamic Completion v14.11] DeepSeek: Complete (action buttons in last message)');
+        return result;
+      }
+
+      // 전송 버튼 disabled + 입력창 활성화 + 텍스트 존재 = 완료 (높은 신뢰도)
+      if (isSendButtonDisabled && isInputEnabled && textLength > 0) {
+        result.isComplete = true;
+        result.confidence = 85;
+        result.signal = `deepseek:complete (send-disabled + text=${textLength})`;
+        console.log('[Dynamic Completion v14.11] DeepSeek: Complete (send button disabled)');
+        return result;
+      }
+
+      // 입력창 활성화 + 텍스트 존재 + 생성 아님 = 완료 (fallback)
+      if (isInputEnabled && !stopBtn && !isThinking && textLength > 0) {
+        result.isComplete = true;
+        result.confidence = 70;
+        result.signal = `deepseek:complete-fallback (input-enabled, text=${textLength})`;
+        console.log('[Dynamic Completion v14.11] DeepSeek: Complete (fallback)');
+        return result;
+      }
+
+      // 아직 응답 대기 중 또는 불확실
+      if (textLength === 0) {
+        result.confidence = 0;
+        result.signal = 'deepseek:waiting (no response text)';
+      } else {
+        result.confidence = 30;
+        result.signal = `deepseek:uncertain (text=${textLength}, no last-msg actions)`;
+      }
+      return result;
     }
 
     // === OpenRouter 전용: rounded-*-none 버블 클래스 감지 (BATCH1_ANALYSIS Line 313, 328) ===
@@ -2690,56 +3327,309 @@ async function getManifestForHost(hostname) {
       }
     }
 
-    // === LMArena 전용: assistant 마커 노드 감지 (BATCH1_ANALYSIS Line 261, 271) ===
+    // === LMArena 전용: 🔧 v15.1 강화된 완료 감지 ===
     if (hostname.includes('lmarena.ai')) {
+      // 1. 마지막 assistant 메시지 찾기
       const assistantNodes = document.querySelectorAll('[data-message-author-role="assistant"], [class*="assistant"]');
-      if (assistantNodes.length > 0) {
-        result.confidence = 50; // 보조 신호
-        result.signal = 'lmarena:assistant-node detected';
+      const lastAssistant = assistantNodes.length > 0 ? assistantNodes[assistantNodes.length - 1] : null;
+
+      // 2. 응답 텍스트 길이 확인
+      const responseTextLen = lastAssistant ? (lastAssistant.textContent || '').trim().length : 0;
+
+      // 3. Stop 버튼 확인 (여러 셀렉터)
+      const stopSelectors = [
+        'button[aria-label*="Stop"]',
+        'button[aria-label*="중지"]',
+        'button[data-testid*="stop"]',
+        'button:has(svg[class*="stop"])'
+      ];
+      const stopBtn = stopSelectors.map(s => document.querySelector(s)).find(el => el && isElementVisible(el));
+
+      // 4. 입력창 상태 확인
+      const textarea = document.querySelector('textarea:not([disabled])');
+      const isTextareaEnabled = textarea && !textarea.disabled;
+
+      // 생성 중
+      if (stopBtn) {
+        result.confidence = 0;
+        result.signal = 'lmarena:generating (stop-button visible)';
+        return result;
       }
+
+      // 완료: 입력창 활성화 + 충분한 텍스트
+      if (isTextareaEnabled && responseTextLen > 50) {
+        result.isComplete = true;
+        result.confidence = 85;
+        result.signal = `lmarena:complete (input-enabled + text=${responseTextLen}chars)`;
+        console.log('[Dynamic Completion v15.1] LMArena: Complete');
+        return result;
+      }
+
+      // 폴백: Stop 버튼 없음 + 텍스트 존재
+      if (!stopBtn && responseTextLen > 50) {
+        result.isComplete = true;
+        result.confidence = 70;
+        result.signal = `lmarena:complete-fallback (text=${responseTextLen}chars)`;
+        return result;
+      }
+
+      // 대기 중
+      result.confidence = responseTextLen > 0 ? 30 : 0;
+      result.signal = responseTextLen > 0 ? `lmarena:short-text (${responseTextLen}chars)` : 'lmarena:waiting';
+      return result;
+    }
+
+    // === Claude 전용: 🔧 v14.10 마지막 메시지 기반 완료 감지 (모든 케이스 명시적 return) ===
+    if (hostname.includes('claude.ai')) {
+      const claudeSnapshot = getClaudeLatestSnapshot({ cleanText: true });
+      const { isStreaming, hasCopyButton, responseTextLength, isInputEnabled, hasStopButton } = claudeSnapshot;
+      const hasResponseText = responseTextLength > 0;
+      const isGenerating = isStreaming || hasStopButton;
+
+      // 디버그 로그
+      console.log(`[Claude v14.10] streaming=${isStreaming}, stop=${hasStopButton}, copy=${hasCopyButton}, input=${isInputEnabled}, text=${responseTextLength}`);
+
+      // 🎯 완료 판정 로직 (우선순위 기반 + 명시적 return)
+
+      // 스트리밍 중이면 무조건 미완료
+      if (isGenerating) {
+        result.confidence = 0;
+        result.signal = hasStopButton ? 'claude:generating (stop-button)' : 'claude:streaming (data-is-streaming=true)';
+        return result;
+      }
+
+      // 🔑 최우선: 스트리밍 아님 + 복사 버튼 + 응답 텍스트 = 완료 (최고 신뢰도)
+      if (!isStreaming && hasCopyButton && hasResponseText) {
+        result.isComplete = true;
+        result.confidence = 95;
+        result.signal = `claude:complete (copy-button + text=${responseTextLength})`;
+        console.log('[Dynamic Completion v14.10] Claude: Complete (copy button detected)');
+        return result;
+      }
+
+      // 스트리밍 아님 + 입력창 활성화 + 응답 텍스트 = 완료 (높은 신뢰도)
+      if (!isStreaming && isInputEnabled && hasResponseText) {
+        result.isComplete = true;
+        result.confidence = 85;
+        result.signal = `claude:complete (input-enabled + text=${responseTextLength})`;
+        console.log('[Dynamic Completion v14.10] Claude: Complete (input enabled)');
+        return result;
+      }
+
+      // 스트리밍 아님 + 응답 텍스트만 존재 (fallback - 일정 시간 후 완료로 간주)
+      if (!isStreaming && hasResponseText && responseTextLength > 50) {
+        result.isComplete = true;
+        result.confidence = 70;
+        result.signal = `claude:complete-fallback (text=${responseTextLength}, no buttons yet)`;
+        console.log('[Dynamic Completion v14.10] Claude: Complete (fallback - text only)');
+        return result;
+      }
+
+      // 아직 응답 대기 중 또는 생성 시작 전
+      result.confidence = hasResponseText ? 30 : 0;
+      result.signal = hasResponseText ? `claude:uncertain (text=${responseTextLength})` : 'claude:waiting-for-response';
+      return result;
+    }
+
+    // === Grok 전용: 🔧 v15.2 완료 감지 (last-response 클래스 기반 정밀 감지) ===
+    if (hostname.includes('grok.com') || hostname.includes('x.ai')) {
+      // 1. 모든 응답 컨테이너에서 마지막 응답 찾기
+      const allResponses = document.querySelectorAll('[id^="response-"]');
+      const lastResponseContainer = allResponses.length > 0 ? allResponses[allResponses.length - 1] : null;
+
+      // 2. 마지막 응답 내의 텍스트 확인 (.response-content-markdown 또는 .message-bubble)
+      const responseMarkdown = lastResponseContainer?.querySelector('.response-content-markdown') ||
+        lastResponseContainer?.querySelector('.message-bubble') ||
+        document.querySelector('.response-content-markdown:last-of-type');
+      const responseText = responseMarkdown?.textContent?.trim() || '';
+      const hasResponseText = responseText.length > 0;
+
+      // 3. 🔧 v15.2: 마지막 응답에만 있는 .last-response 클래스 활용
+      // action-buttons.last-response는 완료 시에만 나타남 (이전 메시지 버튼 혼동 방지)
+      const lastResponseActions = document.querySelector('.action-buttons.last-response');
+
+      // 4. 마지막 응답에서만 액션 버튼 확인 (완료 시에만 나타남)
+      // 복사, 좋아요, 싫어요, 재생성 버튼이 .last-response 내에 있으면 완료
+      const copyButton = lastResponseActions?.querySelector('button[aria-label="복사"], button[aria-label="Copy"]');
+      const likeButton = lastResponseActions?.querySelector('button[aria-label="Like"]');
+      const dislikeButton = lastResponseActions?.querySelector('button[aria-label="Dislike"]');
+      const regenerateButton = lastResponseActions?.querySelector('button[aria-label="Regenerate"]');
+      const readAloudButton = lastResponseActions?.querySelector('button[aria-label="Read Aloud"]');
+
+      const hasActionButtons = copyButton !== null || likeButton !== null ||
+        dislikeButton !== null || regenerateButton !== null ||
+        readAloudButton !== null;
+
+      // 5. 입력창 상태 확인 (contenteditable="true")
+      const inputField = document.querySelector('.tiptap.ProseMirror[contenteditable="true"]');
+      const isInputEnabled = inputField !== null;
+
+      // 6. 제출 버튼 상태 확인 (disabled면 입력 없음, enabled면 전송 가능)
+      const submitButton = document.querySelector('button[type="submit"][aria-label="제출"], button[type="submit"][aria-label="Submit"]');
+      const isSubmitDisabled = submitButton?.disabled || false;
+
+      // 7. 생성 중 신호: 로딩 스피너 또는 sonner-spinner 확인
+      const spinnerVisible = document.querySelector('.sonner-spinner:not([data-visible="false"])');
+      const isGenerating = spinnerVisible !== null;
+
+      // 디버그 로그
+      console.log(`[Grok v15.2] responses=${allResponses.length}, text=${responseText.length}, last-actions=${!!lastResponseActions}, actions=${hasActionButtons} (copy=${!!copyButton}, like=${!!likeButton}, regen=${!!regenerateButton}), input=${isInputEnabled}, submitDisabled=${isSubmitDisabled}, generating=${isGenerating}`);
+
+      // 🎯 완료 판정 로직 (우선순위 기반 + 명시적 return)
+
+      // 생성 중이면 미완료
+      if (isGenerating) {
+        result.confidence = 0;
+        result.signal = 'grok:generating (spinner visible)';
+        return result;
+      }
+
+      // 🔑 최우선: .last-response 내 액션 버튼 존재 + 응답 텍스트 = 완료 (최고 신뢰도)
+      if (lastResponseActions && hasActionButtons && hasResponseText) {
+        result.isComplete = true;
+        result.confidence = 98;
+        result.signal = `grok:complete (last-response-actions + text=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v15.2] Grok: Complete (last-response action buttons detected)');
+        return result;
+      }
+
+      // 입력창 활성화 + 제출 버튼 비활성화 + 응답 텍스트 = 완료
+      if (isInputEnabled && isSubmitDisabled && hasResponseText) {
+        result.isComplete = true;
+        result.confidence = 85;
+        result.signal = `grok:complete (input-enabled + submit-disabled + text=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v15.2] Grok: Complete (submit disabled)');
+        return result;
+      }
+
+      // 입력창 활성화 + 충분한 응답 텍스트 (fallback)
+      if (isInputEnabled && hasResponseText && responseText.length > 100) {
+        result.isComplete = true;
+        result.confidence = 75;
+        result.signal = `grok:complete-fallback (input-enabled + text=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v15.2] Grok: Complete (fallback)');
+        return result;
+      }
+
+      // 아직 대기중 또는 불확실
+      result.confidence = hasResponseText ? 30 : 0;
+      result.signal = hasResponseText ? `grok:uncertain (text=${responseText.length}chars, waiting for last-response)` : 'grok:waiting-for-response';
+      return result;
+    }
+
+    // === OpenRouter 전용: 🔧 v14.8 완료 감지 (새 HTML 분석 기반) ===
+    if (hostname.includes('openrouter.ai')) {
+      // 1. 메시지 컨테이너에서 마지막 메시지 확인 (data-message-id 기반)
+      const messageList = document.querySelector('[data-testid="message-list-content"]');
+      const allMessages = messageList?.querySelectorAll('[data-message-id]') || [];
+      const lastMessage = allMessages.length > 0 ? allMessages[allMessages.length - 1] : null;
+
+      // 2. 마지막 메시지가 AI 응답인지 확인 (왼쪽 정렬 = AI, 오른쪽 정렬 = 사용자)
+      const isAssistantMessage = lastMessage?.querySelector('.slide-in-from-left-12, .items-start') !== null;
+
+      // 3. AI 응답 텍스트 존재 확인 (rounded-tl-none 클래스 사용)
+      const assistantBubbles = document.querySelectorAll('[class*="rounded-tl-none"]');
+      const lastBubble = assistantBubbles.length > 0 ? assistantBubbles[assistantBubbles.length - 1] : null;
+      const responseText = lastBubble?.textContent?.trim() || '';
+      const hasResponseText = responseText.length > 0;
+
+      // 4. 🔑 전송 버튼 상태 확인 (완료 시: disabled + opacity-40)
+      const sendButton = document.querySelector('[data-testid="playground-composer"] button.bg-primary');
+      const isSendButtonDisabled = sendButton && (sendButton.disabled || sendButton.classList.contains('opacity-40'));
+
+      // 5. 입력창 상태 확인
+      const textarea = document.querySelector('[data-testid="playground-composer"] textarea');
+      const isTextareaEnabled = textarea && !textarea.disabled && !textarea.readOnly;
+
+      // 6. 생성 중 신호: 전송버튼이 Stop 아이콘으로 변경되었는지 (disabled가 아니고 활성 상태)
+      const isGenerating = sendButton && !sendButton.disabled && !sendButton.classList.contains('opacity-40');
+
+      // 🎯 완료 판정 로직
+      if (isGenerating) {
+        // 전송 버튼이 활성화되어 있으면 생성 중
+        result.confidence = 0;
+        result.signal = 'openrouter:generating (send-button-active)';
+        return result;
+      }
+
+      if (isSendButtonDisabled && hasResponseText && isAssistantMessage) {
+        // 전송 버튼 비활성화 + AI 응답 텍스트 존재 = 완료 (최고 신뢰도)
+        result.isComplete = true;
+        result.confidence = 95;
+        result.signal = `openrouter:complete (send-disabled + response=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v14.8] OpenRouter: Complete');
+        return result;
+      }
+
+      if (isTextareaEnabled && hasResponseText && !isGenerating) {
+        // 입력창 활성화 + 응답 텍스트 + 생성 아님 = 완료 (높은 신뢰도)
+        result.isComplete = true;
+        result.confidence = 85;
+        result.signal = `openrouter:complete-fallback (textarea-enabled + response=${responseText.length}chars)`;
+        console.log('[Dynamic Completion v14.8] OpenRouter: Complete (fallback)');
+        return result;
+      }
+
+      // 아직 대기중 또는 불확실
+      if (!hasResponseText) {
+        result.confidence = 0;
+        result.signal = 'openrouter:waiting (no-response-text)';
+      } else {
+        result.confidence = 30;
+        result.signal = 'openrouter:uncertain';
+      }
+      return result;
     }
 
     return result;
   }
 
   /**
-   * 동적 안정화 시간 계산 (하드코딩 제거)
+   * 동적 안정화 시간 계산 (🔧 v14.1: 조기 종료 방지 강화)
    * @param {string} hostname - window.location.hostname  
    * @param {number} avgChunkInterval - 평균 청크 간격 (ms)
    * @param {Object} completionSignal - detectDynamicCompletionSignal 결과
+   * @param {Object} manifest - Model manifest configuration
    * @returns {number} 동적 안정화 시간 (ms)
    */
-  function calculateDynamicStabilizationTime(hostname, avgChunkInterval, completionSignal) {
-    // 완료 신호가 확실하면 최소 대기
-    if (completionSignal.isComplete && completionSignal.confidence >= 80) {
-      console.log(`[Dynamic Stabilization] High confidence (${completionSignal.confidence}%), using minimal wait`);
+  function calculateDynamicStabilizationTime(hostname, avgChunkInterval, completionSignal, manifest) {
+    // 🔧 v14.1: 완료 신호 신뢰도 임계값 상향 (80→95)
+    // 높은 신뢰도에서만 최소 대기 적용
+    if (completionSignal.isComplete && completionSignal.confidence >= 95) {
       return Math.max(1500, avgChunkInterval * 2);
     }
 
-    // 기본 베이스라인: 평균 청크 간격 * 3, 최소 3초
-    const baseline = Math.max(3000, avgChunkInterval * 3);
-
-    // 모델별 가중치 적용
+    // 기본값 설정 (Base calculation)
+    let baseline = Math.max(3000, avgChunkInterval * 4);
     let multiplier = 1.0;
 
-    if (hostname.includes('chat.qwen.ai')) {
-      multiplier = 2.5; // Qwen: 긴 토큰 간격, 최대 대기
-    } else if (hostname.includes('kimi.moonshot.cn')) {
-      multiplier = 2.0; // Kimi: 중국 서버 지연
-    } else if (hostname.includes('lmarena.ai')) {
-      multiplier = 1.8; // LMArena: 다중 모델 비교
-    } else if (hostname.includes('openrouter.ai')) {
-      multiplier = 1.5; // OpenRouter: 프록시 지연
-    } else if (hostname.includes('claude.ai')) {
-      multiplier = 1.3; // Claude: Thinking 모드
-    } else if (hostname.includes('gemini.google.com')) {
-      multiplier = 0.8; // Gemini: aria-busy로 빠른 감지
-    } else if (hostname.includes('chatgpt.com')) {
-      multiplier = 1.0; // ChatGPT: 표준
+    // 🎯 Use Manifest Configuration if available (Priority)
+    if (manifest && manifest.completion) {
+      const { minWaitMs, adaptiveMultiplier } = manifest.completion;
+
+      // Calculate based on manifest parameters
+      // waitTime = minWaitMs + (averageChunk * multiplier)
+      const manifestWaitTime = (minWaitMs || 2000) + (avgChunkInterval * (adaptiveMultiplier || 1.0));
+
+      console.log(`[Dynamic Stabilization] Using manifest config: minWait=${minWaitMs}, mult=${adaptiveMultiplier} -> ${manifestWaitTime.toFixed(0)}fs`);
+
+      // Ensure safety bounds
+      return Math.min(Math.max(manifestWaitTime, 2000), 90000);
     }
 
-    const dynamicTime = Math.min(baseline * multiplier, 60000); // 최대 60초
-    console.log(`[Dynamic Stabilization] ${hostname}: baseline=${baseline}ms, multiplier=${multiplier}, result=${dynamicTime}ms`);
+    // Fallback: Hardcoded Host Heuristics (Legacy)
+    if (hostname.includes('claude.ai')) {
+      multiplier = 1.0; // Claude: 비교적 빠름
+    } else if (hostname.includes('chatgpt.com')) {
+      multiplier = 1.5; // 🔧 1.0→1.5 ChatGPT: 표준
+    } else if (hostname.includes('grok.com') || hostname.includes('x.com')) {
+      multiplier = 2.0; // 🆕 Grok: 긴 응답
+    } else if (hostname.includes('chat.deepseek.com')) {
+      multiplier = 2.0; // 🆕 DeepSeek: R1 모드 대비
+    }
+
+    const dynamicTime = Math.min(baseline * multiplier, 90000); // 🔧 최대 60→90초
+    console.log(`[Dynamic Stabilization v14.1] ${hostname}: baseline = ${baseline} ms, multiplier = ${multiplier}, result = ${dynamicTime} ms`);
 
     return dynamicTime;
   }
@@ -2749,9 +3639,49 @@ async function getManifestForHost(hostname) {
   // 각 AI 모델 회사마다 다른 UI 구조에 맞춘 개별 감지 로직
   // ============================================================================
 
+  function manifestToUIConfig(manifest) {
+    if (!manifest || !manifest.selectors) return null;
+    const selectors = manifest.selectors;
+
+    const stopButton = selectorListFromManifest(selectors.stop_button);
+    const loadingIndicators = selectorListFromManifest(selectors.loading_indicator);
+    const inputSelector = selectorListFromManifest(selectors.input_field).join(', ');
+    const submitButton = selectorListFromManifest(selectors.submit_button).join(', ');
+    const disabledDetection = selectors.input_field?.disabled_detection;
+    const inferredType = (selectors.input_field?.type || '').toLowerCase();
+
+    const inputDisabledCheck = (input) => {
+      if (!input) return true;
+
+      if (disabledDetection) {
+        try {
+          if (input.matches(disabledDetection)) return true;
+          if (typeof input.closest === 'function' && input.closest(disabledDetection)) return true;
+        } catch (e) { /* ignore invalid selectors */ }
+      }
+
+      if (inferredType === 'contenteditable' || input.isContentEditable || input.getAttribute('contenteditable') !== null) {
+        const attr = (input.getAttribute('contenteditable') || '').toLowerCase();
+        if (attr === 'false') return true;
+      }
+
+      return input.disabled || input.getAttribute('aria-disabled') === 'true';
+    };
+
+    return {
+      hosts: [parseHostnameSafe(manifest.url) || ''],
+      modelId: manifest.id || parseHostnameSafe(manifest.url) || 'manifest-model',
+      stopButton,
+      inputSelector,
+      inputDisabledCheck,
+      loadingIndicators,
+      submitButton
+    };
+  }
+
   /**
    * 🎯 모델별 UI 상태 감지 설정
-   * 각 회사의 실제 DOM 구조에 맞춘 셀렉터와 감지 전략
+   * 각 회사의 실제 DOM 구조에 맞춘 개별 감지 전략
    */
   const MODEL_UI_CONFIGS = {
     // ========== OpenAI (ChatGPT) ==========
@@ -2760,12 +3690,13 @@ async function getManifestForHost(hostname) {
       stopButton: [
         'button[aria-label="Stop generating"]',
         'button[data-testid="stop-button"]',
-        'button[aria-label="중지"]'  // 한국어
+        'button[aria-label="중지"]'
       ],
       inputSelector: '#prompt-textarea, textarea[data-id="root"]',
       inputDisabledCheck: (input) => input.disabled || input.getAttribute('disabled') !== null,
-      loadingIndicators: ['[data-testid="stop-button"]', '.result-streaming'],
-      submitButton: 'button[data-testid="send-button"], button[aria-label="Send prompt"]'
+      // 🔧 v15.2: streaming-animation 클래스를 최우선으로 체크
+      loadingIndicators: ['.streaming-animation', '[data-testid="stop-button"]', '[class*="streaming-animation"]', '.result-streaming'],
+      submitButton: 'button[data-testid="send-button"], button[data-testid="composer-send-button"], button[aria-label="Send prompt"]'
     },
 
     // ========== Anthropic (Claude) ==========
@@ -2798,7 +3729,7 @@ async function getManifestForHost(hostname) {
 
     // ========== xAI (Grok) ==========
     grok: {
-      hosts: ['grok.com', 'x.com/i/grok'],
+      hosts: ['grok.com', 'x.ai'],
       stopButton: [
         'button[aria-label*="Stop"]',
         'button[aria-label*="stop"]',  // 소문자도 체크
@@ -2811,9 +3742,13 @@ async function getManifestForHost(hostname) {
         'button:has(svg[class*="stop"])',
         'button:has(svg[data-testid*="stop"])'
       ],
-      inputSelector: 'textarea, div[contenteditable="true"]',
+      inputSelector: 'div.tiptap.ProseMirror[contenteditable="true"], textarea, div[contenteditable="true"]',
       inputDisabledCheck: (input) => {
-        // Grok: placeholder가 바뀌면 비활성화 상태
+        // Grok: ProseMirror contenteditable 상태 체크
+        if (input.isContentEditable !== undefined) {
+          return !input.isContentEditable || input.getAttribute('contenteditable') === 'false';
+        }
+        // Textarea: placeholder가 바뀌면 비활성화 상태
         const placeholder = input.getAttribute('placeholder') || '';
         const isDisabled = input.disabled ||
           input.getAttribute('contenteditable') === 'false' ||
@@ -2822,6 +3757,7 @@ async function getManifestForHost(hostname) {
         return isDisabled;
       },
       loadingIndicators: [
+        '.sonner-spinner:not([data-visible="false"])',
         '[data-testid="loading"]',
         '[class*="LoadingDots"]',
         '.animate-pulse',
@@ -2833,7 +3769,7 @@ async function getManifestForHost(hostname) {
         '.cursor-blink',
         '.text-cursor'
       ],
-      submitButton: 'button[data-testid="send-button"], button[type="submit"]'
+      submitButton: 'button[aria-label="제출"], button[aria-label="Submit"], button[data-testid="send-button"], button[type="submit"]'
     },
 
     // ========== DeepSeek ==========
@@ -2875,39 +3811,33 @@ async function getManifestForHost(hostname) {
       hosts: ['lmarena.ai', 'chat.lmsys.org'],
       stopButton: [
         'button[aria-label*="Stop"]',
-        'button[aria-label*="stop"]'
-      ],
-      inputSelector: 'textarea',
-      inputDisabledCheck: (input) => input.disabled,
-      loadingIndicators: ['[class*="loading"]', '.animate-spin'],
-      submitButton: 'button[type="submit"]'
-    },
-
-    // ========== Mistral ==========
-    mistral: {
-      hosts: ['chat.mistral.ai'],
-      stopButton: [
-        'button[aria-label*="Stop"]',
         'button[aria-label*="stop"]',
-        'button[data-testid="stop-button"]'
+        'button:has(svg[class*="lucide-square"])',
+        '[data-testid*="stop"]',
+        'button:has(svg[data-icon="stop"])'
       ],
-      inputSelector: 'textarea',
-      inputDisabledCheck: (input) => input.disabled,
-      loadingIndicators: ['[class*="loading"]'],
-      submitButton: 'button[type="submit"]'
+      inputSelector: 'textarea[placeholder*="Enter your message"], textarea[aria-label*="message"], div[contenteditable="true"][role="textbox"], textarea.chat-input, textarea',
+      inputDisabledCheck: (input) =>
+        input.disabled ||
+        input.getAttribute('contenteditable') === 'false' ||
+        input.getAttribute('aria-disabled') === 'true',
+      loadingIndicators: ['[data-testid*="loading"]', '[aria-busy="true"]', '[class*="loading"]', '[class*="generating"]', '.animate-spin'],
+      submitButton: 'button[type="submit"][aria-label*="Send"], button:has(svg[class*="send"]), button[aria-label*="Send"], button.primary'
     },
 
-    // ========== OpenRouter ==========
+    // ========== OpenRouter (🔧 v14.8 새 HTML 분석 기반) ==========
     openrouter: {
       hosts: ['openrouter.ai'],
       stopButton: [
-        'button[aria-label="Stop generating"]',
-        'button[aria-label*="Stop"]'
+        // OpenRouter는 aria-label 없이 동일 버튼이 Send↔Stop 전환
+        // 생성 중에는 버튼이 활성화(disabled 없음)되어 있음
+        '[data-testid="playground-composer"] button.bg-primary:not([disabled]):not(.opacity-40)'
       ],
-      inputSelector: 'textarea',
-      inputDisabledCheck: (input) => input.disabled,
-      loadingIndicators: ['[class*="loading"]'],
-      submitButton: 'button[type="submit"]'
+      inputSelector: '[data-testid="playground-composer"] textarea',
+      inputDisabledCheck: (input) => input.disabled || input.readOnly,
+      loadingIndicators: ['[class*="loading"]', '.bprogress'],
+      // 🔑 전송 버튼: bg-primary 클래스 + disabled 시 opacity-40
+      submitButton: '[data-testid="playground-composer"] button.bg-primary'
     },
 
     // ========== Perplexity (iframe 내부용) ==========
@@ -2921,16 +3851,6 @@ async function getManifestForHost(hostname) {
       inputDisabledCheck: (input) => input.disabled,
       loadingIndicators: ['[class*="loading"]', '[class*="searching"]'],
       submitButton: 'button[aria-label*="Submit"]'
-    },
-
-    // ========== Kimi (Moonshot) ==========
-    kimi: {
-      hosts: ['kimi.moonshot.cn'],
-      stopButton: ['button[class*="stop"]'],
-      inputSelector: 'textarea',
-      inputDisabledCheck: (input) => input.disabled,
-      loadingIndicators: ['[class*="loading"]'],
-      submitButton: 'button[type="submit"]'
     },
 
     // ========== GitHub Copilot ==========
@@ -2952,7 +3872,10 @@ async function getManifestForHost(hostname) {
    * 현재 호스트에 맞는 모델 UI 설정 반환
    * @returns {Object|null} 모델 설정 또는 null (알 수 없는 모델)
    */
-  function getModelUIConfig() {
+  function getModelUIConfig(manifest) {
+    const manifestUI = manifestToUIConfig(manifest);
+    if (manifestUI) return manifestUI;
+
     const hostname = window.location.hostname;
     const fullPath = hostname + window.location.pathname;
 
@@ -2970,8 +3893,8 @@ async function getManifestForHost(hostname) {
    * @param {Object} config - getResponseConfig()에서 반환된 설정
    * @returns {Object} UI 상태 스냅샷
    */
-  function captureUIStateSnapshot(config) {
-    const modelConfig = getModelUIConfig();
+  function captureUIStateSnapshot(config, manifest) {
+    const modelConfig = getModelUIConfig(manifest);
     const hostname = window.location.hostname;
 
     const snapshot = {
@@ -2990,7 +3913,7 @@ async function getManifestForHost(hostname) {
       return captureUIStateSnapshotFallback(config, snapshot);
     }
 
-    console.log(`[UI Snapshot v11] 📸 Capturing for: ${modelConfig.modelId}`);
+    console.log(`[UI Snapshot v11] 📸 Capturing for: ${modelConfig.modelId} `);
 
     // 1. Stop 버튼 감지 (모델별 셀렉터)
     for (const sel of modelConfig.stopButton) {
@@ -2999,7 +3922,7 @@ async function getManifestForHost(hostname) {
         snapshot.stopButton.found = true;
         snapshot.stopButton.visible = true;
         snapshot.isGenerating = true;
-        console.log(`[UI Snapshot v11] 🔴 Stop button found: ${sel}`);
+        console.log(`[UI Snapshot v11] 🔴 Stop button found: ${sel} `);
         break;
       }
     }
@@ -3015,7 +3938,7 @@ async function getManifestForHost(hostname) {
         snapshot.stopButton.found = true;
         snapshot.stopButton.visible = true;
         snapshot.isGenerating = true;
-        console.log(`[UI Snapshot v11] 🔴 Stop button found (text match)`);
+        console.log(`[UI Snapshot v11] 🔴 Stop button found(text match)`);
       }
     }
 
@@ -3033,7 +3956,7 @@ async function getManifestForHost(hostname) {
           snapshot.loadingIndicator.found = true;
           snapshot.loadingIndicator.visible = true;
           snapshot.isGenerating = true;
-          console.log(`[UI Snapshot v11] ⏳ Loading indicator found: ${sel}`);
+          console.log(`[UI Snapshot v11] ⏳ Loading indicator found: ${sel} `);
           break;
         }
       }
@@ -3158,7 +4081,7 @@ async function getManifestForHost(hostname) {
       if (currentSnapshot.loadingIndicator.visible) reasons.push('로딩 인디케이터');
       if (currentSnapshot.input.found && !currentSnapshot.input.enabled) reasons.push('입력창 비활성화');
 
-      result.reason = `응답 생성 중: ${reasons.join(', ') || '기타 신호'}`;
+      result.reason = `응답 생성 중: ${reasons.join(', ') || '기타 신호'} `;
       result.confidence = 0;
       return result;
     }
@@ -3196,9 +4119,9 @@ async function getManifestForHost(hostname) {
     // 60점 이상이면 복귀로 판정 (기준 완화)
     if (score >= 60) {
       result.restored = true;
-      result.reason = `[${currentSnapshot.modelId}] ${reasons.join(' + ')}`;
+      result.reason = `[${currentSnapshot.modelId}] ${reasons.join(' + ')} `;
     } else {
-      result.reason = `점수 부족 (${score}/60): ${reasons.join(', ')}`;
+      result.reason = `점수 부족(${score} / 60): ${reasons.join(', ')} `;
     }
 
     return result;
@@ -3210,12 +4133,15 @@ async function getManifestForHost(hostname) {
 
   window.addEventListener('message', (event) => {
     if (event.data?.type === 'MODEL_DOCK_START_MONITORING') {
-      startResponseMonitoring(event.data.requestId);
+      startResponseMonitoring(event.data.requestId).catch((err) => {
+        console.error('[ModelDock] Response monitor failed', err);
+      });
     }
   });
 
-  function startResponseMonitoring(requestId) {
+  async function startResponseMonitoring(requestId) {
     console.log('[ModelDock] Starting response monitoring for', requestId);
+    const manifest = await getManifestForHost(window.location.hostname);
     // ============================================================
     // 🧪 Phase 2 실험: MonitorFactory 병렬 테스트
     // ============================================================
@@ -3235,12 +4161,12 @@ async function getManifestForHost(hostname) {
     // 기존 시스템과 병렬로 실행 (테스트)
     testNewMonitor();
 
-    const config = getResponseConfig();
+    const config = await getResponseConfig(manifest);
     const hostname = window.location.hostname;
 
     // 🎯 UI State Snapshot System (v10.0)
     // 프롬프트 전송 전 UI 상태 캡처 - "응답 가능 상태로 복귀" 감지용
-    const initialUISnapshot = captureUIStateSnapshot(config);
+    const initialUISnapshot = captureUIStateSnapshot(config, manifest);
     console.log('[ModelDock] 📸 Initial UI Snapshot captured:', {
       input: initialUISnapshot.input.enabled ? '✅ enabled' : '❌ disabled',
       submit: initialUISnapshot.submitButton.enabled ? '✅ enabled' : '❌ disabled',
@@ -3268,7 +4194,7 @@ async function getManifestForHost(hostname) {
             return customText;
           }
         } catch (e) {
-          console.warn(`[ModelDock] Custom parser failed:`, e);
+          console.warn(`[ModelDock] Custom parser failed: `, e);
         }
       }
 
@@ -3288,75 +4214,80 @@ async function getManifestForHost(hostname) {
 
         if (elements.length > 0) {
           elementsFound = elements.length;
-          // 로그 줄임 (너무 많이 출력됨)
-          // console.log(`[ModelDock] 🔍 Selector matched: "${selector}" → ${elementsFound} elements`);
 
-          const lastElement = elements[elements.length - 1];
+          // 🔧 CRITICAL FIX: Iterate backwards to find the last valid assistant message
+          // Previously only checked the absolute last element
+          for (let i = elements.length - 1; i >= 0; i--) {
+            const currentElement = elements[i];
 
-          // 🔧 CRITICAL FIX: excludeUserMessage 옵션 - 개선된 검증 로직
-          if (config.excludeUserMessage) {
-            const elementClasses = (lastElement.className || '').toLowerCase();
-            const elementDataRole = (lastElement.getAttribute('data-role') || '').toLowerCase();
-            const elementDataAuthor = (lastElement.getAttribute('data-message-author-role') || '').toLowerCase();
-            const elementDataTestId = (lastElement.getAttribute('data-testid') || '').toLowerCase();
+            if (config.excludeUserMessage) {
+              const elementClasses = (currentElement.className || '').toLowerCase();
+              const elementDataRole = (currentElement.getAttribute('data-role') || '').toLowerCase();
+              const elementDataAuthor = (currentElement.getAttribute('data-message-author-role') || '').toLowerCase();
+              const elementDataTestId = (currentElement.getAttribute('data-testid') || '').toLowerCase();
 
-            // 1. 요소 자체에 user 마커가 있으면 즉시 제외
-            if (elementClasses.includes('user') || elementClasses.includes('human') ||
-              elementDataRole === 'user' || elementDataAuthor === 'user' ||
-              elementDataTestId.includes('user-message') || elementDataTestId.includes('human-message')) {
-              continue;
-            }
-
-            // 2. 조상 요소를 재귀적으로 확인 (최대 10단계)
-            let ancestor = lastElement.parentElement;
-            let hasUserAncestor = false;
-            let hasAssistantAncestor = false;
-
-            for (let i = 0; i < 10 && ancestor && ancestor !== document.body; i++) {
-              const ancestorClasses = (ancestor.className || '').toLowerCase();
-              const ancestorDataRole = (ancestor.getAttribute('data-role') || '').toLowerCase();
-              const ancestorDataAuthor = (ancestor.getAttribute('data-message-author-role') || '').toLowerCase();
-              const ancestorDataTestId = (ancestor.getAttribute('data-testid') || '').toLowerCase();
-
-              if (ancestorClasses.includes('user-message') || ancestorClasses.includes('human-message') ||
-                ancestorDataRole === 'user' || ancestorDataAuthor === 'user' ||
-                ancestorDataTestId.includes('user-message')) {
-                hasUserAncestor = true;
-                break;
+              // 1. 요소 자체에 user 마커가 있으면 스킵
+              if (elementClasses.includes('user') || elementClasses.includes('human') ||
+                elementDataRole === 'user' || elementDataAuthor === 'user' ||
+                elementDataTestId.includes('user-message') || elementDataTestId.includes('human-message')) {
+                continue;
               }
 
-              if (ancestorClasses.includes('assistant') || ancestorClasses.includes('bot') ||
-                ancestorDataRole === 'assistant' || ancestorDataAuthor === 'assistant' ||
-                ancestorDataTestId.includes('assistant') || ancestorDataTestId.includes('bot-message')) {
-                hasAssistantAncestor = true;
+              // 2. 조상 요소를 재귀적으로 확인 (최대 10단계)
+              let ancestor = currentElement.parentElement;
+              let hasUserAncestor = false;
+              let hasAssistantAncestor = false;
+
+              for (let j = 0; j < 10 && ancestor && ancestor !== document.body; j++) {
+                const ancestorClasses = (ancestor.className || '').toLowerCase();
+                const ancestorDataRole = (ancestor.getAttribute('data-role') || '').toLowerCase();
+                const ancestorDataAuthor = (ancestor.getAttribute('data-message-author-role') || '').toLowerCase();
+                const ancestorDataTestId = (ancestor.getAttribute('data-testid') || '').toLowerCase();
+
+                if (ancestorClasses.includes('user-message') || ancestorClasses.includes('human-message') ||
+                  ancestorDataRole === 'user' || ancestorDataAuthor === 'user' ||
+                  ancestorDataTestId.includes('user-message')) {
+                  hasUserAncestor = true;
+                  break;
+                }
+
+                if (ancestorClasses.includes('assistant') || ancestorClasses.includes('bot') ||
+                  ancestorDataRole === 'assistant' || ancestorDataAuthor === 'assistant' ||
+                  ancestorDataTestId.includes('assistant') || ancestorDataTestId.includes('bot-message')) {
+                  hasAssistantAncestor = true;
+                }
+
+                ancestor = ancestor.parentElement;
               }
 
-              ancestor = ancestor.parentElement;
+              if (hasUserAncestor) continue;
+
+              // 🔧 Strict Assistant Check
+              if (config.strictAssistantCheck) {
+                const isAssistant = hasAssistantAncestor ||
+                  selector.includes('assistant') ||
+                  selector.includes('bot') ||
+                  selector.includes('response');
+                if (!isAssistant) continue;
+              }
             }
 
-            if (hasUserAncestor) continue;
+            // Enhanced text extraction using ParserUtils for cleaner text
+            let text = ParserUtils.cleanText(currentElement);
 
-            // 🔧 Strict Assistant Check
-            if (config.strictAssistantCheck) {
-              const isAssistant = hasAssistantAncestor ||
-                selector.includes('assistant') ||
-                selector.includes('bot') ||
-                selector.includes('response');
+            // Fallback to naive extraction if cleanText fails
+            if (!text || text.trim().length === 0) {
+              text = currentElement.innerText || currentElement.textContent || '';
+            }
+            if (!text || text.trim().length === 0) {
+              text = extractAllTextNodes(currentElement);
+            }
 
-              if (!isAssistant) continue;
+            // Must have some content to be valid
+            if (text.trim().length > 0) {
+              return text.trim();
             }
           }
-
-          // Enhanced text extraction
-          let text = lastElement.textContent || '';
-          if (!text || text.trim().length === 0) {
-            text = lastElement.innerText || '';
-          }
-          if (!text || text.trim().length === 0) {
-            text = extractAllTextNodes(lastElement);
-          }
-
-          return text.trim();
         }
       }
 
@@ -3390,7 +4321,7 @@ async function getManifestForHost(hostname) {
     // 🔧 v14.0 CRITICAL FIX: "모델 생성 시작" 감지 플래그
     let modelStartedGenerating = false;
     let generatingStartTime = 0;
-    const MIN_GENERATION_DURATION = 3000; // 최소 3초
+    const MIN_GENERATION_DURATION = 5000; // 최소 5초 (3초→5초 증가)
 
     // === HYBRID MONITORING SYSTEM ===
     // 1. MutationObserver: Immediate text change detection (real-time)
@@ -3442,7 +4373,7 @@ async function getManifestForHost(hostname) {
         // Custom Parser가 중간에 빈 값을 반환하는 경우 대응
         const interval = now - lastChunkTime;
         if (interval > 2000) { // 2초 이상 지났으면 갱신 (너무 자주 갱신 방지)
-          console.log(`[ModelDock] DOM changed but text unchanged (${interval}ms) - keeping alive`);
+          console.log(`[ModelDock] DOM changed but text unchanged(${interval}ms) - keeping alive`);
           lastChunkTime = now; // 활동 시간 갱신
         }
       }
@@ -3465,7 +4396,7 @@ async function getManifestForHost(hostname) {
         if (textIncrease > 10 && !hasReceivedNewResponse) {
           hasReceivedNewResponse = true;
           newResponseStartTime = now;
-          console.log(`[ModelDock] 🆕 NEW RESPONSE DETECTED (heartbeat)! Increase: ${textIncrease} chars`);
+          console.log(`[ModelDock] 🆕 NEW RESPONSE DETECTED(heartbeat)! Increase: ${textIncrease} chars`);
         }
 
         lastText = currentText;
@@ -3491,45 +4422,90 @@ async function getManifestForHost(hostname) {
       // === 🎯 UI State Snapshot 기반 완료 감지 (v14.0) ===
       // 핵심 변경: 동적 완료 신호 시스템 통합
 
-      const currentUISnapshot = captureUIStateSnapshot(config);
+      const currentUISnapshot = captureUIStateSnapshot(config, manifest);
       const uiStateResult = isUIStateRestored(initialUISnapshot, currentUISnapshot);
       const currentNewResponseLength = lastText.length > baselineText.length
         ? lastText.length - baselineText.length
         : 0;
 
-      // 🎯 v14.0: 동적 완료 신호 감지 (BATCH1_ANALYSIS 기반)
-      const avgChunkInterval = chunkIntervals.length > 0
-        ? chunkIntervals.reduce((a, b) => a + b, 0) / chunkIntervals.length
-        : 3000;
-      const dynamicCompletionSignal = detectDynamicCompletionSignal(hostname);
-
-      // 동적 신호가 높은 신뢰도로 완료를 감지하면 빠르게 처리
-      if (dynamicCompletionSignal.isComplete && dynamicCompletionSignal.confidence >= 80) {
-        console.log(`[Dynamic Completion v14] 🎯 High confidence signal: ${dynamicCompletionSignal.signal}`);
+      // 🔧 v15.6 CRITICAL: ChatGPT streaming-animation 직접 체크 (최우선)
+      // heartbeat에서 streaming-animation이 없으면 즉시 완료 처리
+      const streamingAnimationEl = document.querySelector('.streaming-animation');
+      const isStreamingNow = streamingAnimationEl && isElementVisible(streamingAnimationEl);
+      
+      // 디버깅 로그 추가
+      if (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) {
+        console.log(`[UI State v15.6] ChatGPT Check:`, {
+          hasReceivedNewResponse,
+          currentNewResponseLength,
+          streamingEl: !!streamingAnimationEl,
+          isStreamingNow,
+          elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+        });
+      }
+      
+      if ((hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) && 
+          hasReceivedNewResponse && currentNewResponseLength > 50 && !isStreamingNow) {
+        console.log(`[UI State v15.6] 🎯 ChatGPT STREAMING STOPPED! Immediate completion`, {
+          responseLength: currentNewResponseLength,
+          hasStreaming: !!streamingAnimationEl,
+          isVisible: isStreamingNow
+        });
+        completionReason = `CHATGPT_STREAMING_STOPPED(text=${currentNewResponseLength})`;
+        finish();
+        return;
+      }
+      
+      // 🔧 v15.6: hasReceivedNewResponse가 false인 경우에도 텍스트가 있으면 완료 처리
+      // ChatGPT에서 getResponseText()가 baseline과 동일하게 시작해서 hasReceivedNewResponse가 false일 수 있음
+      if ((hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) && 
+          !hasReceivedNewResponse && lastText && lastText.length > 100 && !isStreamingNow) {
+        console.log(`[UI State v15.6] 🎯 ChatGPT STREAMING STOPPED (baseline fallback)!`, {
+          lastTextLength: lastText.length,
+          baseline: baselineText.length
+        });
+        hasReceivedNewResponse = true;
+        completionReason = `CHATGPT_STREAMING_STOPPED_FALLBACK(text=${lastText.length})`;
+        finish();
+        return;
       }
 
-      // 🔧 v14.0: 모델 생성 시작 감지
+      // 🔧 v14.2: 모델 생성 시작 감지를 먼저 수행 (동적 완료 신호 전에)
       // Stop 버튼, 로딩 인디케이터, 또는 입력창 비활성화 = 생성 중
       if (currentUISnapshot.isGenerating && !modelStartedGenerating) {
         modelStartedGenerating = true;
         generatingStartTime = now;
-        console.log(`[UI State v14] 🚀 MODEL STARTED GENERATING!`, {
+        console.log(`[UI State v14.2] 🚀 MODEL STARTED GENERATING!`, {
           stopButton: currentUISnapshot.stopButton.visible,
           loadingIndicator: currentUISnapshot.loadingIndicator.visible,
           inputDisabled: currentUISnapshot.input.found && !currentUISnapshot.input.enabled
         });
       }
 
-      // 상태 로그 (v14.0 - modelStartedGenerating 추가)
-      console.log(`[UI State v14] 🔍 Snapshot Check:`, {
+      // 🎯 v14.2: 동적 완료 신호 감지 (생성 시작 여부 + 응답 길이 전달)
+      const avgChunkInterval = chunkIntervals.length > 0
+        ? chunkIntervals.reduce((a, b) => a + b, 0) / chunkIntervals.length
+        : 3000;
+      const dynamicCompletionSignal = detectDynamicCompletionSignal(
+        hostname,
+        modelStartedGenerating,
+        currentNewResponseLength
+      );
+
+      // 동적 신호가 높은 신뢰도로 완료를 감지하면 빠르게 처리
+      if (dynamicCompletionSignal.isComplete && dynamicCompletionSignal.confidence >= 80) {
+        console.log(`[Dynamic Completion v14.2] 🎯 High confidence signal: ${dynamicCompletionSignal.signal} `);
+      }
+
+      // 상태 로그 (v14.2)
+      console.log(`[UI State v14.2] 🔍 Snapshot Check: `, {
         modelStarted: modelStartedGenerating,
         isGenerating: currentUISnapshot.isGenerating,
+        dynamicSignal: dynamicCompletionSignal.signal,
         restored: uiStateResult.restored,
-        confidence: uiStateResult.confidence,
-        reason: uiStateResult.reason,
         hasNewResponse: hasReceivedNewResponse,
         newResponseLen: currentNewResponseLength,
-        elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)}s`
+        elapsed: `${((now - monitorStartTime) / 1000).toFixed(1)} s`
       });
 
       // === 완료 조건 (v14.0 강화) ===
@@ -3539,7 +4515,10 @@ async function getManifestForHost(hostname) {
       // 4. 최소 텍스트 길이 충족
       // 5. 최소 생성 시간 경과
 
-      const minRequiredLength = 30;
+      // 🔧 v15.0 CRITICAL FIX: 최소 응답 길이 대폭 증가
+      // 기존: 1 → 변경: 50 (최소 50자는 있어야 완료 판정)
+      // 이유: 응답이 1자만 있어도 완료로 판정되어 조기 종료되는 문제 해결
+      const minRequiredLength = 50;
       const hasMinimumResponse = currentNewResponseLength >= minRequiredLength;
       const generationDuration = modelStartedGenerating ? (now - generatingStartTime) : 0;
       const hasMinGenerationTime = generationDuration >= MIN_GENERATION_DURATION;
@@ -3550,8 +4529,8 @@ async function getManifestForHost(hostname) {
 
         // 🔧 v14.0: 텍스트가 있으면 즉시 modelStarted로 간주
         // Grok 등 일부 모델은 Stop 버튼이 감지 안 됨
-        if (hasReceivedNewResponse && currentNewResponseLength > 100) {
-          console.log(`[UI State v14] 🔶 Text-based start detection: ${currentNewResponseLength} chars found`);
+        if (hasReceivedNewResponse && currentNewResponseLength > 0) {
+          console.log(`[UI State v14] 🔶 Text - based start detection: ${currentNewResponseLength} chars found`);
           modelStartedGenerating = true;
           generatingStartTime = newResponseStartTime || monitorStartTime;
         }
@@ -3565,7 +4544,7 @@ async function getManifestForHost(hostname) {
         // 모델이 시작 안 했으면 완료 불가
         if (!modelStartedGenerating) {
           if (waitTime > 30000) {
-            console.warn(`[UI State v14] ⚠️ Still waiting for model to start (${(waitTime / 1000).toFixed(0)}s)`);
+            console.warn(`[UI State v14] ⚠️ Still waiting for model to start(${(waitTime / 1000).toFixed(0)}s)`);
           }
           return;
         }
@@ -3577,55 +4556,84 @@ async function getManifestForHost(hostname) {
 
       // === 🎯 동적 안정화 시간 계산 ===
       // 동적 완료 신호 + 평균 청크 간격 기반
+      // 동적 완료 신호 + 평균 청크 간격 기반 + Manifest Config
       const dynamicStabilizationTime = calculateDynamicStabilizationTime(
         hostname,
         avgChunkInterval,
-        dynamicCompletionSignal
+        dynamicCompletionSignal,
+        manifest
       );
 
-      // 동적 임계값 설정
-      let textStableThreshold = dynamicStabilizationTime;
-      let minResponseLength = 100; // 기본값: 100자 (동적 신호가 있으면 더 낮아도 됨)
-      let finalStableThreshold = dynamicStabilizationTime * 1.5;
+      // 동적 임계값 설정 (짧은 응답 지원을 위해 완화)
+      // 🔧 v15.0: 최소 응답 길이 증가 (1 → 30), 안정화 시간 강화
+      let textStableThreshold = Math.max(2000, dynamicStabilizationTime * 0.6);
+      let minResponseLength = 30;
+      let finalStableThreshold = Math.max(3500, dynamicStabilizationTime);
 
-      // 🎯 v14.0: 동적 완료 신호가 높은 신뢰도면 임계값 대폭 낮춤
-      if (dynamicCompletionSignal.isComplete && dynamicCompletionSignal.confidence >= 80) {
-        textStableThreshold = Math.max(1500, avgChunkInterval * 2);
-        minResponseLength = 30; // 신뢰도 높으면 짧은 응답도 허용
-        finalStableThreshold = Math.max(2000, avgChunkInterval * 3);
-        console.log(`[Dynamic v14] High confidence completion - using fast thresholds: ${textStableThreshold}ms`);
+      if (dynamicCompletionSignal.isComplete && dynamicCompletionSignal.confidence >= 95) {
+        // 🔧 v15.5: ChatGPT streaming-animation 완료 시 즉시 처리
+        if (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) {
+          textStableThreshold = 500; // ← 500ms로 대폭 단축
+          minResponseLength = 50;
+          finalStableThreshold = 1000; // ← 1초로 단축
+          console.log(`[Dynamic v15.5] ChatGPT streaming stopped - FAST COMPLETION mode: ${textStableThreshold}ms`);
+        } else {
+          textStableThreshold = Math.max(1000, avgChunkInterval * 2);
+          minResponseLength = 1;
+          finalStableThreshold = Math.max(2000, avgChunkInterval * 3);
+          console.log(`[Dynamic v14.x] Very high confidence(${dynamicCompletionSignal.confidence}%) - thresholds: ${textStableThreshold}ms, minLen: ${minResponseLength}`);
+        }
+      } else if (dynamicCompletionSignal.isComplete && dynamicCompletionSignal.confidence >= 80) {
+        textStableThreshold = Math.max(1500, avgChunkInterval * 3);
+        minResponseLength = 1;
+        finalStableThreshold = Math.max(3000, avgChunkInterval * 4);
+        console.log(`[Dynamic v14.x] High confidence(${dynamicCompletionSignal.confidence}%) - thresholds: ${textStableThreshold}ms, minLen: ${minResponseLength}`);
+      } else if (dynamicCompletionSignal.confidence >= 50) {
+        textStableThreshold = Math.max(2000, dynamicStabilizationTime * 0.8);
+        finalStableThreshold = Math.max(3000, dynamicStabilizationTime);
+        console.log(`[Dynamic v14.x] Medium confidence(${dynamicCompletionSignal.confidence}%) - thresholds: ${textStableThreshold}ms`);
       }
-      // 동적 완료 신호가 중간 신뢰도면 약간 낮춤
-      else if (dynamicCompletionSignal.confidence >= 50) {
-        textStableThreshold = dynamicStabilizationTime * 0.7;
-        finalStableThreshold = dynamicStabilizationTime;
-        console.log(`[Dynamic v14] Medium confidence - using reduced thresholds: ${textStableThreshold}ms`);
+
+      // 🧩 Host-specific tightening: ChatGPT는 짧은 답변 조기 종료 방지
+      if (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')) {
+        minResponseLength = Math.max(minResponseLength, 50);
+        textStableThreshold = Math.max(textStableThreshold, 2500);
+        finalStableThreshold = Math.max(finalStableThreshold, 4000);
       }
 
       const textStable = timeSinceLastChange > textStableThreshold;
-      const hasSubstantialResponse = currentNewResponseLength > minResponseLength;
+      const hasSubstantialResponse = currentNewResponseLength >= minResponseLength;
 
       // 🔧 v14.0: 텍스트 기반 완료는 별도 카운터 사용 (중복 방지)
       // UI 기반과 텍스트 기반을 독립적으로 처리
       if (textStable && hasSubstantialResponse && hasReceivedNewResponse && hasMinGenerationTime) {
-        console.log(`[UI State v14] 📝 Text stable for ${(timeSinceLastChange / 1000).toFixed(1)}s with ${currentNewResponseLength} chars (threshold: ${textStableThreshold}ms)`);
+        console.log(`[UI State v15.5] 📝 Text stable for ${(timeSinceLastChange / 1000).toFixed(1)}s with ${currentNewResponseLength} chars (threshold: ${textStableThreshold}ms)`);
 
         // UI가 idle이거나, finalStableThreshold 이상 텍스트가 안정화되었으면 완료
         if (uiStateResult.restored || timeSinceLastChange > finalStableThreshold) {
           stableIdleCount++;
-          if (stableIdleCount >= 2) {
-            console.log(`[UI State v14] ✅ TEXT-BASED COMPLETION:`, {
+          
+          // 🔧 v15.5: ChatGPT streaming-animation 완료 시 즉시 처리 (1회 검증으로 단축)
+          const requireVerifications = (dynamicCompletionSignal.confidence >= 95 && 
+                                       (hostname.includes('chatgpt.com') || hostname.includes('chat.openai.com')))
+                                       ? 1 : 3;
+          
+          if (stableIdleCount >= requireVerifications) {
+            console.log(`[UI State v15.5] ✅ TEXT-BASED COMPLETION (${requireVerifications} verification${requireVerifications > 1 ? 's' : ''}):`, {
               model: hostname,
               textStableFor: `${(timeSinceLastChange / 1000).toFixed(1)}s`,
               responseLength: currentNewResponseLength,
               uiRestored: uiStateResult.restored,
               generationDuration: `${(generationDuration / 1000).toFixed(1)}s`,
+              dynamicSignal: dynamicCompletionSignal.signal,
+              confidence: dynamicCompletionSignal.confidence,
               thresholds: { textStable: textStableThreshold, minLength: minResponseLength, finalStable: finalStableThreshold }
             });
+            completionReason = `TEXT_STABLE(${(timeSinceLastChange / 1000).toFixed(1)}s) + ${dynamicCompletionSignal.signal}`;
             finish();
             return;  // 🔧 CRITICAL: 여기서 반드시 return
           } else {
-            console.log(`[UI State v14] Text-based verification ${stableIdleCount}/2`);
+            console.log(`[UI State v15.5] Text-based verification ${stableIdleCount}/${requireVerifications} (confidence: ${dynamicCompletionSignal.confidence}%)`);
           }
         }
         return;  // 🔧 텍스트 기반 체크를 했으면 UI 기반 체크 스킵 (중복 방지)
@@ -3660,23 +4668,26 @@ async function getManifestForHost(hostname) {
       // === 모든 조건 충족 → 완료 판정 ===
       stableIdleCount++;
 
-      if (stableIdleCount >= 2) {
-        console.log(`[UI State v14] ✅ COMPLETION CONFIRMED:`, {
+      if (stableIdleCount >= 3) {
+        console.log(`[UI State v14] ✅ UI-BASED COMPLETION:`, {
           reason: uiStateResult.reason,
           confidence: uiStateResult.confidence,
           responseLength: currentNewResponseLength,
           generationDuration: `${(generationDuration / 1000).toFixed(1)}s`,
+          dynamicSignal: dynamicCompletionSignal.signal,
           verifications: stableIdleCount
         });
+        completionReason = `UI_RESTORED(${uiStateResult.reason}) + ${dynamicCompletionSignal.signal}`;
         finish();
         return;
       } else {
-        console.log(`[UI State v14] Verification ${stableIdleCount}/2 - waiting for stable state...`);
+        console.log(`[UI State v15.0] Verification ${stableIdleCount}/3 - waiting for stable state...`);
       }
 
       // 안전 타임아웃 (3분)
       if (now - monitorStartTime > 180000) {
         console.warn('[UI State v14] ⏰ Timeout: 3 minutes elapsed, forcing completion');
+        completionReason = 'TIMEOUT(180s)';
         finish();
         return;
       }
@@ -3696,6 +4707,9 @@ async function getManifestForHost(hostname) {
       }, '*');
     }, 2000);
 
+    // 🔧 v14.1: 종료 이유 추적을 위한 변수
+    let completionReason = 'unknown';
+
     function finish() {
       if (isComplete) return;
       isComplete = true;
@@ -3708,7 +4722,21 @@ async function getManifestForHost(hostname) {
         ? lastText.substring(baselineText.length).trim()
         : lastText;  // fallback: 전체 텍스트
 
-      console.log(`[ModelDock] Response monitoring complete - Total: ${lastText.length} chars, New: ${newResponseText.length} chars`);
+      // 🔧 v14.1: 핵심 디버깅 로그 (응답 미리보기 + 종료 이유)
+      const previewLength = 100;
+      const textPreview = newResponseText.length > previewLength
+        ? newResponseText.substring(0, previewLength) + '...'
+        : newResponseText;
+      const textEnding = newResponseText.length > 50
+        ? '...' + newResponseText.substring(newResponseText.length - 50)
+        : '';
+
+      console.log(`%c[ModelDock] 🏁 RESPONSE COMPLETE`, 'color: green; font-weight: bold;');
+      console.log(`  📍 Model: ${window.location.hostname}`);
+      console.log(`  📐 Length: ${newResponseText.length} chars (baseline: ${baselineText.length})`);
+      console.log(`  🔚 Reason: ${completionReason}`);
+      console.log(`  📝 Preview: "${textPreview}"`);
+      if (textEnding) console.log(`  📝 Ending: "${textEnding}"`);
 
       window.parent.postMessage({
         type: 'MODEL_DOCK_RESPONSE_COMPLETE',
@@ -3717,11 +4745,12 @@ async function getManifestForHost(hostname) {
           text: newResponseText,  // 🔧 새 응답만 전송
           fullText: lastText,     // 전체 텍스트 (디버깅용)
           baselineLength: baselineText.length,
-          host: window.location.host
+          host: window.location.host,
+          completionReason  // 🆕 종료 이유 추가
         }
       }, '*');
     }
   }
 
-  console.log('[ModelDock] Content Script Loaded (v14.0 - Dynamic Completion Detection System)');
+  console.log('[ModelDock] Content Script Loaded (v15.0 - Enhanced Completion Detection)');
 })();

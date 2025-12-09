@@ -64,7 +64,8 @@
     {
       "resources": [
         "content.js",
-        "icon.png"
+        "icon.png",
+        "ai_model_dom_selectors.json"
       ],
       "matches": [
         "<all_urls>"

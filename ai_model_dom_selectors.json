@@ -11,17 +11,17 @@
       "url": "https://claude.ai",
       "selectors": {
         "stop_button": {
-          "primary": "button[aria-label*='Stop']",
+          "primary": "button[aria-label='Stop generating'], button[data-testid='stop-button']",
           "alternatives": [
             "button:has-text('Stop generating')",
-            "button.stop-button",
-            "[data-testid='stop-button']"
+            "button.stop-button"
           ],
           "detection": "button:has(svg[data-icon='stop'])"
         },
         "loading_indicator": {
           "primary": "[data-testid='chat-loading']",
           "alternatives": [
+            "[data-is-streaming='true']",
             ".loading-indicator",
             "[aria-busy='true']",
             ".animate-pulse"
@@ -34,7 +34,7 @@
             "[data-testid='chat-input']",
             ".ProseMirror"
           ],
-          "disabled_detection": "[contenteditable='false']"
+          "disabled_detection": "[contenteditable='false'], div[aria-disabled='true']"
         },
         "response_area": {
           "primary": "[data-testid='conversation']",
@@ -89,11 +89,12 @@
           "detection": "button[aria-label*='Stop']"
         },
         "loading_indicator": {
-          "primary": "[data-testid='streaming-indicator']",
+          "primary": ".streaming-animation",
           "alternatives": [
-            ".result-streaming",
+            "[data-testid='stop-button']",
             "[aria-live='polite']",
-            ".cursor-blink"
+            "[class*='streaming-animation']",
+            ".result-streaming"
           ]
         },
         "input_field": {
@@ -116,6 +117,7 @@
         "submit_button": {
           "primary": "button[data-testid='send-button']",
           "alternatives": [
+            "button[data-testid='composer-send-button']",
             "button[aria-label='Send prompt']",
             "button.absolute.p-1"
           ]
@@ -158,7 +160,9 @@
           "alternatives": [
             "[aria-label='Generating']",
             ".response-loading",
-            "mat-progress-spinner"
+            "mat-progress-spinner",
+            "[aria-busy='true']",
+            ".bard-avatar.thinking"
           ]
         },
         "input_field": {
@@ -214,10 +218,11 @@
       "url": "https://x.ai/grok",
       "selectors": {
         "stop_button": {
-          "primary": "button[aria-label='Stop']",
+          "primary": "button[aria-label='Stop generating'], button[data-testid='stop-generating']",
           "alternatives": [
-            "[data-testid='stop-generating']",
-            "button:has-text('Stop')"
+            "button:has-text('Stop generating')",
+            "button[aria-label='Stop']",
+            "button[aria-label='중지']"
           ],
           "detection": "button svg[data-icon='stop']"
         },
@@ -225,30 +230,60 @@
           "primary": "[data-testid='loading']",
           "alternatives": [
             ".generating-indicator",
-            "[aria-busy='true']"
+            "[aria-busy='true']",
+            ".response-content-markdown.streaming",
+            ".animate-gaussian"
           ]
         },
         "input_field": {
-          "primary": "textarea[placeholder*='Ask Grok']",
+          "primary": "div.tiptap.ProseMirror[contenteditable='true']",
           "alternatives": [
             "[data-testid='chat-input']",
-            "div[contenteditable='true']"
+            "div[contenteditable='true']",
+            "textarea[placeholder*='Ask Grok']"
           ],
-          "disabled_detection": "textarea:disabled"
+          "type": "contenteditable",
+          "disabled_detection": "div.ProseMirror[contenteditable='false']"
         },
         "response_area": {
           "primary": "[data-testid='conversation']",
           "alternatives": [
-            ".message-container",
+            ".message-bubble",
+            ".response-content-markdown",
+            "[id^='response-']",
             "[role='log']"
           ]
         },
         "submit_button": {
-          "primary": "button[data-testid='send']",
+          "primary": "button[aria-label='제출'], button[aria-label='Submit']",
           "alternatives": [
+            "button[type='submit']",
+            "button[data-testid='send']",
             "button[aria-label='Send message']"
           ]
         }
+      },
+      "completion": {
+        "minWaitMs": 10000,
+        "adaptiveMultiplier": 1.2,
+        "checks": [
+          "stopButton",
+          "inputEnabled",
+          "loadingIndicator"
+        ],
+        "thinking": {
+          "enabled": true,
+          "patterns": [
+            "Grok is thinking",
+            "Thinking",
+            "생각 중"
+          ]
+        }
+      },
+      "features": {
+        "usesNetworkMonitor": true,
+        "disableInputOnGenerate": true,
+        "hasThinkingMode": true
       }
     },
     "perplexity": {
@@ -299,41 +334,66 @@
       "url": "https://chat.deepseek.com",
       "selectors": {
         "stop_button": {
-          "primary": "button.stop-button",
+          "primary": "div[role='button'][aria-label*='Stop'], div[role='button']:has(svg) > div:contains('Stop')",
           "alternatives": [
-            "button[aria-label*='Stop']",
-            "[data-testid='stop-generating']"
+            "button.stop-button",
+            "[data-testid='stop-generating']",
+            "div[class*='ds-stop']"
           ],
-          "detection": "button:has-text('停止')"
+          "detection": "div[role='button']:has-text('Stop')"
         },
         "loading_indicator": {
-          "primary": ".generating",
+          "primary": ".ds-loading, .generating",
           "alternatives": [
             "[data-loading='true']",
-            ".response-streaming"
+            ".response-streaming",
+            "div[class*='loading']"
           ]
         },
         "input_field": {
-          "primary": "textarea.chat-input",
+          "primary": "textarea#chat-input, textarea.chat-input",
           "alternatives": [
-            "[placeholder*='输入消息']",
+            "[placeholder*='Message DeepSeek']",
             "div[contenteditable='true']"
           ],
           "disabled_detection": "textarea:disabled"
         },
         "response_area": {
-          "primary": ".chat-messages",
+          "primary": ".ds-chat-content, .chat-messages",
           "alternatives": [
             ".message-list",
             "[role='log']"
           ]
         },
         "submit_button": {
-          "primary": "button.send-button",
+          "primary": "div[role='button'][aria-label*='Send'], button.send-button",
           "alternatives": [
             "button[type='submit']"
           ]
         }
+      },
+      "completion": {
+        "minWaitMs": 20000,
+        "adaptiveMultiplier": 1.5,
+        "checks": [
+          "stopButton",
+          "loadingIndicator",
+          "inputEnabled"
+        ],
+        "thinking": {
+          "enabled": true,
+          "patterns": [
+            "DeepSeek-R1",
+            "Thinking...",
+            "Reasoning...",
+            "생각 중..."
+          ]
+        }
+      },
+      "features": {
+        "usesNetworkMonitor": true,
+        "disableInputOnGenerate": true,
+        "hasThinkingMode": true
       }
     },
     "qwen": {
@@ -341,15 +401,15 @@
       "url": "https://qwen.ai",
       "selectors": {
         "stop_button": {
-          "primary": "button[aria-label='停止生成']",
+          "primary": "button[class*='stop-btn'], button[class*='Stop']",
           "alternatives": [
-            ".stop-generating-btn",
-            "button:has-text('Stop')"
+            "button:has-text('Stop')",
+            "div[role='button'][aria-label*='Stop']"
           ],
           "detection": "button.ant-btn-dangerous"
         },
         "loading_indicator": {
-          "primary": ".ant-spin",
+          "primary": ".ant-spin, [class*='loading']",
           "alternatives": [
             "[data-loading='true']",
             ".loading-spinner"
@@ -361,22 +421,32 @@
             "[placeholder*='请输入']",
             "div[contenteditable='true']"
           ],
-          "disabled_detection": "textarea:disabled"
+          "disabled_detection": "textarea:disabled, .ant-input-disabled"
         },
         "response_area": {
-          "primary": ".chat-content",
+          "primary": ".response-message-content",
           "alternatives": [
-            ".message-container",
-            ".ant-list"
+            ".qwen-markdown",
+            ".chat-content",
+            ".message-container"
           ]
         },
         "submit_button": {
-          "primary": "button.send-btn",
+          "primary": "button.ant-btn-primary:not(:disabled)",
           "alternatives": [
-            "button[type='submit']",
-            ".ant-btn-primary"
+            ".send-btn",
+            "[aria-label='Send']"
           ]
         }
+      },
+      "completion": {
+        "minWaitMs": 3000,
+        "adaptiveMultiplier": 1.4,
+        "checks": [
+          "stopButton",
+          "loadingIndicator",
+          "inputEnabled"
+        ]
       }
     },
     "lmarena": {
@@ -384,83 +454,159 @@
       "url": "https://chat.lmsys.org",
       "selectors": {
         "stop_button": {
-          "primary": "button.stop-btn",
+          "primary": "button[aria-label*='Stop'], button:has(svg[class*='lucide-square']), button:has(svg[aria-label*='Stop'])",
           "alternatives": [
+            "[data-testid*='stop']",
             "button:has-text('Stop')",
-            "[data-testid='stop-button']"
+            "button.btn-stop",
+            "button:has(svg[data-icon='stop'])"
           ],
-          "detection": "button.svelte-*[disabled=false]"
+          "detection": "button[aria-label*='Stop']:not([disabled])"
         },
         "loading_indicator": {
-          "primary": ".generating-indicator",
+          "primary": "[data-testid*='loading'], [aria-busy='true']",
           "alternatives": [
-            "[aria-busy='true']",
-            ".loading-dots"
+            ".animate-spin",
+            "[class*='loading']",
+            "[class*='generating']"
           ]
         },
         "input_field": {
-          "primary": "textarea.chat-input",
+          "primary": "textarea[placeholder*='Enter your message'], textarea[aria-label*='message']",
           "alternatives": [
-            "[placeholder*='Enter your message']",
-            "textarea.svelte-*"
+            "textarea.chat-input",
+            "div[contenteditable='true'][role='textbox']",
+            "textarea"
           ],
-          "disabled_detection": "textarea:disabled"
+          "type": "textarea",
+          "disabled_detection": "textarea:disabled, [contenteditable='false'], [aria-disabled='true']"
         },
         "response_area": {
-          "primary": ".chatbot",
+          "primary": ".prose",
           "alternatives": [
-            ".message-wrap",
-            "[role='log']"
+            "[data-testid*='message']",
+            ".markdown-body",
+            ".min-w-0"
+          ]
+        },
+        "user_message": {
+          "primary": "[data-testid*='user'], .chat-message-user",
+          "alternatives": [
+            ".user-message",
+            "[data-role='user']"
           ]
         },
         "submit_button": {
-          "primary": "button.primary",
+          "primary": "button[type='submit'][aria-label*='Send'], button:has(svg[class*='send'])",
           "alternatives": [
+            "button[aria-label*='Send']",
             "button:has-text('Send')",
-            "[data-testid='submit']"
+            "[data-testid='submit']",
+            "button.primary"
+          ],
+          "disabled_detection": "button:disabled"
+        }
+      },
+      "completion": {
+        "minWaitMs": 8000,
+        "adaptiveMultiplier": 1.3,
+        "checks": [
+          "stopButton",
+          "inputEnabled",
+          "loadingIndicator"
+        ],
+        "thinking": {
+          "enabled": true,
+          "patterns": [
+            "Waiting for",
+            "Generating...",
+            "Loading...",
+            "Queued"
           ]
         }
+      },
+      "features": {
+        "usesNetworkMonitor": true,
+        "disableInputOnGenerate": true,
+        "hasThinkingMode": false
       }
     },
     "kimi": {
       "name": "Kimi Chat (Moonshot AI)",
-      "url": "https://kimi.moonshot.cn",
+      "url": "https://kimi.com",
       "selectors": {
         "stop_button": {
-          "primary": "button[aria-label='停止生成']",
+          "primary": ".send-button-container:not(.disabled) .send-button[class*='stop']",
           "alternatives": [
-            ".stop-button",
-            "button:has-text('停止')"
+            "button[aria-label='停止生成']",
+            "button[aria-label*='Stop']",
+            ".stop-button"
           ],
-          "detection": "button.danger"
+          "detection": ".send-button-container:not(.disabled)"
         },
         "loading_indicator": {
-          "primary": ".generating-status",
+          "primary": ".send-button-container:not(.disabled)",
           "alternatives": [
             "[data-generating='true']",
-            ".typing-indicator"
+            ".typing-indicator",
+            ".generating-status",
+            "canvas.rive-container",
+            ".last-node"
           ]
         },
         "input_field": {
-          "primary": "div[contenteditable='true'].input-area",
+          "primary": ".chat-input-editor[data-lexical-editor='true'][contenteditable='true']",
           "alternatives": [
-            "textarea[placeholder*='和Kimi']",
-            ".chat-input"
+            ".chat-input-editor[contenteditable='true']",
+            "div[contenteditable='true'][role='textbox']",
+            ".chat-input textarea"
           ],
-          "disabled_detection": "[contenteditable='false']"
+          "type": "contenteditable",
+          "disabled_detection": ".chat-input-editor[contenteditable='false']"
         },
         "response_area": {
-          "primary": ".conversation-area",
+          "primary": ".chat-content-list",
           "alternatives": [
-            ".message-list",
-            "[role='main']"
+            ".segment-assistant .markdown-container",
+            ".segment-assistant .markdown",
+            ".chat-content-item-assistant"
           ]
         },
         "submit_button": {
-          "primary": "button.send-btn",
+          "primary": ".send-button-container .send-button",
           "alternatives": [
-            "button[aria-label='发送']"
+            "button[aria-label='发送']",
+            ".send-button"
+          ],
+          "disabled_detection": ".send-button-container.disabled"
+        },
+        "action_buttons": {
+          "primary": ".segment-assistant-actions .icon-button",
+          "alternatives": [
+            ".segment-assistant-actions-content .icon-button",
+            ".segment-assistant-actions button"
           ]
+        },
+        "completion": {
+          "minWaitMs": 15000,
+          "adaptiveMultiplier": 1.3,
+          "checks": [
+            "stopButton",
+            "actionButtons",
+            "inputEnabled",
+            "loadingIndicator"
+          ],
+          "thinking": {
+            "enabled": true,
+            "patterns": [
+              "Searching",
+              "Thinking...",
+              "Reading",
+              "검색 중",
+              "읽는 중",
+              "생각 중"
+            ]
+          }
         }
       }
     },
@@ -469,42 +615,79 @@
       "url": "https://chat.mistral.ai",
       "selectors": {
         "stop_button": {
-          "primary": "button[aria-label='Stop generation']",
+          "primary": "button[aria-label*='Stop'], button[aria-label*='stop']",
           "alternatives": [
-            "button:has-text('Stop')",
-            ".stop-generating"
+            "button:has(svg.lucide-square)",
+            "[data-testid='stop-button']",
+            "button.stop-generating"
           ],
-          "detection": "button.text-red-500"
+          "detection": "button[aria-label*='Stop']:not([disabled])"
         },
         "loading_indicator": {
-          "primary": "[data-testid='streaming']",
+          "primary": ".sonner-loading-wrapper[data-visible='true'], .animate-spin",
           "alternatives": [
+            "[aria-busy='true']",
             ".animate-pulse",
-            "[aria-live='polite']"
+            "[data-testid='streaming']"
           ]
         },
         "input_field": {
-          "primary": "textarea[placeholder*='Type a message']",
+          "primary": "div.ProseMirror[contenteditable='true']",
           "alternatives": [
-            "div[contenteditable='true']",
-            "[data-testid='chat-input']"
+            "[data-placeholder='Ask Le Chat anything']",
+            "div[contenteditable='true'].ProseMirror",
+            "textarea"
           ],
-          "disabled_detection": "textarea:disabled"
+          "type": "contenteditable",
+          "disabled_detection": "[contenteditable='false'], [aria-disabled='true']"
         },
         "response_area": {
-          "primary": "[data-testid='chat-messages']",
+          "primary": "[data-message-author-role='assistant']:last-of-type [data-message-part-type='answer']",
           "alternatives": [
-            ".messages-container",
-            "main.flex-1"
+            "[data-message-author-role='assistant']:last-of-type .markdown-container-style",
+            "[data-message-author-role='assistant']:last-of-type",
+            "[data-testid='text-message-part']"
           ]
         },
+        "user_message": {
+          "primary": "[data-message-author-role='user']",
+          "alternatives": [
+            ".group[data-message-author-role='user']"
+          ]
+        },
+        "action_buttons": {
+          "primary": "button[aria-label='Like'], button[aria-label='Rewrite']",
+          "alternatives": [
+            "button[aria-label='Copy to clipboard']",
+            "button[aria-label='Dislike']"
+          ],
+          "note": "These buttons appear after response completion"
+        },
         "submit_button": {
-          "primary": "button[aria-label='Send message']",
+          "primary": "button[aria-label='Voice Mode']",
           "alternatives": [
             "button[type='submit']",
-            ".send-button"
-          ]
+            "button[aria-label*='Send']"
+          ],
+          "note": "Mistral Le Chat uses Voice Mode button as primary, may change during typing"
         }
+      },
+      "completion": {
+        "minWaitMs": 18000,
+        "adaptiveMultiplier": 1.2,
+        "checks": [
+          "stopButton",
+          "actionButtons",
+          "inputEnabled"
+        ],
+        "signals": {
+          "actionButtons": "Look for Like/Dislike/Rewrite/Copy buttons in last assistant message"
+        }
+      },
+      "features": {
+        "usesActionButtonsForCompletion": true,
+        "inputIsProseMirror": true,
+        "hasThinkingMode": true
       }
     },
     "openrouter": {
@@ -548,6 +731,14 @@
             "[aria-label='Send']"
           ]
         }
+      },
+      "completion": {
+        "minWaitMs": 5000,
+        "adaptiveMultiplier": 1.2,
+        "checks": [
+          "stopButton",
+          "inputEnabled"
+        ]
       }
     },
     "github_copilot": {
@@ -598,9 +789,10 @@
       "url": "https://genspark.ai",
       "selectors": {
         "stop_button": {
-          "primary": "button.stop-btn",
+          "primary": ".ds-icon-button svg path[d^='M17.2027']",
           "alternatives": [
-            "button[aria-label='Stop']",
+            "div[role='button'] svg rect",
+            ".ds-icon-button svg path[d^='M10.9604']",
             "[data-action='stop']"
           ],
           "detection": "button:has-text('Stop generating')"

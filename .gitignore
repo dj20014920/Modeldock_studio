@@ -48,3 +48,6 @@ wrangler.toml
 # Temporary files
 tmp/
 temp/
+
+# Model HTML files
+modelhtml/

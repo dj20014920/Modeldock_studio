@@ -47,6 +47,10 @@ const TRUSTED_ORIGINS = [
     'https://kimi.moonshot.cn',
     'https://perplexity.ai',
     'https://www.perplexity.ai',
+    'https://www.kimi.com',
+    'https://kimi.com',
+    'https://lmarena.ai',
+    'https://chat.lmsys.org',
 ];
 
 /** Conversation URL patterns used by various platforms */

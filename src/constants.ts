@@ -168,9 +168,9 @@ export const NAV_ITEMS = [
 // Selectors for Auto-Injection
 export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
   chatgpt: {
-    inputSelector: 'textarea[data-id="conversation-input"], div[data-testid="prompt-textarea"] textarea, textarea[data-testid="prompt-textarea"], textarea[aria-label*="Message"], #prompt-textarea',
-    submitSelector: 'button[data-testid="send-button"], button[aria-label*="Send message" i], button[aria-label*="Send prompt" i]',
-    inputType: 'textarea',
+    inputSelector: 'div.ProseMirror[contenteditable="true"]#prompt-textarea, textarea.wcDTda_fallbackTextarea[name="prompt-textarea"], #prompt-textarea, textarea[id="prompt-textarea"], textarea[placeholder*="Message ChatGPT"], textarea[data-id="root"], div[data-testid="prompt-textarea"] textarea, textarea[data-testid="prompt-textarea"], textarea[aria-label*="Message"], textarea[data-id="conversation-input"]',
+    submitSelector: 'button.composer-submit-button-color, button[data-testid="send-button"], button[data-testid="composer-send-button"], button[aria-label*="Send message" i], button[aria-label*="Send prompt" i]',
+    inputType: 'contenteditable',
     delayBeforeSubmit: 300
   },
   claude: {
@@ -240,10 +240,11 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     delayBeforeSubmit: 700
   },
   openrouter: {
-    inputSelector: 'textarea, input[type="text"]',
-    submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+    inputSelector: 'textarea[placeholder*="Message"], textarea, div[contenteditable="true"]',
+    submitSelector: 'button[aria-label="Send"], button[type="submit"], button[aria-label*="Send"]',
     inputType: 'textarea',
-    forceEnter: true
+    forceEnter: true,
+    delayBeforeSubmit: 500
   },
   aistudio: {
     inputSelector: 'textarea[aria-label*="Message"], textarea[data-testid*="prompt"], div[role="textbox"][contenteditable="true"], textarea[aria-label*="Describe" i], div[contenteditable="true"][data-placeholder*="Describe" i], textarea[aria-label="Prompt"], textarea, .input-area',
