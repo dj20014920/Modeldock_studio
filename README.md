@@ -73,15 +73,15 @@ Merge & Display latest available models
 
 | 제공자 | iframe | API(BYOK) | 동적 로딩 | 모델 예시 |
 |--------|--------|-----------|-----------|-----------|
-| **OpenAI** | ✅ | ✅ | ✅ `/v1/models` | GPT-4o, o1, o3-mini |
-| **Anthropic** | ✅ | ✅ | ✅ `/v1/models` | Claude 3.5 Sonnet, Opus |
-| **Google** | ✅ | ✅ | ✅ `/v1beta/models` | Gemini 2.0 Flash, Pro |
-| **DeepSeek** | ✅ | ✅ | ✅ `/v1/models` | R1, V3 |
-| **xAI** | ✅ | ✅ | ✅ `/v1/models` | Grok 2, Vision |
-| **Mistral** | ✅ | ✅ | ✅ `/v1/models` | Large 2, Codestral |
-| **Qwen** | ✅ | ✅ | ✅ `/compatible-mode/v1/models` | QwQ-32B, Turbo |
-| **Kimi** | ✅ | ✅ | ✅ `/v1/models` | Moonshot v1 |
-| **Perplexity** | ✅ | ✅ | ✅ `/models` | Sonar Pro |
+| **OpenAI** | ✅ | ✅ | ✅ `/v1/models` | GPT-5.2, o3, o1 |
+| **Anthropic** | ✅ | ✅ | ✅ `/v1/models` | Claude 4.5 Opus, Sonnet |
+| **Google** | ✅ | ✅ | ✅ `/v1beta/models` | Gemini 3.0 Pro, Deep Think |
+| **DeepSeek** | ✅ | ✅ | ✅ `/v1/models` | DeepSeek V3.2, Speciale |
+| **xAI** | ✅ | ✅ | ✅ `/v1/models` | Grok 4.1, Grok 3 |
+| **Mistral** | ✅ | ✅ | ✅ `/v1/models` | Mistral Large 3, Ministral 3 |
+| **Qwen** | ✅ | ✅ | ✅ `/compatible-mode/v1/models` | Qwen 3, Qwen 3-Next |
+| **Kimi** | ✅ | ✅ | ✅ `/v1/models` | Kimi K2 Thinking |
+| **Perplexity** | ✅ | ✅ | ✅ `/models` | Sonar Pro, Sonar Thinking |
 | **OpenRouter** | ✅ | ✅ | ✅ `/api/v1/models` | 200+ 통합 라우터 |
 | **LM Arena** | ✅ | - | - | 블라인드 테스트 전용 |
 
