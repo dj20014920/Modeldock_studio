@@ -143,7 +143,18 @@ Goal → Main Brain → [SLAVE:grok-1] "시장 조사"
 
 ### 3️⃣ Side Panel 모드
 
-![사이드패널](screen/사이드패널.jpeg)
+<div align="center">
+  <table>
+    <tr>
+      <td align="center"><img src="screen/사이드패널.jpeg" alt="사이드패널" width="280"/></td>
+      <td align="center"><img src="screen/스크린샷.jpeg" alt="스크린샷 캡처" width="280"/></td>
+    </tr>
+    <tr>
+      <td align="center"><em>사이드 패널 메인 UI</em></td>
+      <td align="center"><em>스크린샷 캡처 기능</em></td>
+    </tr>
+  </table>
+</div>
 
 **Chrome Side Panel API 활용**
 - 모든 웹페이지 위에 오버레이 가능
