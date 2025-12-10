@@ -10,6 +10,7 @@ import { BrainFlowModal } from './BrainFlowModal';
 import { BrainFlowProgress } from './BrainFlowProgress';
 import { ChainOrchestrator } from '../services/chain-orchestrator';
 import { getIframeActualUrlWithRetry } from '../utils/iframeUrlUtils';
+import { ScreenshotButton } from './ScreenshotButton';
 
 interface ChatMessageInputProps {
   activeModels: ActiveModel[];
@@ -19,6 +20,7 @@ interface ChatMessageInputProps {
   onStatusUpdate?: (modelId: ModelId, status: 'idle' | 'sending' | 'success' | 'error') => void;
   onMessageUpdate?: (instanceId: string, message: ChatMessage) => void;
   onModelMetadataUpdate?: (instanceId: string, metadata: { conversationUrl?: string; historyMode?: 'auto-routing' | 'brainflow' | 'byok' | 'manual'; lastPrompt?: string }) => void;
+  onScreenshotCapture?: (dataUrl: string) => Promise<void>;
 }
 
 type ActionStatus = 'idle' | 'copied' | 'sent' | 'error';
@@ -30,7 +32,8 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
   onInputHandled,
   onStatusUpdate,
   onMessageUpdate,
-  onModelMetadataUpdate
+  onModelMetadataUpdate,
+  onScreenshotCapture
 }) => {
   const { t } = useTranslation();
 
@@ -643,6 +646,14 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
               <BrainCircuit size={12} />
               Brain Flow
             </button>
+
+            {/* Screenshot Button */}
+            {onScreenshotCapture && (
+              <ScreenshotButton
+                onCapture={onScreenshotCapture}
+                disabled={activeModels.length === 0}
+              />
+            )}
 
             <span className="text-xs text-slate-400 hidden sm:inline-block ml-2">
               {mode === 'manual' ? t('chatInput.copyToClipboard') : t('chatInput.dispatchToAll')}

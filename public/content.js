@@ -560,6 +560,135 @@ function resolveManifestFromCache(hostname) {
     }
   });
 
+  // === Image Injection Bridge ===
+  // 📸 이미지 직접 주입 (Paste 시뮬레이션)
+  // DataURL -> Blob -> File -> DataTransfer -> Paste Event
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.type === 'INJECT_IMAGE') {
+      const { dataUrl, targets } = request.payload;
+      handleImageInjection(dataUrl, targets).then((result) => {
+        sendResponse(result);
+      });
+      return true;
+    }
+  });
+
+  // PostMessage Bridge for Images (if needed via iframe)
+  window.addEventListener('message', async (event) => {
+    const data = event.data;
+    if (!data || data.type !== 'MODEL_DOCK_INJECT_IMAGE') return;
+
+    const { dataUrl, targets, requestId } = data.payload || {};
+    if (!dataUrl) return;
+
+    const result = await handleImageInjection(dataUrl, targets);
+
+    try {
+      window.parent.postMessage({
+        type: 'MODEL_DOCK_INJECT_RESPONSE', // Re-use generic response type
+        payload: {
+          requestId,
+          success: result.status === 'success',
+          status: result.status,
+          host: window.location.host
+        }
+      }, '*');
+    } catch (err) {
+      console.warn('[ModelDock] Image response postMessage failed', err);
+    }
+  });
+
+  async function handleImageInjection(dataUrl, targets) {
+    console.log('[ModelDock] 📸 Handle Image Injection');
+
+    // 1. Convert DataURL to File
+    const blob = await fetch(dataUrl).then(res => res.blob());
+    const file = new File([blob], "screenshot.png", { type: "image/png" });
+
+    // 2. Find Input Element (Re-use logic)
+    let foundInput = null;
+
+    // AI Studio detection
+    const isAIStudio = window.location.hostname.includes('aistudio.google.com');
+
+    for (const target of targets) {
+      const selectors = target.inputSelector.split(',').map(s => s.trim());
+      for (const selector of selectors) {
+        let el = null;
+        if (isAIStudio) {
+          const elements = queryShadowAll(document.body, selector);
+          el = elements.find(e => isElementVisible(e)) || null;
+        } else {
+          el = queryShadow(document.body, selector);
+        }
+
+        if (el && isElementVisible(el)) {
+          foundInput = el;
+          break;
+        }
+      }
+      if (foundInput) break;
+    }
+
+    if (!foundInput) {
+      // Fallback logic from handleInjection
+      const fallbacks = document.querySelectorAll('textarea, [contenteditable="true"]');
+      for (const fb of fallbacks) {
+        if (isElementVisible(fb)) {
+          foundInput = fb;
+          break;
+        }
+      }
+    }
+
+    if (!foundInput) {
+      console.error('[ModelDock] ❌ No input found for image injection');
+      return { status: 'no_input_found' };
+    }
+
+    console.log('[ModelDock] ✅ Found input for image:', foundInput);
+
+    // 3. Simulate Paste / Drop
+    try {
+      foundInput.focus();
+
+      // Method A: ClipboardEvent with DataTransfer (Modern)
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+
+      const pasteEvent = new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dataTransfer
+      });
+      foundInput.dispatchEvent(pasteEvent);
+
+      // Method B: Drop Event (Fallback for some editors like ProseMirror)
+      const dragEvent = new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer
+      });
+      foundInput.dispatchEvent(dragEvent);
+
+      // Method C: Input Event with insertFromPaste (Legacy)
+      const inputEvent = new InputEvent('input', {
+        inputType: 'insertFromPaste',
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer
+      });
+      foundInput.dispatchEvent(inputEvent);
+
+      console.log('[ModelDock] 📸 Image paste simulated');
+      return { status: 'success' };
+
+    } catch (error) {
+      console.error('[ModelDock] Image injection failed:', error);
+      return { status: 'error', error: error.message };
+    }
+  }
+
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type !== 'INJECT_INPUT') return;
     const { text, targets, submit = true, forceKey = false, modelId, skipInject = false } = request.payload;

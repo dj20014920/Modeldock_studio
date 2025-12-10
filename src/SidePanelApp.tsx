@@ -21,7 +21,7 @@ import { ChatMessageInput } from './components/ChatMessageInput';
 import { PromptLibrary } from './components/PromptLibrary';
 import { SettingsModal } from './components/SettingsModal';
 import { ModelId, ActiveModel, SidebarView, ChatMessage, ImageContentPart, MessageContentPart, BYOKProviderId } from './types';
-import { SUPPORTED_MODELS } from './constants';
+import { SUPPORTED_MODELS, INPUT_SELECTORS } from './constants';
 import { usePersistentState } from './hooks/usePersistentState';
 import { HistoryService } from './services/historyService';
 import { BYOKHistoryService } from './services/byokHistoryService';
@@ -387,6 +387,83 @@ export const SidePanelApp: React.FC = () => {
   // === Derived State ===
   const mainBrainModel = activeModels.find(m => m.instanceId === mainBrainInstanceId);
 
+  // === Screenshot Handler ===
+  // === Screenshot Handler ===
+  // === Screenshot Handler ===
+  const handleScreenshotCapture = useCallback(async (dataUrl: string) => {
+    // 1. BYOK 모델(API 방식) 처리
+    const byokModels = activeModels.filter(m => m.modelId.startsWith('byok-'));
+    if (byokModels.length > 0) {
+      const imageContent: ImageContentPart = {
+        type: 'image_url',
+        image_url: {
+          url: dataUrl,
+          detail: 'auto'
+        }
+      };
+      const sendPromises = byokModels.map(model =>
+        handleSendBYOKMessage(model.instanceId, '', [imageContent])
+      );
+      await Promise.all(sendPromises);
+    }
+
+    // 2. 일반 웹 모델(WebView) 처리 - 자동 붙여넣기 시도
+    const webModels = activeModels.filter(m => !m.modelId.startsWith('byok-'));
+
+    // 클립보드 복사 (백업 및 수동 붙여넣기용)
+    try {
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+    } catch (error) {
+      console.error('[SidePanelApp] Clipboard copy failed:', error);
+    }
+
+    if (webModels.length > 0) {
+      // DataURL -> Injection Logic
+      const visibleIframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[data-md-frame="true"]'));
+
+      let injectionCount = 0;
+
+      for (const model of webModels) {
+        // Find iframe for this model instance
+        const targetFrame = visibleIframes.find(f => f.dataset.instanceId === model.instanceId);
+
+        if (targetFrame && targetFrame.contentWindow) {
+          try {
+            const selectorConfig = INPUT_SELECTORS[model.modelId as keyof typeof INPUT_SELECTORS] || { inputSelector: 'textarea' };
+
+            // Send injection message to content script
+            targetFrame.contentWindow.postMessage({
+              type: 'MODEL_DOCK_INJECT_IMAGE',
+              payload: {
+                dataUrl,
+                targets: [{ modelId: model.modelId, ...selectorConfig }],
+                requestId: `img-${Date.now()}-${model.instanceId}`
+              }
+            }, '*');
+
+            injectionCount++;
+          } catch (e) {
+            console.warn(`Failed to inject image to ${model.modelId}`, e);
+          }
+        }
+      }
+
+      // UX Feedback
+      if (injectionCount > 0) {
+        console.log(`[SidePanelApp] 📸 Image injected into ${injectionCount} web models`);
+        // Toast-like notification logic can be handled by `lastActionStatus` if we hook it up, 
+        // using 'copied' status as a proxy for visual feedback without blocking alert.
+        // For now, removing the blocking alert based on user preference for automation.
+      } else {
+        alert('자동 입력을 위한 웹 뷰를 찾을 수 없습니다. (Ctrl+V로 붙여넣으세요)');
+      }
+    }
+  }, [activeModels, handleSendBYOKMessage]);
+
   return (
     <div className="w-full h-screen bg-slate-50 flex flex-col overflow-hidden relative">
       {/* Compact Header with Hamburger Menu */}
@@ -434,8 +511,49 @@ export const SidePanelApp: React.FC = () => {
         <main className="flex-1 flex flex-col min-w-0 bg-slate-100 relative">
           {/* Model Grid / Main Brain Area */}
           <div ref={containerRef} className="flex-1 overflow-hidden relative">
-            {/* Side Panel에서는 Main Brain을 상단에, 나머지를 하단에 배치 (세로 스택) */}
-            {mainBrainInstanceId && mainBrainModel ? (
+            {/* 모델 개수에 따른 동적 레이아웃 */}
+            {activeModels.length === 0 ? (
+              /* Empty State */
+              <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                <div className="text-slate-400 mb-4">
+                  <Menu size={64} strokeWidth={1.5} />
+                </div>
+                <h2 className="text-xl font-semibold text-slate-700 mb-2">
+                  모델을 선택해주세요
+                </h2>
+                <p className="text-slate-500 mb-4">
+                  왼쪽 상단 메뉴를 열어<br />AI 모델을 추가하세요
+                </p>
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                >
+                  메뉴 열기
+                </button>
+              </div>
+            ) : activeModels.length === 1 ? (
+              /* Single Model - Full Screen */
+              <div className="w-full h-full">
+                <ModelCard
+                  model={getModelConfig(activeModels[0].modelId)}
+                  instanceId={activeModels[0].instanceId}
+                  isMainBrain={mainBrainInstanceId === activeModels[0].instanceId}
+                  conversationUrl={activeModels[0].conversationUrl}
+                  onSetMainBrain={() => setMainBrainInstanceId(activeModels[0].instanceId)}
+                  onRemoveMainBrain={() => setMainBrainInstanceId(null)}
+                  onClose={() => handleCloseSpecificInstance(activeModels[0].instanceId)}
+                  status={activeModels[0].lastStatus}
+                  messages={activeModels[0].messages}
+                  onSendMessage={async (msg) => handleSendBYOKMessage(activeModels[0].instanceId, msg)}
+                  onLoadHistory={handleLoadHistory}
+                  onNewChat={() => handleNewChat(activeModels[0].instanceId)}
+                  currentConversationId={currentConversationId}
+                  onLoadBYOKHistory={(id) => handleLoadBYOKHistory(id, activeModels[0].instanceId)}
+                  byokHistoryId={activeModels[0].byokHistoryId}
+                />
+              </div>
+            ) : mainBrainInstanceId && mainBrainModel ? (
+              /* Main Brain + Other Models (세로 분할) */
               <div className="w-full h-full flex flex-col">
                 {/* Main Brain (상단 50%) */}
                 <div className="h-1/2 border-b-2 border-slate-300">
@@ -488,7 +606,7 @@ export const SidePanelApp: React.FC = () => {
                 </div>
               </div>
             ) : (
-              /* Standard 1-Column Grid */
+              /* Multiple Models - Dynamic Grid (1 Column) */
               <div className="w-full h-full p-2 overflow-y-auto">
                 <div className="flex flex-col gap-2">
                   {activeModels.map((activeModel) => (
@@ -526,6 +644,7 @@ export const SidePanelApp: React.FC = () => {
             onStatusUpdate={handleStatusUpdate}
             onMessageUpdate={handleMessageUpdate}
             onModelMetadataUpdate={handleModelMetadataUpdate}
+            onScreenshotCapture={handleScreenshotCapture}
           />
         </main>
       </div>

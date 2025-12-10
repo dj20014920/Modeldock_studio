@@ -13,7 +13,9 @@
     "webNavigation",
     "cookies",
     "sidePanel",
-    "contextMenus"
+    "contextMenus",
+    "tabCapture",
+    "offscreen"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"
