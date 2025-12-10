@@ -388,8 +388,6 @@ export const SidePanelApp: React.FC = () => {
   const mainBrainModel = activeModels.find(m => m.instanceId === mainBrainInstanceId);
 
   // === Screenshot Handler ===
-  // === Screenshot Handler ===
-  // === Screenshot Handler ===
   const handleScreenshotCapture = useCallback(async (dataUrl: string) => {
     // 1. BYOK 모델(API 방식) 처리
     const byokModels = activeModels.filter(m => m.modelId.startsWith('byok-'));
@@ -407,8 +405,17 @@ export const SidePanelApp: React.FC = () => {
       await Promise.all(sendPromises);
     }
 
-    // 2. 일반 웹 모델(WebView) 처리 - 자동 붙여넣기 시도
-    const webModels = activeModels.filter(m => !m.modelId.startsWith('byok-'));
+    // 2. Perplexity 특별 처리 (API 방식이지만 이미지 미지원)
+    const perplexityModels = activeModels.filter(m => m.modelId === 'perplexity');
+    if (perplexityModels.length > 0) {
+      console.log('[SidePanelApp] ⚠️ Perplexity does not support image input via API');
+      // Perplexity API는 현재 이미지 입력을 지원하지 않음
+    }
+
+    // 3. 일반 웹 모델(WebView/iframe) 처리 - 자동 붙여넣기 시도
+    const webModels = activeModels.filter(m =>
+      !m.modelId.startsWith('byok-') && m.modelId !== 'perplexity'
+    );
 
     // 클립보드 복사 (백업 및 수동 붙여넣기용)
     try {
@@ -426,6 +433,7 @@ export const SidePanelApp: React.FC = () => {
       const visibleIframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[data-md-frame="true"]'));
 
       let injectionCount = 0;
+      const failedModels: string[] = [];
 
       for (const model of webModels) {
         // Find iframe for this model instance
@@ -448,20 +456,27 @@ export const SidePanelApp: React.FC = () => {
             injectionCount++;
           } catch (e) {
             console.warn(`Failed to inject image to ${model.modelId}`, e);
+            failedModels.push(model.modelId);
           }
+        } else {
+          failedModels.push(model.modelId);
         }
       }
 
       // UX Feedback
       if (injectionCount > 0) {
         console.log(`[SidePanelApp] 📸 Image injected into ${injectionCount} web models`);
-        // Toast-like notification logic can be handled by `lastActionStatus` if we hook it up, 
-        // using 'copied' status as a proxy for visual feedback without blocking alert.
-        // For now, removing the blocking alert based on user preference for automation.
-      } else {
-        alert('자동 입력을 위한 웹 뷰를 찾을 수 없습니다. (Ctrl+V로 붙여넣으세요)');
+      }
+
+      if (failedModels.length > 0 && injectionCount === 0) {
+        // 모든 웹 모델에 실패한 경우에만 알림
+        console.warn(`[SidePanelApp] Failed models: ${failedModels.join(', ')}`);
       }
     }
+
+    // 전체 결과 로그
+    const totalProcessed = byokModels.length + webModels.length;
+    console.log(`[SidePanelApp] 📸 Screenshot processed. Total: ${totalProcessed} models`);
   }, [activeModels, handleSendBYOKMessage]);
 
   return (

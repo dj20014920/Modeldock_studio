@@ -648,40 +648,88 @@ function resolveManifestFromCache(hostname) {
 
     console.log('[ModelDock] ✅ Found input for image:', foundInput);
 
-    // 3. Simulate Paste / Drop
+    // 3. Simulate Paste / Drop - 🔧 모델별 최적화 (중복 방지)
     try {
       foundInput.focus();
 
-      // Method A: ClipboardEvent with DataTransfer (Modern)
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(file);
 
+      // 호스트명 기반 모델 감지
+      const hostname = window.location.hostname;
+
+      // === GPT (ChatGPT): Paste만 사용 ===
+      if (hostname.includes('openai.com') || hostname.includes('chatgpt.com')) {
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+        });
+        foundInput.dispatchEvent(pasteEvent);
+        console.log('[ModelDock] 📸 ChatGPT: Paste-only method used');
+        return { status: 'success', method: 'paste' };
+      }
+
+      // === Kimi: Paste만 사용 ===
+      if (hostname.includes('kimi') || hostname.includes('moonshot')) {
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+        });
+        foundInput.dispatchEvent(pasteEvent);
+        console.log('[ModelDock] 📸 Kimi: Paste-only method used');
+        return { status: 'success', method: 'paste' };
+      }
+
+      // === LMArena: Paste 우선, File Input 폴백 ===
+      if (hostname.includes('lmarena.ai')) {
+        // 1. Paste 시도
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+        });
+        foundInput.dispatchEvent(pasteEvent);
+        console.log('[ModelDock] 📸 LMArena: Paste method attempted');
+
+        // 2. File Input도 시도 (보험용)
+        const fileInput = document.querySelector('input[type="file"]');
+        if (fileInput) {
+          try {
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            fileInput.files = dt.files;
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+            console.log('[ModelDock] 📸 LMArena: File input also triggered');
+          } catch (e) {
+            console.warn('[ModelDock] LMArena file input failed:', e);
+          }
+        }
+        return { status: 'success', method: 'paste+file' };
+      }
+
+      // === DeepSeek / Qwen: Paste만 사용 ===
+      if (hostname.includes('deepseek') || hostname.includes('qwen')) {
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+        });
+        foundInput.dispatchEvent(pasteEvent);
+        console.log('[ModelDock] 📸 DeepSeek/Qwen: Paste-only method used');
+        return { status: 'success', method: 'paste' };
+      }
+
+      // === 기타 모델: Paste만 사용 ===
       const pasteEvent = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
         clipboardData: dataTransfer
       });
       foundInput.dispatchEvent(pasteEvent);
-
-      // Method B: Drop Event (Fallback for some editors like ProseMirror)
-      const dragEvent = new DragEvent('drop', {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: dataTransfer
-      });
-      foundInput.dispatchEvent(dragEvent);
-
-      // Method C: Input Event with insertFromPaste (Legacy)
-      const inputEvent = new InputEvent('input', {
-        inputType: 'insertFromPaste',
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: dataTransfer
-      });
-      foundInput.dispatchEvent(inputEvent);
-
-      console.log('[ModelDock] 📸 Image paste simulated');
-      return { status: 'success' };
+      console.log('[ModelDock] 📸 Default: Paste-only method used');
+      return { status: 'success', method: 'paste' };
 
     } catch (error) {
       console.error('[ModelDock] Image injection failed:', error);
