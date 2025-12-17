@@ -121,27 +121,6 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
     const successfulAutoInstances = new Set<string>();
 
     try {
-      // Perplexity는 별도 서비스로 병렬 전송
-      const isPerplexityActive = activeModels.some(m => m.modelId === 'perplexity');
-      if (isPerplexityActive) {
-        const ts = Date.now();
-        const perplexityInstances = activeModels.filter(m => m.modelId === 'perplexity');
-        perplexityInstances.forEach(inst => {
-          onMessageUpdate?.(inst.instanceId, {
-            role: 'user',
-            content: input,
-            timestamp: ts
-          });
-          onModelMetadataUpdate?.(inst.instanceId, {
-            historyMode: 'auto-routing',
-            lastPrompt: input
-          });
-        });
-        import('../services/perplexity-service').then(({ perplexityService }) => {
-          perplexityService.sendMessage(input);
-        });
-      }
-
       // BYOK 모델 처리 (병렬 전송)
       const byokModels = activeModels.filter(m => m.modelId.startsWith('byok-'));
       byokModels.forEach(async (model) => {
@@ -197,7 +176,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       // iframe 기반 모델이 없어도 BYOK 모델이 있으면 정상 작동
       const hasBYOKModels = byokModels.length > 0;
 
-      if (activeSelectorEntries.length === 0 && !hasBYOKModels && !isPerplexityActive) {
+      if (activeSelectorEntries.length === 0 && !hasBYOKModels) {
         setErrorMessage(t('chatInput.errorNoTargets'));
         setLastActionStatus('error');
         return;
@@ -208,7 +187,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
       };
 
       // ✅ BYOK 모델도 성공으로 카운트 (이미 위에서 처리됨)
-      let anySuccess = isPerplexityActive || hasBYOKModels;
+      let anySuccess = hasBYOKModels;
       const frameCache = new Map<string, HTMLIFrameElement>();
       const claimedFrames = new Set<HTMLIFrameElement>();
 
@@ -324,7 +303,7 @@ export const ChatMessageInput: React.FC<ChatMessageInputProps> = ({
 
           window.removeEventListener('message', responseHandler);
 
-          if (success || (modelId === 'perplexity' && isPerplexityActive)) {
+          if (success) {
             anySuccess = true;
             updateStatusFor(modelId, 'success');
             setTimeout(() => updateStatusFor(modelId, 'idle'), 1200);

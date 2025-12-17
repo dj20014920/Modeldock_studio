@@ -13,7 +13,6 @@ import {
     loadBYOKSettings,
     saveBYOKSettings,
     BYOKAPIService,
-    shouldAutoRefresh,
 } from '../services/byokService';
 import { useTranslation } from 'react-i18next';
 
@@ -52,7 +51,6 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
     useEffect(() => {
         if (isOpen) {
             loadSettings();
-            checkAndAutoRefresh(); // 6시간 TTL 체크 및 자동 갱신
             setTimeout(() => setAnimateIn(true), 50);
         } else {
             setAnimateIn(false);
@@ -63,7 +61,23 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
 
     const loadSettings = async () => {
         console.log('[BYOK DEBUG] 🔄 loadSettings started');
-        const loaded = await loadBYOKSettings();
+        let loaded = await loadBYOKSettings();
+
+        const hasAnyDynamicModels = Boolean(
+            loaded.dynamicModels &&
+            Object.values(loaded.dynamicModels).some((list) => Array.isArray(list) && list.length > 0)
+        );
+
+        // ✅ No proxy: Load public OpenRouter catalog once to populate the model list (local cache)
+        if (!hasAnyDynamicModels) {
+            console.log('[BYOK] No cached catalog found. Fetching OpenRouter model catalog...');
+            const ok = await apiService.refreshAllModelsFromOpenRouterCatalog(false);
+            if (ok) {
+                loaded = await loadBYOKSettings();
+            } else {
+                console.warn('[BYOK] Failed to fetch OpenRouter model catalog. Falling back to bundled metadata only.');
+            }
+        }
         console.log('[BYOK DEBUG] 📦 Loaded settings:', {
             enabled: loaded.enabled,
             providerCount: Object.keys(loaded.providers).length,
@@ -123,20 +137,6 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
 
         console.log('[BYOK DEBUG] 🏁 Final restored status:', restoredStatus);
         setValidationStatus(prev => ({ ...prev, ...restoredStatus }));
-    };
-
-    /**
-     * 6시간 TTL 체크 및 자동 갱신
-     */
-    const checkAndAutoRefresh = async () => {
-        const needsRefresh = await shouldAutoRefresh();
-        if (needsRefresh) {
-            console.log('[BYOK Modal] Auto-refresh triggered (6-hour cache expired)');
-            const success = await apiService.refreshAllModelsFromProxy();
-            if (success) {
-                await loadSettings();
-            }
-        }
     };
 
     const handleSave = async () => {
@@ -440,11 +440,10 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
                     console.warn(`[BYOK] ⚠️ No models returned for ${providerId}. This may be normal if the provider doesn't support listing models.`);
                 }
             } else {
-                // 2. API 키가 없는 경우: 서버(프록시)에서 받아오기
-                console.log('[BYOK] No API key, fetching from server (proxy)...');
-                const success = await apiService.refreshAllModelsFromProxy();
+                // 2. API 키가 없는 경우: OpenRouter 공개 모델 카탈로그를 로드하여 로컬 캐시에 저장
+                console.log('[BYOK] No API key, fetching OpenRouter model catalog...');
+                const success = await apiService.refreshAllModelsFromOpenRouterCatalog(true);
                 if (success) {
-                    // 설정 다시 로드하여 모델 리스트 업데이트
                     const loaded = await loadBYOKSettings();
                     if (loaded.dynamicModels) {
                         setFetchedModels(loaded.dynamicModels as Record<BYOKProviderId, BYOKModelVariant[]>);
@@ -452,9 +451,9 @@ export function BYOKModal({ isOpen, onClose }: BYOKModalProps) {
                     if (loaded.lastRefreshTimestamp) {
                         setLastRefreshTimestamp(loaded.lastRefreshTimestamp);
                     }
-                    console.log('[BYOK] ✅ Successfully refreshed all models from proxy');
+                    console.log('[BYOK] ✅ Successfully refreshed model catalog from OpenRouter');
                 } else {
-                    console.error('[BYOK] ❌ Failed to refresh models from proxy');
+                    console.error('[BYOK] ❌ Failed to refresh OpenRouter model catalog');
                 }
             }
         } catch (error) {

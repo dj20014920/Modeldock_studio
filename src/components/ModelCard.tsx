@@ -4,7 +4,6 @@ import { X, Maximize2, Minimize2, RotateCw, ZoomIn, ZoomOut, ExternalLink, Link2
 import { ModelConfig, ChatMessage, BYOKProviderId } from '../types';
 import { clsx } from 'clsx';
 import { ModelFrame } from './ModelFrame';
-import { PerplexityChat } from './PerplexityChat';
 import { BYOKChat } from './BYOKChat';
 import { HistoryPopover } from './HistoryPopover';
 import { ModelSettingsDropdown } from './ModelSettingsDropdown';
@@ -294,9 +293,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
       {/* Content Container */}
       <div className="flex-1 relative bg-slate-50 w-full h-full overflow-hidden group">
-        {model.id === 'perplexity' ? (
-          <PerplexityChat zoomLevel={zoomLevel} />
-        ) : isBYOK ? (
+        {isBYOK ? (
           <BYOKChat messages={messages} isStreaming={status === 'sending'} onSendMessage={onSendMessage} />
         ) : (
           <ModelFrame

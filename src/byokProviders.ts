@@ -6,8 +6,8 @@ import { BYOKProvider, BYOKProviderId } from './types';
  * ⚠️ 중요: 이 파일은 Provider 메타데이터만 제공합니다.
  * 실제 모델 리스트는 OpenRouter API를 통해 실시간으로 가져옵니다.
  *
- * - Cloudflare Worker 프록시를 통해 OpenRouter API 호출
- * - 6시간 캐싱으로 최신 모델 정보 유지
+ * - OpenRouter 공개 엔드포인트(`/api/v1/models`)에서 모델 카탈로그 로드
+ * - chrome.storage.local에 6시간 TTL로 캐싱 (용량/성능을 위해 제공자별 상위 N개로 절삭)
  * - "Refresh Models" 버튼으로 수동 업데이트 가능
  *
  * 가상 모델 데이터 제거됨 (2025-01-15)

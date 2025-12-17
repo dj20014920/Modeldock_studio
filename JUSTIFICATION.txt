@@ -1,0 +1,82 @@
+ModelDock Studio — Review Justification (Declarative Net Request / Iframe)
+Last updated: 2025-12-16
+
+Summary
+- Purpose: Developer tool for local testing/debugging/comparison of AI web UIs side-by-side.
+- Core technical requirement: Enable embedding of AI websites in iframes by removing anti-framing response headers for subframes.
+- Data handling: No backend server; no data transmission to developer-controlled servers.
+
+1) Why do you use declarativeNetRequest / modifyHeaders?
+We use Chrome’s declarativeNetRequest (DNR) to remove anti-framing HTTP response headers that prevent iframe embedding:
+- X-Frame-Options (and non-standard frame-options variants)
+- Content-Security-Policy (frame-ancestors)
+
+This is necessary because the extension’s core functionality is an iframe-based comparison harness for developers and researchers. Without removing these headers, embedded AI web sessions cannot render inside the extension UI, and the extension’s single purpose cannot be delivered.
+
+Important scope limitation:
+- The rules are restricted to resourceTypes: ["sub_frame"].
+- The rules do not apply to top-level navigation (main_frame).
+
+2) Why does public/net_request_rules.json use urlFilter: "*"?
+We use a wildcard urlFilter for maintainability across multiple supported AI domains while keeping the actual effective scope constrained by:
+- Host permissions in the manifest (only hosts granted by the user and declared by the extension are eligible).
+- DNR host-access requirements (Chrome requires host permissions before rules can act on a host).
+- resourceTypes restriction to subframes only.
+
+This avoids duplicating the same domain allowlist in two places (manifest + ruleset) and reduces the risk of mismatches or accidental omissions during updates.
+
+3) Why do you request these host permissions?
+Host permissions are limited to specific AI and developer-facing web applications that the extension can embed and test (e.g., ChatGPT, Claude, Gemini, DeepSeek, Qwen, Perplexity, OpenRouter, LM Arena, etc.).
+
+We do not request <all_urls>. Users can further restrict site access using Chrome’s “Site access” controls for the extension.
+
+4) Why do you request the following permissions?
+declarativeNetRequest
+- Required to apply a static ruleset that removes anti-framing response headers for embedded subframes.
+
+declarativeNetRequestWithHostAccess
+- Required for DNR actions that operate on hosts for which the extension has host permissions.
+
+storage
+- Stores local-only settings, UI state, and testing configuration in chrome.storage.
+
+tabs
+- Used to open the extension UI (e.g., opening the main page from the action button) and to support user-initiated screenshot workflows.
+
+activeTab
+- Used only in response to direct user interaction to capture the visible area of the active tab for documentation/testing screenshots (not passive monitoring).
+
+scripting
+- Used to inject the local screenshot selection overlay script only when the user explicitly starts an area-capture action.
+
+cookies
+- Used to support optional session consistency for embedded iframes (cookie partitioning scenarios). Cookie operations are local-only and limited to sites for which the extension has host permissions. Cookies are not transmitted to any developer-controlled server.
+
+sidePanel
+- Provides the extension UI in Chrome’s side panel for multi-pane testing layouts.
+
+contextMenus
+- Provides a user-visible “Open in Side Panel” entry on the extension action icon.
+
+tabCapture + offscreen
+- Used only when the user explicitly triggers screenshot capture from the side panel context. Offscreen documents are used to capture a tab stream in a compliant MV3 pattern.
+
+5) Does the extension intercept, proxy, or exfiltrate third-party requests?
+No.
+- The extension does not proxy user traffic to any external server controlled by us.
+- The extension does not collect or transmit prompts, responses, cookies, or browsing data to us.
+- Users connect directly to third-party AI websites using their own accounts under those providers’ terms.
+
+6) How do you address “unauthorized access” concerns?
+- The extension does not bypass logins, subscriptions, or paywalls.
+- Users must have legitimate access to any third-party AI site they use.
+- The extension only changes whether a page can be embedded for local testing; it does not grant access to protected content.
+
+References (for reviewer context)
+- Chrome Web Store Troubleshooting: Excessive permissions
+  https://developer.chrome.com/docs/webstore/troubleshooting#excessive-permissions
+- Chrome Web Store Program Policies
+  https://developer.chrome.com/docs/webstore/program-policies/policies
+- DNR API Reference
+  https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest
+

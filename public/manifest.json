@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ModelDock - Unified AI Workspace",
+  "name": "ModelDock Studio - Multi-AI Testing Platform",
   "version": "1.1.2",
-  "description": "Multitask with Gemini, Claude, ChatGPT and more in a unified side-by-side interface.",
+  "description": "A testing utility for developers and researchers to compare AI model responses locally. (Uses iframe tech for local simulation)",
   "permissions": [
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess",
@@ -10,7 +10,6 @@
     "tabs",
     "activeTab",
     "scripting",
-    "webNavigation",
     "cookies",
     "sidePanel",
     "contextMenus",
@@ -21,7 +20,36 @@
     "default_path": "sidepanel.html"
   },
   "host_permissions": [
-    "<all_urls>"
+    "https://aistudio.google.com/*",
+    "https://app.vooster.ai/*",
+    "https://chat.deepseek.com/*",
+    "https://chat.lmsys.org/*",
+    "https://chat.mistral.ai/*",
+    "https://chat.openai.com/*",
+    "https://chat.qwen.ai/*",
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://code.anthropic.com/*",
+    "https://codex.openai.com/*",
+    "https://copilot.github.com/*",
+    "https://genspark.ai/*",
+    "https://www.genspark.ai/*",
+    "https://gemini.google.com/*",
+    "https://github.com/*",
+    "https://grok.com/*",
+    "https://kimi.com/*",
+    "https://kimi.moonshot.cn/*",
+    "https://lmarena.ai/*",
+    "https://lovable.dev/*",
+    "https://openrouter.ai/*",
+    "https://perplexity.ai/*",
+    "https://qwen.ai/*",
+    "https://replit.com/*",
+    "https://v0.app/*",
+    "https://v0.dev/*",
+    "https://vooster.ai/*",
+    "https://www.perplexity.ai/*",
+    "https://x.ai/*"
   ],
   "icons": {
     "16": "icon16.png",
@@ -30,7 +58,7 @@
     "128": "icon128.png"
   },
   "action": {
-    "default_title": "Open ModelDock",
+    "default_title": "Open ModelDock Studio",
     "default_icon": "icon.png"
   },
   "background": {
@@ -48,22 +76,42 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "https://aistudio.google.com/*",
+        "https://app.vooster.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://chat.lmsys.org/*",
+        "https://chat.mistral.ai/*",
+        "https://chat.openai.com/*",
+        "https://chat.qwen.ai/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://code.anthropic.com/*",
+        "https://codex.openai.com/*",
+        "https://copilot.github.com/*",
+        "https://genspark.ai/*",
+        "https://www.genspark.ai/*",
+        "https://gemini.google.com/*",
+        "https://github.com/*",
+        "https://grok.com/*",
+        "https://kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://lmarena.ai/*",
+        "https://lovable.dev/*",
+        "https://openrouter.ai/*",
+        "https://perplexity.ai/*",
+        "https://qwen.ai/*",
+        "https://replit.com/*",
+        "https://v0.app/*",
+        "https://v0.dev/*",
+        "https://vooster.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://x.ai/*"
       ],
       "js": [
         "content.js"
       ],
       "all_frames": true,
       "match_about_blank": true,
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://www.perplexity.ai/*"
-      ],
-      "js": [
-        "perplexity-proxy.js"
-      ],
       "run_at": "document_idle"
     }
   ],
@@ -75,7 +123,36 @@
         "ai_model_dom_selectors.json"
       ],
       "matches": [
-        "<all_urls>"
+        "https://aistudio.google.com/*",
+        "https://app.vooster.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://chat.lmsys.org/*",
+        "https://chat.mistral.ai/*",
+        "https://chat.openai.com/*",
+        "https://chat.qwen.ai/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://code.anthropic.com/*",
+        "https://codex.openai.com/*",
+        "https://copilot.github.com/*",
+        "https://genspark.ai/*",
+        "https://www.genspark.ai/*",
+        "https://gemini.google.com/*",
+        "https://github.com/*",
+        "https://grok.com/*",
+        "https://kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://lmarena.ai/*",
+        "https://lovable.dev/*",
+        "https://openrouter.ai/*",
+        "https://perplexity.ai/*",
+        "https://qwen.ai/*",
+        "https://replit.com/*",
+        "https://v0.app/*",
+        "https://v0.dev/*",
+        "https://vooster.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://x.ai/*"
       ]
     }
   ]

@@ -51,3 +51,11 @@ temp/
 
 # Model HTML files
 modelhtml/
+
+# Chrome Extension Development
+.chrome_*/
+*.crx
+*.pem
+
+# Local scripts
+scripts/

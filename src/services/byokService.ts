@@ -3,6 +3,7 @@ import {
     BYOKSettings,
     ReasoningEffort,
     BYOKModelVariant,
+    ModelCapability,
     ThinkingLevel,
     VerificationResult,
     ChatMessage,
@@ -28,6 +29,30 @@ interface BYOKRawModel {
     object?: string;
     name?: string; // 🆕 Display Name
     description?: string; // 🆕 Description
+}
+
+interface OpenRouterModel {
+    id: string;
+    name?: string;
+    description?: string;
+    created?: number; // Unix timestamp (seconds)
+    context_length?: number;
+    pricing?: {
+        prompt?: string;
+        completion?: string;
+        input_cache_read?: string;
+    };
+    top_provider?: {
+        max_completion_tokens?: number | null;
+    };
+    architecture?: {
+        modality?: string;
+        input_modalities?: string[];
+    };
+}
+
+interface OpenRouterModelsResponse {
+    data?: OpenRouterModel[];
 }
 
 // 🆕 스트리밍 청크 타입 (실시간 업데이트용)
@@ -1486,9 +1511,9 @@ export class BYOKAPIService {
             google: 'google/',
             mistral: 'mistralai/', // OpenRouter uses 'mistralai/'
             deepseek: 'deepseek/',
-            xai: 'xai/',
+            xai: 'x-ai/', // OpenRouter uses 'x-ai/'
             qwen: 'qwen/',
-            kimi: 'moonshot/', // OpenRouter uses 'moonshot/' for Kimi
+            kimi: 'moonshotai/', // OpenRouter uses 'moonshotai/' for Kimi
         };
 
         const prefix = prefixes[providerId];
@@ -2058,7 +2083,7 @@ export class BYOKAPIService {
     }
 
     /**
-     * 모델 리스트 가져오기 (우선순위: 사용자 동적 리스트 > 프록시 > 정적)
+     * 모델 리스트 가져오기 (우선순위: 사용자 동적 리스트 > 정적)
      * 🆕 변경: API 키가 있으면 항상 직접 Provider에게 최신 리스트를 요청합니다 (로컬 갱신).
      */
     async fetchAvailableModels(providerId: BYOKProviderId, apiKey?: string): Promise<BYOKModelVariant[]> {
@@ -2075,7 +2100,7 @@ export class BYOKAPIService {
                     }
                 }
             } catch (e) {
-                console.warn(`[BYOK] Could not refresh user models for ${providerId} (likely invalid key). Using cached/proxy models instead.`, e);
+                console.warn(`[BYOK] Could not refresh user models for ${providerId} (likely invalid key). Using cached/static models instead.`, e);
             }
         }
 
@@ -2086,93 +2111,258 @@ export class BYOKAPIService {
             return settings.dynamicModels[providerId];
         }
 
-        // 3. 정적 정의 반환 (프록시 로직은 별도 호출로 처리됨)
+        // 3. 정적 정의 반환
         return BYOK_PROVIDERS[providerId].variants;
     }
 
+    private readonly OPENROUTER_CATALOG_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
     /**
-     * 🆕 Fetch Models from Proxy Server (Cloudflare Worker)
-     * 프록시 서버에서 모든 제공자의 모델 리스트를 한 번에 가져옵니다.
-     * 6시간 TTL 캐싱으로 효율적입니다.
+     * OpenRouter public catalog -> provider-scoped model lists (local cache)
+     * - No developer-operated proxy required
+     * - Stores only a truncated, review-friendly subset in chrome.storage.local
      */
-    async fetchModelsFromProxy(forceRefresh: boolean = false): Promise<{
-        models: Record<BYOKProviderId, BYOKModelVariant[]>;
-        timestamp: number;
-        cached?: boolean;
-        age?: number;
-        totalModels?: number;
-    } | null> {
-        // 프록시 URL은 constants.ts에서 import
-        const { BYOK_PROXY_URL } = await import('../constants');
-
+    async refreshAllModelsFromOpenRouterCatalog(forceRefresh: boolean = false): Promise<boolean> {
         try {
-            // 🆕 forceRefresh가 true면 ?force=1 파라미터 추가 (캐시 무시)
-            const url = forceRefresh ? `${BYOK_PROXY_URL}?force=1` : BYOK_PROXY_URL;
+            const settings = await loadBYOKSettings();
+            const lastRefresh = settings.lastRefreshTimestamp || 0;
 
-            console.log(`[BYOK] Fetching models from proxy server... (force: ${forceRefresh})`);
+            const hasAnyCatalog = Boolean(
+                settings.dynamicModels &&
+                Object.values(settings.dynamicModels).some((list) => Array.isArray(list) && list.length > 0)
+            );
+
+            const isFresh = hasAnyCatalog && lastRefresh > 0 && (Date.now() - lastRefresh) < this.OPENROUTER_CATALOG_TTL_MS;
+            if (!forceRefresh && isFresh) {
+                return true;
+            }
+
+            const url =
+                BYOK_PROVIDERS.openrouter.modelsEndpoint ||
+                `${BYOK_PROVIDERS.openrouter.apiEndpoint}/models`;
+
+            console.log(`[BYOK] Fetching OpenRouter model catalog... (force: ${forceRefresh})`);
+
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15초 타임아웃
-
-            const response = await fetch(url, {
-                method: 'GET',
-                signal: controller.signal
-            });
-
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            const response = await fetch(url, { method: 'GET', signal: controller.signal });
             clearTimeout(timeoutId);
 
             if (!response.ok) {
-                throw new Error(`Proxy server error: ${response.status}`);
-            }
-
-            const data = await response.json();
-
-            if (!data.success || !data.models) {
-                throw new Error('Invalid proxy response format');
-            }
-
-            console.log('[BYOK] Successfully fetched models from proxy');
-            console.log('[BYOK] Cache age:', data.age, 'minutes');
-            console.log('[BYOK] Total models:', data.totalModels || 'unknown');
-
-            return {
-                models: data.models as Record<BYOKProviderId, BYOKModelVariant[]>,
-                timestamp: typeof data.timestamp === 'number' ? data.timestamp : Date.now(),
-                cached: data.cached,
-                age: data.age,
-                totalModels: data.totalModels,
-            };
-        } catch (error) {
-            console.error('[BYOK] Failed to fetch from proxy:', error);
-            return null;
-        }
-    }
-
-    /**
-     * 🆕 Refresh All Models from Proxy
-     * 프록시 서버에서 모델 리스트를 가져와 로컬 스토리지에 저장합니다.
-     * 사용자가 명시적으로 "Refresh All" 버튼을 클릭했으므로 캐시를 무시합니다.
-     */
-    async refreshAllModelsFromProxy(): Promise<boolean> {
-        try {
-            // 🆕 forceRefresh=true로 캐시 무시
-            const result = await this.fetchModelsFromProxy(true);
-            if (!result) {
+                console.warn(`[BYOK] OpenRouter catalog fetch failed: ${response.status}`);
                 return false;
             }
 
-            // 로컬 스토리지에 저장 (타임스탬프 포함)
-            const settings = await loadBYOKSettings();
-            settings.dynamicModels = result.models;
-            // 프록시가 내려준 서버 타임스탬프 우선 사용, 없으면 로컬 시간 사용
-            settings.lastRefreshTimestamp = result.timestamp || Date.now();
+            const data = (await response.json()) as OpenRouterModelsResponse;
+            const rawModels = Array.isArray(data.data) ? data.data : [];
+
+            if (rawModels.length === 0) {
+                console.warn('[BYOK] OpenRouter catalog returned an empty model list');
+                return false;
+            }
+
+            const classified = this.classifyOpenRouterCatalog(rawModels);
+
+            settings.dynamicModels = classified;
+            settings.lastRefreshTimestamp = Date.now();
             await saveBYOKSettings(settings);
 
-            console.log('[BYOK] Models saved to local storage with timestamp');
+            console.log('[BYOK] ✅ OpenRouter catalog cached locally');
             return true;
         } catch (error) {
-            console.error('[BYOK] Failed to refresh models:', error);
+            console.error('[BYOK] Failed to refresh OpenRouter catalog:', error);
             return false;
         }
+    }
+
+    private classifyOpenRouterCatalog(rawModels: OpenRouterModel[]): Record<BYOKProviderId, BYOKModelVariant[]> {
+        const buckets: Record<BYOKProviderId, BYOKModelVariant[]> = {
+            openai: [],
+            anthropic: [],
+            google: [],
+            deepseek: [],
+            xai: [],
+            mistral: [],
+            qwen: [],
+            kimi: [],
+            openrouter: [],
+        };
+
+        for (const raw of rawModels) {
+            if (!raw?.id) continue;
+
+            const primaryProvider = this.mapOpenRouterModelToProviderId(raw.id) || 'openrouter';
+            const variant = this.transformOpenRouterCatalogModel(raw, primaryProvider);
+
+            if (primaryProvider !== 'openrouter') {
+                buckets[primaryProvider].push(variant);
+            }
+
+            // OpenRouter bucket includes everything (including unknown providers)
+            buckets.openrouter.push(variant);
+        }
+
+        for (const providerId of Object.keys(buckets) as BYOKProviderId[]) {
+            buckets[providerId].sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+            const maxModels = providerId === 'openrouter' ? 250 : 100;
+            if (buckets[providerId].length > maxModels) {
+                buckets[providerId] = buckets[providerId].slice(0, maxModels);
+            }
+        }
+
+        return buckets;
+    }
+
+    private mapOpenRouterModelToProviderId(modelId: string): BYOKProviderId | null {
+        const lower = (modelId || '').toLowerCase();
+        if (lower.startsWith('openai/')) return 'openai';
+        if (lower.startsWith('anthropic/')) return 'anthropic';
+        if (lower.startsWith('google/')) return 'google';
+        if (lower.startsWith('deepseek/')) return 'deepseek';
+        if (lower.startsWith('mistralai/')) return 'mistral';
+        if (lower.startsWith('qwen/')) return 'qwen';
+        if (lower.startsWith('moonshotai/')) return 'kimi';
+        if (lower.startsWith('x-ai/')) return 'xai';
+        return null;
+    }
+
+    private transformOpenRouterCatalogModel(raw: OpenRouterModel, providerId: BYOKProviderId): BYOKModelVariant {
+        const id = raw.id;
+        const name = raw.name || id;
+        const description = raw.description || '';
+        const contextWindow = raw.context_length || 4096;
+        const maxOutputTokens = raw.top_provider?.max_completion_tokens || 4096;
+
+        const promptPrice = Number.parseFloat(raw.pricing?.prompt ?? '0') || 0;
+        const completionPrice = Number.parseFloat(raw.pricing?.completion ?? '0') || 0;
+        const cachedInputPrice = Number.parseFloat(raw.pricing?.input_cache_read ?? '0') || 0;
+
+        const lowerId = id.toLowerCase();
+        const lowerName = name.toLowerCase();
+        const isFree =
+            (promptPrice === 0 && completionPrice === 0) ||
+            lowerId.endsWith(':free') ||
+            lowerName.includes('(free)');
+
+        const inputModalities = raw.architecture?.input_modalities || [];
+        const hasImageInput = inputModalities.includes('image');
+
+        const capabilities: ModelCapability[] = [];
+        if (
+            hasImageInput ||
+            lowerId.includes('vision') ||
+            lowerId.includes('gpt-4o') ||
+            lowerId.includes('claude-3') ||
+            lowerId.includes('gemini')
+        ) {
+            capabilities.push('vision');
+        }
+        if (lowerId.includes('code') || lowerId.includes('coder')) {
+            capabilities.push('coding');
+        }
+        if (
+            lowerId.includes('reason') ||
+            lowerId.includes('o1') ||
+            lowerId.includes('o3') ||
+            lowerId.includes('thinking') ||
+            lowerId.includes('r1')
+        ) {
+            capabilities.push('reasoning');
+        }
+        if (lowerId.includes('realtime') || lowerId.includes('audio')) {
+            capabilities.push('realtime');
+        }
+
+        const supportsReasoningEffort =
+            lowerId.includes('o1') || lowerId.includes('o3') || lowerId.includes('gpt-5');
+
+        const supportsThinkingBudget =
+            (providerId === 'anthropic' || providerId === 'qwen') &&
+            (lowerId.includes('thinking') || lowerId.includes('sonnet') || lowerId.includes('opus'));
+
+        const supportsThinkingLevel = providerId === 'google' && lowerId.includes('thinking');
+        const supportsEnableThinking = providerId === 'deepseek' && !lowerId.includes('reasoner');
+
+        const created = typeof raw.created === 'number' ? raw.created : undefined;
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const isNew = created ? created >= (nowSeconds - 30 * 24 * 60 * 60) : undefined;
+
+        const popularity = this.computeOpenRouterPopularityScore({
+            idLower: lowerId,
+            created,
+            contextWindow,
+            hasMaxCompletion: Boolean(raw.top_provider?.max_completion_tokens),
+            isFree,
+        });
+
+        return {
+            id,
+            name,
+            description,
+            contextWindow,
+            maxOutputTokens,
+            costPer1MInput: promptPrice * 1_000_000,
+            costPer1MOutput: completionPrice * 1_000_000,
+            costPer1MCachedInput: cachedInputPrice * 1_000_000,
+            capabilities,
+            supportsReasoningEffort,
+            supportsThinkingBudget,
+            supportsThinkingLevel,
+            supportsEnableThinking,
+            created,
+            isNew,
+            popularity,
+            architecture: raw.architecture?.modality ?? null,
+            topProvider: null,
+            isFree,
+        };
+    }
+
+    private computeOpenRouterPopularityScore(args: {
+        idLower: string;
+        created?: number;
+        contextWindow: number;
+        hasMaxCompletion: boolean;
+        isFree: boolean;
+    }): number {
+        const { idLower, created, contextWindow, hasMaxCompletion, isFree } = args;
+
+        const contextScore = contextWindow / 1000;
+        const recencyScore = (created || 0) / 100_000_000;
+        const providerScore = hasMaxCompletion ? 10 : 0;
+
+        let seriesBonus = 0;
+        if (
+            idLower.includes('gpt-4') ||
+            idLower.includes('o1') ||
+            idLower.includes('o3') ||
+            idLower.includes('claude-3.5') ||
+            idLower.includes('gemini-2') ||
+            idLower.includes('gemini-pro')
+        ) {
+            seriesBonus = 100;
+        } else if (
+            idLower.includes('llama-3.3') ||
+            idLower.includes('llama-3.1-405b') ||
+            idLower.includes('claude-3') ||
+            idLower.includes('gemini-1.5') ||
+            idLower.includes('qwen-2.5-72b') ||
+            idLower.includes('deepseek-r1')
+        ) {
+            seriesBonus = 80;
+        } else if (
+            idLower.includes('gpt-3.5') ||
+            idLower.includes('llama-3.1-70b') ||
+            idLower.includes('mixtral') ||
+            idLower.includes('qwen-2.5')
+        ) {
+            seriesBonus = 60;
+        } else if (idLower.includes('llama-3') || idLower.includes('mistral')) {
+            seriesBonus = 40;
+        }
+
+        const freeBonus = isFree ? 50 : 0;
+        return contextScore + recencyScore + providerScore + seriesBonus + freeBonus;
     }
 }
 
@@ -2202,31 +2392,6 @@ export async function isProviderConfigured(providerId: BYOKProviderId): Promise<
  * 6시간 TTL 체크 - 마지막 갱신 이후 6시간 경과 여부 확인
  * @returns true면 자동 갱신 필요, false면 캐시 유효
  */
-export async function shouldAutoRefresh(): Promise<boolean> {
-    const settings = await loadBYOKSettings();
-    const lastRefresh = settings.lastRefreshTimestamp;
-
-    // 타임스탬프가 없으면 첫 실행이므로 갱신 필요
-    if (!lastRefresh) {
-        console.log('[BYOK] No previous refresh timestamp - auto refresh needed');
-        return true;
-    }
-
-    const now = Date.now();
-    const elapsed = now - lastRefresh;
-    const SIX_HOURS_MS = 6 * 60 * 60 * 1000; // 21600000ms
-
-    const needsRefresh = elapsed >= SIX_HOURS_MS;
-
-    if (needsRefresh) {
-        console.log(`[BYOK] Cache expired (${Math.floor(elapsed / 1000 / 60)} minutes old) - auto refresh needed`);
-    } else {
-        console.log(`[BYOK] Cache valid (${Math.floor(elapsed / 1000 / 60)} minutes old, ${Math.floor((SIX_HOURS_MS - elapsed) / 1000 / 60)} minutes remaining)`);
-    }
-
-    return needsRefresh;
-}
-
 /**
  * BYOK Variant 삭제
  * @param providerId Provider ID

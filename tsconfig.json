@@ -19,7 +19,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "types": [
+      "chrome",
+      "vite/client"
+    ]
   },
   "include": [
     "src/**/*"

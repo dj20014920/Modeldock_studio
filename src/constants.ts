@@ -122,7 +122,7 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
   genspark: {
     id: 'genspark',
     name: 'Genspark',
-    url: 'https://genspark.ai',
+    url: 'https://www.genspark.ai',
     iconColor: 'bg-indigo-600',
     themeColor: 'border-indigo-300'
   },
@@ -552,16 +552,3 @@ export const SYSTEM_PROMPTS: PromptData[] = [
     isSystem: true
   }
 ];
-
-// ===== BYOK Configuration =====
-
-/**
- * BYOK 프록시 서버 URL
- * Cloudflare Worker 엔드포인트
- *
- * Production: https://modeldock-byok-proxy.vinny4920-081.workers.dev/models
- * Development: 로컬 테스트용 URL (필요시)
- */
-export const BYOK_PROXY_URL =
-  process.env.BYOK_PROXY_URL ||
-  'https://modeldock-byok-proxy.vinny4920-081.workers.dev/models';

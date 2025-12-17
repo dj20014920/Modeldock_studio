@@ -45,6 +45,7 @@ const TRUSTED_ORIGINS = [
     'https://chat.mistral.ai',
     'https://chat.qwen.ai',
     'https://kimi.moonshot.cn',
+    'https://openrouter.ai',
     'https://perplexity.ai',
     'https://www.perplexity.ai',
     'https://www.kimi.com',
@@ -213,7 +214,7 @@ export async function getIframeActualUrlWithRetry(
     maxRetries: number = DEFAULT_MAX_RETRIES,
     retryDelay: number = DEFAULT_RETRY_DELAY
 ): Promise<string | null> {
-    if (process.env.NODE_ENV === 'development') {
+    if (import.meta.env.DEV) {
         console.log(`[IframeUrlUtils] Starting URL capture with retry (initial: ${initialUrl})`);
     }
 
@@ -228,7 +229,7 @@ export async function getIframeActualUrlWithRetry(
 
         // URL 유효성 검증
         if (url && isValidConversationUrl(url, initialUrl)) {
-            if (process.env.NODE_ENV === 'development') {
+            if (import.meta.env.DEV) {
                 console.log(`[IframeUrlUtils] ✅ Valid conversation URL captured on attempt ${attempt}: ${url}`);
             }
             return url;
@@ -236,7 +237,7 @@ export async function getIframeActualUrlWithRetry(
 
         // 마지막 시도가 아니면 대기
         if (attempt < maxRetries) {
-            if (process.env.NODE_ENV === 'development') {
+            if (import.meta.env.DEV) {
                 console.log(`[IframeUrlUtils] Attempt ${attempt}: URL not changed yet, retrying in ${retryDelay}ms...`);
             }
             await new Promise(resolve => setTimeout(resolve, retryDelay));
@@ -244,7 +245,7 @@ export async function getIframeActualUrlWithRetry(
     }
 
     // 최대 재시도 도달 시 마지막 URL 반환 (또는 null)
-    if (process.env.NODE_ENV === 'development') {
+    if (import.meta.env.DEV) {
         console.log(`[IframeUrlUtils] ⚠️ Max retries reached. Returning last URL: ${lastUrl || 'null'}`);
     }
     return lastUrl;

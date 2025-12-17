@@ -310,13 +310,7 @@ export class ChainOrchestrator {
             console.error('[BrainFlow] BYOK check failed:', e);
         }
 
-        // 2. Standard Execution (Perplexity API or Iframe)
-        if (model.modelId === 'perplexity') {
-            console.log('[BrainFlow] Perplexity detected - using API mode');
-            return this.sendToPerplexity(text, callbacks);
-        }
-
-        // 3. Iframe Automation
+        // 2. Iframe Automation
         return this.sendToIframe(model, text, callbacks);
     }
 
@@ -345,76 +339,6 @@ export class ChainOrchestrator {
         // OpenRouter is usually a manual selection, but if modelId implies it:
         if (lower.includes('openrouter')) return 'openrouter';
         return null;
-    }
-
-    private async sendToPerplexity(
-        text: string,
-        callbacks: BrainFlowCallbacks
-    ): Promise<string> {
-        const { perplexityService } = await import('./perplexity-service');
-
-        const requestId = `bf-perplexity-${Date.now()}`;
-        callbacks.onModelStart('perplexity');
-
-        return new Promise((resolve) => {
-            let lastResponse = '';
-            let unsubscribe: (() => void) | null = null;
-
-            const cleanup = () => {
-                if (unsubscribe) {
-                    unsubscribe();
-                    unsubscribe = null;
-                }
-                this.pendingRequests.delete(requestId);
-            };
-
-            // Subscribe to Perplexity state changes
-            unsubscribe = perplexityService.subscribe((state) => {
-                // Update on streaming
-                if (state.isStreaming && state.messages.length > 0) {
-                    const lastMsg = state.messages[state.messages.length - 1];
-                    if (lastMsg.role === 'assistant' && lastMsg.content) {
-                        lastResponse = lastMsg.content;
-                        callbacks.onModelUpdate('perplexity', lastResponse);
-                    }
-                }
-
-                // Complete on done
-                if (!state.isStreaming && lastResponse) {
-                    callbacks.onModelComplete('perplexity', lastResponse);
-                    cleanup();
-                    resolve(lastResponse);
-                }
-
-                // Handle errors
-                if (state.error) {
-                    console.error('[BrainFlow] Perplexity error:', state.error);
-                    callbacks.onModelComplete('perplexity', lastResponse || `Error: ${state.error}`);
-                    cleanup();
-                    resolve(lastResponse || `Error: ${state.error}`);
-                }
-            });
-
-            // Store for skip functionality
-            this.pendingRequests.set(requestId, {
-                resolve: (text: string) => {
-                    cleanup();
-                    resolve(text);
-                },
-                cleanup,
-                getCurrentText: () => lastResponse
-            });
-
-            // Send message
-            try {
-                perplexityService.sendMessage(text);
-            } catch (error) {
-                const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-                callbacks.onModelComplete('perplexity', `Error: ${errorMsg}`);
-                cleanup();
-                resolve(`Error: ${errorMsg}`);
-            }
-        });
     }
 
     private async sendToIframe(
