@@ -46,8 +46,6 @@ const TRUSTED_ORIGINS = [
     'https://chat.qwen.ai',
     'https://kimi.moonshot.cn',
     'https://openrouter.ai',
-    'https://perplexity.ai',
-    'https://www.perplexity.ai',
     'https://www.kimi.com',
     'https://kimi.com',
     'https://lmarena.ai',

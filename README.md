@@ -81,7 +81,6 @@ Merge & Display latest available models
 | **Mistral** | ✅ | ✅ | ✅ `/v1/models` | Mistral Large 3, Ministral 3 |
 | **Qwen** | ✅ | ✅ | ✅ `/compatible-mode/v1/models` | Qwen 3, Qwen 3-Next |
 | **Kimi** | ✅ | ✅ | ✅ `/v1/models` | Kimi K2 Thinking |
-| **Perplexity** | ✅ | ✅ | ✅ `/models` | Sonar Pro, Sonar Thinking |
 | **OpenRouter** | ✅ | ✅ | ✅ `/api/v1/models` | 200+ 통합 라우터 |
 | **LM Arena** | ✅ | - | - | 블라인드 테스트 전용 |
 
@@ -391,7 +390,6 @@ else {
 **모델별 최적화**
 - **기본 모델들**: 자동 이미지 붙여넣기
 - **BYOK 모델 (API)**: Vision API를 통한 이미지 분석
-- **Perplexity**: 클립보드 복사 (수동 Ctrl+V 필요)
 
 ```typescript
 // 스크린샷 캡처 플로우
@@ -724,7 +722,6 @@ modeldock_studio/
 │   ├── manifest.json               # Chrome Extension 설정 (Manifest V3)
 │   ├── background.js               # Service Worker (쿠키 동기화, 메시지 라우팅)
 │   ├── content.js                  # Content Script (DOM 주입, 자동 라우팅)
-│   ├── perplexity-proxy.js         # Perplexity 전용 스크립트
 │   ├── ai_model_dom_selectors.json # 모델별 DOM 셀렉터 정의
 │   └── net_request_rules.json      # declarativeNetRequest 규칙
 │
@@ -768,7 +765,6 @@ modeldock_studio/
 │   │   │                          #  - Skip/Cancel 메커니즘
 │   │   ├── historyService.ts      # 일반 히스토리 관리
 │   │   ├── byokHistoryService.ts  # BYOK 히스토리 관리
-│   │   ├── perplexity-service.ts  # Perplexity 전용 서비스
 │   │   └── streamUtils.ts         # SSE 스트리밍 유틸리티
 │   │
 │   ├── hooks/                      # React Hooks

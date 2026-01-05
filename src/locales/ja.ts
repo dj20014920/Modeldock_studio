@@ -113,52 +113,9 @@ export default {
         privacyNote: 'すべてのデータはブラウザにローカルに保存されます。',
     },
 
-    // === Perplexity ===
-    perplexity: {
-        error: {
-            404: 'リソースが見つかりません。1日の検索クォータを超過したか、APIエンドポイントが変更された可能性があります。',
-            403: 'アクセスが拒否されました。ログイン状態を確認するか、perplexity.aiでセキュリティチェックを通過してください。',
-            429: 'リクエストが多すぎます。利用制限を超えました。しばらくしてから再試行してください。',
-            500: 'サーバーエラーです。Perplexityサーバーで問題が発生しました。しばらくしてから再試行してください。',
-            quotaExceeded: '{{tier}}ティアのDeep Researchクォータを超過しました。クイック検索に切り替えるか、プランをアップグレードしてください。',
-            generic: 'エラーが発生しました: {{message}}',
-        },
-        tier: {
-            free: '無料',
-            pro: 'プロ',
-        },
-        login: {
-            required: 'ログインが必要',
-            message: 'Deep Researchやファイル添付などの高度な機能を使用するには、Perplexityにログインしてください。',
-            actionButton: 'Perplexityを開いてログイン',
-            featureLimited: 'ログインしないと一部の機能が制限されます',
-            tabOpened: 'Perplexityログインタブを開きました。認証を完了してください。',
-            alreadyLoggedIn: 'すでにPerplexityにログインしています',
-        },
-        quota: {
-            left: '残り',
-            selectTier: 'サブスクリプションティアを選択',
-            freePlan: '無料プラン',
-            proPlan: 'プロプラン',
-        },
-        chat: {
-            placeholder: '何でも聞いてください...',
-            deepResearchPlaceholder: 'Deep Research質問を入力してください...',
-            emptyTitle: '知識が始まる場所',
-            emptyDescription: '何でも聞いてください。Perplexityがインターネットを検索して引用付きの回答を提供します。',
-            thinking: 'Perplexityが考えています...',
-            proSearch: 'プロ検索',
-            quickSearch: 'クイック検索',
-            proSearchInfo: 'プロ検索は高度なモデルを使用します。残り{{remaining}}件のクエリ。',
-            quickSearchInfo: 'クイック検索は無制限で高速です。',
-            attachment: '添付ファイル',
-        },
-    },
-
     // === 通知 ===
     notifications: {
         loginRequired: 'ログインが必要',
-        loginToPerplexity: '続行するにはPerplexityにログインしてください',
         featureRestricted: 'この機能は制限されています',
         networkError: 'ネットワークエラー。接続を確認してください。',
         unknownError: '不明なエラーが発生しました',

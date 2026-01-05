@@ -45,7 +45,7 @@
 ---
 
 ## 1. 프로젝트 개요
-사용자가 이미 구독/로그인하거나 무료 티어의 계정을 이용하여 공식 AI 웹사이트(ChatGPT, Claude, Gemini, Grok, Perplexity, Qwen(通义千问), DeepSeek, Kimi, Mistral, OpenRouter, LM Arena 등)를 한 화면에 모아 사용하도록 구성한다. 프롬프트 템플릿 + 수동 수집 + 온보딩 가이드를 제공한다.
+사용자가 이미 구독/로그인하거나 무료 티어의 계정을 이용하여 공식 AI 웹사이트(ChatGPT, Claude, Gemini, Grok, Qwen(通义千问), DeepSeek, Kimi, Mistral, OpenRouter, LM Arena 등)를 한 화면에 모아 사용하도록 구성한다. 프롬프트 템플릿 + 수동 수집 + 온보딩 가이드를 제공한다.
 
 ### 1.1 핵심 차별점
 
@@ -77,7 +77,6 @@
 | Mistral | ✅ | ✅ | ✅ | `/v1/models` |
 | Qwen | ✅ | ✅ | ✅ | `/compatible-mode/v1/models` |
 | Kimi | ✅ | ✅ | ✅ | `/v1/models` |
-| Perplexity | ✅ | ✅ | ✅ | `/models` |
 | OpenRouter | ✅ | ✅ | ✅ | `/api/v1/models` |
 | LM Arena | ✅ | - | - | (블라인드 테스트 전용) |
 ### 1.3 아키텍처 목표
@@ -143,7 +142,7 @@ const availableModels = [...cachedModels, ...userModels]
 2.1 다중 AI 모델 지원 및 선택 
 • 지원 모델 (2025-12-09 기준): 
 • iframe 내장 방식: ChatGPT, Claude, Gemini, DeepSeek, Qwen, Grok, LM Arena, Kimi, Mistral, OpenRouter 등
-• API 방식: ChatGPT API, Claude API, Gemini API, DeepSeek API, Perplexity API, Grok API 등
+• API 방식: ChatGPT API, Claude API, Gemini API, DeepSeek API, Grok API 등
 • 하이브리드 방식: 사용자가 Webapp 또는 API 모드를 선택 가능 
 • 로그인 계정을 통해 구독한 모델을 기반으로 선택할 수 있으며, 무료 사용자는 일부 모델만 선택 가능(회사마다 규정이 다름). 
 • 수동 복사/붙여넣기 방식과 자동 라우팅 방식을 토글식으로 선택 가능. 

@@ -81,7 +81,6 @@ Merge & Display latest available models
 | **Mistral** | ✅ | ✅ | ✅ `/v1/models` | Large 2, Codestral |
 | **Qwen** | ✅ | ✅ | ✅ `/compatible-mode/v1/models` | QwQ-32B, Turbo |
 | **Kimi** | ✅ | ✅ | ✅ `/v1/models` | Moonshot v1 |
-| **Perplexity** | ✅ | ✅ | ✅ `/models` | Sonar Pro |
 | **OpenRouter** | ✅ | ✅ | ✅ `/api/v1/models` | 200+ integrated router |
 | **LM Arena** | ✅ | - | - | Blind test only |
 

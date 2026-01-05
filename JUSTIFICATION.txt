@@ -26,7 +26,7 @@ We use a wildcard urlFilter for maintainability across multiple supported AI dom
 This avoids duplicating the same domain allowlist in two places (manifest + ruleset) and reduces the risk of mismatches or accidental omissions during updates.
 
 3) Why do you request these host permissions?
-Host permissions are limited to specific AI and developer-facing web applications that the extension can embed and test (e.g., ChatGPT, Claude, Gemini, DeepSeek, Qwen, Perplexity, OpenRouter, LM Arena, etc.).
+Host permissions are limited to specific AI and developer-facing web applications that the extension can embed and test (e.g., ChatGPT, Claude, Gemini, DeepSeek, Qwen, OpenRouter, LM Arena, etc.).
 
 We do not request <all_urls>. Users can further restrict site access using Chrome’s “Site access” controls for the extension.
 
@@ -79,4 +79,3 @@ References (for reviewer context)
   https://developer.chrome.com/docs/webstore/program-policies/policies
 - DNR API Reference
   https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest
-

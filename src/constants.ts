@@ -31,13 +31,6 @@ export const SUPPORTED_MODELS: Record<ModelId, ModelConfig> = {
     iconColor: 'bg-neutral-900',
     themeColor: 'border-neutral-300'
   },
-  perplexity: {
-    id: 'perplexity',
-    name: 'Perplexity',
-    url: 'https://www.perplexity.ai',
-    iconColor: 'bg-teal-500',
-    themeColor: 'border-teal-200'
-  },
   deepseek: {
     id: 'deepseek',
     name: 'DeepSeek',
@@ -200,12 +193,6 @@ export const INPUT_SELECTORS: Partial<Record<ModelId, InjectionSelector>> = {
     inputType: 'contenteditable', // Changed to contenteditable priority
     forceEnter: true,
     delayBeforeSubmit: 1000
-  },
-  perplexity: {
-    inputSelector: 'textarea[placeholder*="Ask"], textarea',
-    submitSelector: 'button[aria-label="Submit"], button[type="submit"]',
-    inputType: 'textarea',
-    forceEnter: true
   },
   deepseek: {
     inputSelector: 'textarea, #chat-input',
@@ -482,8 +469,8 @@ export const SYSTEM_PROMPTS: PromptData[] = [
   {
     id: 'sys-20',
     category: 'Analysis',
-    title: 'Perplexity: 심층 리서치',
-    description: 'Perplexity의 검색 능력을 활용하여 출처가 명시된 심층 리포트를 작성합니다.',
+    title: '심층 리서치 리포트',
+    description: '출처가 명시된 심층 리포트를 구조적으로 작성합니다.',
     content: 'Perform a deep research on [Topic]. \n- Use multiple reliable sources.\n- Provide inline citations.\n- Structure the answer as a comprehensive report with an Executive Summary, Detailed Findings, and Conclusion.\n- Focus on recent developments and factual accuracy.',
     isSystem: true
   },

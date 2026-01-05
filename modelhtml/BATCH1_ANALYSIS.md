@@ -157,38 +157,6 @@
 - 2순위: 최신 assistant 노드 텍스트 안정 + `assistant` 마커 존재
 - 3순위: 네트워크 모니터(옵션)로 SSE 종료 신호 확인
 
-# Perplexity DOM 구조 분석
-
-## 1. Stop 버튼
-- Primary: `button[aria-label*="Stop"]`
-- Alt: `button:has(svg[data-icon="pause"])`
-- 특성: 검색/생성 모두 이 버튼으로 중단
-
-## 2. 입력창
-- Selector: `textarea[placeholder*="Ask anything"]`
-- Disabled: 검색/생성 중 종종 비활성화됨(보조 신호)
-
-## 3. 응답 영역
-- 컨테이너: 검색 결과 블록 + 생성 본문 혼합 (다중 섹션)
-- 사용자/봇 구분: 검색 카드와 본문이 혼재 → `assistant` 계층만 추출 필요
-
-## 4. 로딩 인디케이터
-- 텍스트: “Searching…” + 스피너
-- Deep Research 시 장시간(30초+) 지속 가능
-
-## 5. Submit 버튼
-- 위치: 입력창 우측 `button[type="submit"]` 계열
-- Disabled: 검색 중 비활성화되는 경우 존재
-
-## 6. 특수 기능
-- Deep Research: 검색 단계와 생성 단계가 분리됨
-- Shadow DOM 없음
-
-## 7. 완료 감지 전략
-- 1순위: Stop/Pause 버튼 사라짐
-- 2순위: 입력창 활성화 + 마지막 생성 섹션에 새 토큰 증가 멈춤
-- 3순위: 네트워크 모니터로 fetch/SSE 완료 감지 (검색 단계 포함)
-
 # DeepSeek DOM 구조 분석
 
 ## 1. Stop 버튼

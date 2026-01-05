@@ -42,13 +42,11 @@
     "https://lmarena.ai/*",
     "https://lovable.dev/*",
     "https://openrouter.ai/*",
-    "https://perplexity.ai/*",
     "https://qwen.ai/*",
     "https://replit.com/*",
     "https://v0.app/*",
     "https://v0.dev/*",
     "https://vooster.ai/*",
-    "https://www.perplexity.ai/*",
     "https://x.ai/*"
   ],
   "icons": {
@@ -98,13 +96,11 @@
         "https://lmarena.ai/*",
         "https://lovable.dev/*",
         "https://openrouter.ai/*",
-        "https://perplexity.ai/*",
         "https://qwen.ai/*",
         "https://replit.com/*",
         "https://v0.app/*",
         "https://v0.dev/*",
         "https://vooster.ai/*",
-        "https://www.perplexity.ai/*",
         "https://x.ai/*"
       ],
       "js": [
@@ -145,13 +141,11 @@
         "https://lmarena.ai/*",
         "https://lovable.dev/*",
         "https://openrouter.ai/*",
-        "https://perplexity.ai/*",
         "https://qwen.ai/*",
         "https://replit.com/*",
         "https://v0.app/*",
         "https://v0.dev/*",
         "https://vooster.ai/*",
-        "https://www.perplexity.ai/*",
         "https://x.ai/*"
       ]
     }

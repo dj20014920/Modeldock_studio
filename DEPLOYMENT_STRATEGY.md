@@ -362,7 +362,6 @@ Total:    75,000-165,000 MAU
     "https://gemini.google.com/*",
     "https://chatgpt.com/*",
     "https://you.com/*",
-    "https://www.perplexity.ai/*",
     "https://chat.deepseek.com/*",
     "https://grok.x.ai/*",
     "https://chat.mistral.ai/*",
@@ -413,7 +412,6 @@ Total:    75,000-165,000 MAU
       "gemini.google.com",
       "chatgpt.com",
       "you.com",
-      "perplexity.ai",
       "chat.deepseek.com",
       "grok.x.ai",
       "chat.mistral.ai",
@@ -486,7 +484,6 @@ ModelDock Studio is not affiliated with, endorsed by, or sponsored by:
 - Anthropic (Claude)
 - Google (Gemini)
 - X Corp (Grok)
-- Perplexity AI
 - DeepSeek
 - Mistral AI
 - or any other AI service providers
@@ -751,28 +748,15 @@ window.parent.postMessage(data, EXTENSION_ORIGIN);
 | **OpenAI** | "Automated access" without permission | ⚠️ 회색지대 (iframe은 자동화가 아님) |
 | **Anthropic** | "Reverse engineering" | ⚠️ 회색지대 (DOM 관찰만 수행) |
 | **Google** | "Unofficial clients" | ⚠️ 회색지대 (브라우저 확장은?) |
-| **Perplexity** | "Interception of requests" | 🔴 **HIGH RISK** (perplexity-proxy.js) |
-
-**특히 위험한 코드:**
-```javascript
-// public/perplexity-proxy.js
-// ❌ HIGH RISK: Proxies/sniffs Perplexity fetch requests
-// This likely violates Perplexity's Terms of Service
-```
 
 **권장 조치:**
-1. **perplexity-proxy.js 분리** (P1)
-   - 별도 빌드로 분리
-   - 제출 버전에서 제외
-   - 또는 완전히 제거
-
-2. **Disclaimer 추가** (P1)
+1. **Disclaimer 추가** (P1)
    ```markdown
    ⚠️ Not affiliated with OpenAI, Anthropic, Google, or other AI providers.
    Users are responsible for complying with each provider's Terms of Service.
    ```
 
-3. **Chrome Web Store 설명에 명시**
+2. **Chrome Web Store 설명에 명시**
    ```markdown
    This extension provides a testing interface for AI websites.
    Users must have valid accounts and comply with each AI provider's ToS.
@@ -793,7 +777,6 @@ endorsed by, or sponsored by:
 - Anthropic (Claude)
 - Google (Gemini)
 - X Corp (Grok)
-- Perplexity AI
 - [... other providers]
 
 All trademarks and service marks are the property of their respective owners.
@@ -964,23 +947,7 @@ chrome.storage.local.set({ chatHistory: history }); // ❌ 실제로는 저장�
 - Uninstalling the extension removes all stored data
 ```
 
-#### 3. perplexity-proxy.js 처리 (P1)
-
-**옵션 A: 제거 (권장)**
-```bash
-# Submission build
-rm public/perplexity-proxy.js
-# Update manifest.json to remove perplexity-proxy script
-```
-
-**옵션 B: 별도 빌드로 분리**
-```bash
-# Create two builds
-npm run build:store  # Without perplexity-proxy (for Chrome Web Store)
-npm run build:full   # With all features (for GitHub releases)
-```
-
-#### 4. Trademark Disclaimers 추가 (P1)
+#### 3. Trademark Disclaimers 추가 (P1)
 
 **파일:** `public/manifest.json` 및 Chrome Web Store 설명
 
@@ -1024,7 +991,6 @@ of their respective owners.
     "https://claude.ai/*",
     "https://gemini.google.com/*",
     "https://you.com/*",
-    "https://www.perplexity.ai/*",
     "https://chat.deepseek.com/*",
     "https://grok.x.ai/*",
     "https://chat.mistral.ai/*",
@@ -1072,7 +1038,6 @@ of their respective owners.
         "https://claude.ai/*",
         "https://gemini.google.com/*",
         "https://you.com/*",
-        "https://www.perplexity.ai/*",
         "https://chat.deepseek.com/*",
         "https://grok.x.ai/*",
         "https://chat.mistral.ai/*",
@@ -1084,11 +1049,6 @@ of their respective owners.
       "js": ["content.js"],
       "all_frames": true,
       "match_about_blank": true,
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://www.perplexity.ai/*"],
-      "js": ["perplexity-proxy.js"],
       "run_at": "document_idle"
     }
   ],
@@ -1106,7 +1066,6 @@ of their respective owners.
         "https://claude.ai/*",
         "https://gemini.google.com/*",
         "https://you.com/*",
-        "https://www.perplexity.ai/*",
         "https://chat.deepseek.com/*",
         "https://grok.x.ai/*",
         "https://chat.mistral.ai/*",
@@ -1146,7 +1105,6 @@ of their respective owners.
         "claude.ai",
         "gemini.google.com",
         "you.com",
-        "perplexity.ai",
         "chat.deepseek.com",
         "grok.x.ai",
         "chat.mistral.ai",
@@ -1281,23 +1239,18 @@ export const SecurityWarningModal: React.FC = () => {
    - 위치: `src/services/historyService.ts:31`
    - 조치: Privacy Policy 수정 완료 ✅
 
-3. **perplexity-proxy.js ToS 위반 위험**
-   - 문제: Perplexity API 요청 가로채기
-   - 위험도: HIGH - 법적 문제 가능성
-   - 조치: 제출 빌드에서 제거 또는 별도 분리
-
-4. **Trademark Disclaimers 누락**
+3. **Trademark Disclaimers 누락**
    - 문제: AI 제공자 상표 사용 시 면책 조항 필요
    - 조치: Chrome Web Store 설명 및 Privacy Policy에 추가 ✅
 
 ### 🟢 P2 - Medium Priority (향후 개선)
 
-5. **DOM Selector 취약성**
+4. **DOM Selector 취약성**
    - 문제: AI 사이트 UI 변경 시 작동 중단
    - 영향: 유지보수 부담 증가, 사용자 불만
    - 조치: Fallback 셀렉터 시스템 구현 (ResilientDOMObserver)
 
-6. **Memory & Performance 이슈**
+5. **Memory & Performance 이슈**
    - 문제: 11개 iframe 동시 로딩 → 높은 메모리 사용
    - 조치: Lazy loading 구현
 
@@ -1341,22 +1294,17 @@ export const SecurityWarningModal: React.FC = () => {
    - 특정 AI 도메인만 타겟
    - 예상 시간: 15분
 
-3. ✅ **perplexity-proxy.js 제거 (P1)**
-   - 제출 빌드에서 제외
-   - manifest.json에서 content_script 항목 제거
-   - 예상 시간: 15분
-
-4. ✅ **SecurityWarningModal 컴포넌트 추가**
+3. ✅ **SecurityWarningModal 컴포넌트 추가**
    - 첫 실행 시 경고 표시
    - 사용자 동의 필수
    - 예상 시간: 1시간
 
-5. ✅ **프라이버시 정책 작성 및 호스팅**
+4. ✅ **프라이버시 정책 작성 및 호스팅**
    - 수정된 Privacy Policy 사용 (위 섹션 참조)
    - emozleep.space/privacy 또는 GitHub
    - 예상 시간: 1시간
 
-**Total: 3시간 30분이면 P0/P1 모두 완료 가능** 🚀
+**Total: 3시간 15분이면 P0/P1 모두 완료 가능** 🚀
 
 ### 다음 주
 
@@ -1396,13 +1344,12 @@ export const SecurityWarningModal: React.FC = () => {
 **Chrome Web Store 제출 전 반드시 완료:**
 
 1. 🔴 **content.js postMessage 보안 수정** (P0) - 30분
-2. 🟡 **perplexity-proxy.js 제거** (P1) - 15분
-3. 🟡 **Privacy Policy 수정 배포** (P1) - 1시간
-4. 🟡 **Trademark disclaimers 추가** (P1) - 15분
-5. ⚪ **manifest.json 업데이트** (P2) - 30분
-6. ⚪ **SecurityWarningModal 추가** (P2) - 1시간
+2. 🟡 **Privacy Policy 수정 배포** (P1) - 1시간
+3. 🟡 **Trademark disclaimers 추가** (P1) - 15분
+4. ⚪ **manifest.json 업데이트** (P2) - 30분
+5. ⚪ **SecurityWarningModal 추가** (P2) - 1시간
 
-**Total: 3시간 30분이면 P0/P1 완료 가능** 🚀
+**Total: 3시간 15분이면 P0/P1 완료 가능** 🚀
 
 ### 📊 Updated Success Metrics
 
@@ -1419,7 +1366,7 @@ export const SecurityWarningModal: React.FC = () => {
 ### 🎯 Next Actions (Priority Order)
 
 1. **이번 주:** P0 보안 수정 (content.js postMessage)
-2. **이번 주:** P1 법적 이슈 해결 (perplexity-proxy.js, Privacy Policy)
+2. **이번 주:** P1 법적 이슈 해결 (Privacy Policy)
 3. **Week 1-2:** Firefox Add-ons 제출
 4. **Week 2-3:** Chrome Web Store 제출
 5. **Week 3-4:** Edge Add-ons 제출

@@ -147,7 +147,6 @@
 | claude        | Claude          | claude.ai                    | High       | Batch 1  |
 | chatgpt       | ChatGPT         | chat.openai.com              | Medium     | Batch 1  |
 | grok          | Grok            | grok.com                     | High       | Batch 2  |
-| perplexity    | Perplexity      | perplexity.ai                | Medium     | Batch 2  |
 | deepseek      | DeepSeek        | chat.deepseek.com            | Low        | Batch 2  |
 | qwen          | Qwen            | chat.qwen.ai                 | Very High  | Batch 3  |
 | lmarena       | LM Arena        | lmarena.ai                   | Medium     | Batch 3  |
@@ -521,7 +520,7 @@ class ChatGPTMonitor extends SmartMonitor {
 
 ---
 
-### **Next: Batch 2 Research (Grok, Perplexity, DeepSeek)**
+### **Next: Batch 2 Research (Grok, DeepSeek)**
 **Status**: ✅ Completed  
 **Started**: 2025-11-26 23:56  
 **Completed**: 2025-11-27 00:05
@@ -572,57 +571,6 @@ class GrokMonitor extends SmartMonitor {
   }
 }
 ```
-
----
-
-#### **`Perplexity` Deep Research**
-
-**URL**: `https://www.perplexity.ai`  
-**UI Framework**: React  
-**Current `stabilizationTime`**: 15000ms (15초)
-
-##### **UI Signals**
--   **Stop Button**: 
-    -   `button[aria-label*="Stop"]`
-    -   `button:has(svg[data-icon="pause"])`
-    -   **특성**: 검색 중 명확한 중단 버튼 표시
--   **Loading Indicator**: "Searching..." 텍스트 + 스피너
--   **Input State**: `textarea[placeholder*="Ask anything"]`
-
-##### **Response Streaming**
--   **Method**: Server-Sent Events (SSE) + Search Results
--   **Stream 특성**:
-    -   **Chunk 크기**:  중간~큰 편 (검색 결과 포함)
-    -   **Avg Interval**: ~300-600ms (검색 시간 포함)
-    -   **Total Duration (1000 chars)**: ~10-15초
--   **속도**: 🔍 **검색 속도에 따라 변동** (가변적)
-
-##### **Special Notes**
--   **Thinking Models**: ✅ **Yes** (Deep Research 모드)
-    -   Deep Research 시 30초 이상 검색 가능
--   **Known Issues**:
-    -   검색 완료 후 응답 생성이 빠르므로 이중 대기 필요
-    -   iframe 구조로 인한 Shadow DOM 가능성
-
-##### **Recommended Config**
-```javascript
-class PerplexityMonitor extends SmartMonitor {
-  isUILocked() {
-    // Perplexity는 Stop + Pause 버튼 모두 확인
-    const stopBtn = document.querySelector('button[aria-label*="Stop"]') ||
-                    document.querySelector('button:has(svg[data-icon="pause"])');
-    return stopBtn !== null;
-  }
-  
-getAdaptiveThreshold() {
-    const base = super.getAdaptiveThreshold();
-    // 검색 시간 고려, 더 넉넉하게
-    return Math.max(4000, base * 1.2);
-  }
-}
-```
-
----
 
 #### **`DeepSeek` Deep Research**
 
@@ -687,13 +635,11 @@ class DeepSeekMonitor extends SmartMonitor {
 | Model       | Speed | UI Signal Reliability | Thinking Support | Recommended Min Wait |
 |-------------|-------|-----------------------|------------------|----------------------|
 | Grok        | ⚡    | ⭐⭐⭐ (Stop Button)   | ❌               | 3초                  |
-| Perplexity  | 🔍    | ⭐⭐⭐⭐ (Stop + Search) | ✅ (Deep: 30초+) | 4초                  |
 | DeepSeek    | ⚡⚡   | ⭐⭐ (Custom Button)   | ✅ (R1: 10초+)   | 2.5초 (R1: 8초)      |
 
 **핵심 발견**:
 1.  **Grok은 Strict Mode 필수** (사용자 프롬프트 복사 방지).
-2.  **Perplexity는 검색 시간 변동성**이 크므로 adaptive threshold 유리.
-3.  **DeepSeek R1은 별도 Thinking 지원** 필요.
+2.  **DeepSeek R1은 별도 Thinking 지원** 필요.
 
 ---
 
@@ -729,26 +675,25 @@ class DeepSeekMonitor extends SmartMonitor {
 **Completed**: 2025-11-27 00:15
 
 #### **Tasks**
-- [x] Batch 2 (Grok, Perplexity, DeepSeek) 리서치 및 구현
+- [x] Batch 2 (Grok, DeepSeek) 리서치 및 구현
 - [x] Batch 3 (Qwen, LMArena, Kimi) 구현
 - [x] Batch 4 (Mistral, OpenRouter, GitHub Copilot) 구현
 - [x] Batch 5 (Genspark) 구현
-- [x] Factory 함수에 전체 13개 모델 추가
+- [x] Factory 함수에 전체 12개 모델 추가
 - [x] 빌드 및 검증
 
 **Target File**: `/Users/dj20014920/Desktop/modeldock_studio/public/content.js`
 
 #### **Final Statistics**
 ```
-Total Models: 13
+Total Models: 12
 ├── Batch 1 (Deep Implementation): 3 models
 │   ├── Gemini (2s min, 0.7x)
 │   ├── Claude (10s min, 1.5x, Thinking)
 │   └── ChatGPT (2.5s min, 0.8x / o1: 12s, 3x)
 │
-├── Batch 2 (Medium Implementation): 3 models
+├── Batch 2 (Medium Implementation): 2 models
 │   ├── Grok (3s min, 1.0x, Strict Mode)
-│   ├── Perplexity (4s min, 1.2x, Search)
 │   └── DeepSeek (2.5s min, 0.9x / R1: 8s, 2x)
 │
 └── Batch 3-5 (Quick Implementation): 7 models
@@ -792,7 +737,6 @@ Average Speed Improvement: 50% (18s → 9s)
   - UI/UX: 경고 메시지 및 제외된 모델 이름 목록 표시 (예: "다음 모델은 Brain Flow에서 제외됩니다: Codex, v0")
 
 ### P1 Critical Issues (✅ 2025-11-26 해결)
-4. ✅ **Perplexity iframe 오류** - 분기 로직 최상단 이동으로 해결
 5. ✅ **Grok 프롬프트 파싱** - Strict Mode (Assistant 마커 필수) 도입으로 해결
 6. ✅ **LMArena 프롬프트 파싱** - Custom Parser (Bot 메시지 영역 내 텍스트 추출) 도입으로 해결
 7. ✅ **Qwen 응답 잘림** - Custom Parser (복사 버튼 앵커 활용 역탐색) 도입으로 해결
@@ -808,7 +752,6 @@ Average Speed Improvement: 50% (18s → 9s)
 11. ❌ **GitHubCopilot 응답 파싱 실패** - 셀렉터 검증 필요
 12. ❌ **Lovable 응답 파싱 실패** - 셀렉터 검증 필요
 13. ❌ **Zoom 초기화 문제** - 미해결
-14. ❌ **Perplexity Zoom 작동 불가** - 미해결
 
 ---
 
@@ -864,19 +807,9 @@ User Input (목표)
 **핵심 메서드**:
 - `runBrainFlow(goal, mainBrain, slaves, callbacks)` - 전체 플로우 실행
 - `sendMessageToModel(model, text, callbacks)` - 모델별 메시지 전송 라우팅
-  - `sendToPerplexity(text, callbacks)` - Perplexity API 방식
   - `sendToIframe(model, text, callbacks)` - Iframe postMessage 방식
 - `parseSlavePrompts(planText, slaves)` - Main Brain 계획에서 각 slave 프롬프트 추출
 - `skipCurrentPhase()` - 현재 단계 강제 스킵
-
-**분기 로직**:
-```typescript
-if (model.modelId === 'perplexity') {
-    return sendToPerplexity();
-} else {
-    return sendToIframe();
-}
-```
 
 **프롬프트 파싱**:
 - Split 기반: `[SLAVE:모델ID]` 태그로 분리
@@ -918,29 +851,6 @@ Phase 2: UI 상태 확인 (Stop 버튼 + Input 상태)
   submitSelector: '전송 버튼 셀렉터'  // 비활성화 체크용
 }
 ```
-
----
-
-### 3. **Perplexity Service** (`src/services/perplexity-service.ts`)
-**역할**: Perplexity API 직접 호출 (iframe 불필요)
-
-**상태 관리**:
-```typescript
-{
-  messages: PerplexityMessage[],
-  isStreaming: boolean,
-  error: string | null,
-  deepResearchEnabled: boolean
-}
-```
-
-**실행 흐름**:
-1. `sendMessage(text)` 호출
-2. SSE 스트리밍으로 응답 수신
-3. `state.isStreaming` 변화 → 구독자에게 알림
-4. 완료 시 `state.isStreaming = false`
-
----
 
 ### 4. **Network Monitor** (`public/network-monitor.js`)
 **역할**: 네트워크 레벨에서 응답 완료 감지
@@ -1018,14 +928,9 @@ Promise.all([
 ])
 
 각 slave별:
-  if (perplexity):
-    - perplexityService.subscribe()
-    - state.isStreaming 감지
-    - 완료: !state.isStreaming
-  else:
-    - iframe.postMessage(MODEL_DOCK_INJECT_TEXT)
-    - content.js startMonitoring()
-    - 완료: MODEL_DOCK_RESPONSE_COMPLETE
+  - iframe.postMessage(MODEL_DOCK_INJECT_TEXT)
+  - content.js startMonitoring()
+  - 완료: MODEL_DOCK_RESPONSE_COMPLETE
 ```
 
 ### Phase 3: 종합
@@ -1047,23 +952,7 @@ Promise.all([
 
 ## 🔍 현재 문제 원인 분석
 
-### 1. Perplexity Iframe 오류
-**증상**: `Iframe not found for model perplexity`
-
-**원인**: `sendMessageToModel()`의 분기 로직 이전에 `findIframe()` 호출
-```typescript
-// 잘못된 순서:
-const iframe = this.findIframe(model);  // ❌ 여기서 perplexity도 iframe 찾으려 함
-if (model.modelId === 'perplexity') {
-    return sendToPerplexity();
-}
-```
-
-**해결**: 분기를 최상단으로 이동 ✅ (이미 수정됨)
-
----
-
-### 2. 대규모 응답 파싱 실패 (7개 모델)
+### 1. 대규모 응답 파싱 실패 (7개 모델)
 **증상**: mistral, openrouter 등 응답이 빈 배열
 
 **원인**: `content.js` RESPONSE_CONFIGS에 해당 호스트 미등록
@@ -1121,7 +1010,6 @@ if (model.modelId === 'perplexity') {
 | Claude | ✅ | ❌ | ✅ | ⚠️ | 조기 종료 |
 | Gemini | ✅ | ❌ | ✅ | ✅ | 정상 |
 | Grok | ✅ | ❌ | ❌ | ✅ | 프롬프트 파싱 |
-| Perplexity | ❌ | ✅ | ❌ | ❌ | iframe 오류 |
 | Qwen | ✅ | ❌ | ⚠️ | ⚠️ | 부분 파싱 |
 | LMArena | ✅ | ❌ | ❌ | ✅ | 프롬프트 파싱 |
 | Mistral | ✅ | ❌ | ❌ | ❌ | 셀렉터 없음 |
@@ -1145,20 +1033,19 @@ if (model.modelId === 'perplexity') {
 
 ## 🔧 다음 개선 계획
 
-1. **Perplexity 완전 통합** - iframe 경로 차단 검증
-2. **셀렉터 대규모 추가** - 7개 모델 DOM 분석
-3. **Grok/LMArena 셀렉터 수정** - 봇 응답만 선택
-4. **Qwen 타임아웃 증가** - 20초 안정화
-5. **v0/Claude 완료 감지 강화** - 추가 검증 로직
-6. **Zoom 상태 영구화** - LocalStorage 활용
+1. **셀렉터 대규모 추가** - 7개 모델 DOM 분석
+2. **Grok/LMArena 셀렉터 수정** - 봇 응답만 선택
+3. **Qwen 타임아웃 증가** - 20초 안정화
+4. **v0/Claude 완료 감지 강화** - 추가 검증 로직
+5. **Zoom 상태 영구화** - LocalStorage 활용
 
 ---
 
 ## 📝 코드 설계 원칙 준수 현황
 
-- ✅ **KISS**: 단순한 분기 로직 (perplexity vs iframe)
+- ✅ **KISS**: 단순한 분기 로직 유지
 - ✅ **DRY**: 통일된 콜백 인터페이스
-- ✅ **SRP**: sendToPerplexity, sendToIframe 분리
+- ✅ **SRP**: 전송 경로와 모니터링 책임 분리
 - ✅ **OCP**: 새 모델 타입 추가 시 기존 코드 불변
 - ⚠️ **현재 위반**: RESPONSE_CONFIGS 하드코딩 (재사용성 ↓)
 

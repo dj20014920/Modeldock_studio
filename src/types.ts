@@ -3,7 +3,6 @@ export type ModelId =
   | 'gemini'
   | 'claude'
   | 'chatgpt'
-  | 'perplexity'
   | 'deepseek'
   | 'grok'
   | 'qwen'
@@ -210,7 +209,7 @@ export type ModelCapability =
   | 'audio'       // GPT-4o Audio
   | 'video'       // Sora 2
   | 'realtime'    // GPT-Realtime
-  | 'search';     // GPT-4o Search, Perplexity
+  | 'search';     // GPT-4o Search
 
 export interface BYOKModelVariant {
   id: string;

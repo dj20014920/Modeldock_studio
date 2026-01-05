@@ -405,17 +405,8 @@ export const SidePanelApp: React.FC = () => {
       await Promise.all(sendPromises);
     }
 
-    // 2. Perplexity 특별 처리 (API 방식이지만 이미지 미지원)
-    const perplexityModels = activeModels.filter(m => m.modelId === 'perplexity');
-    if (perplexityModels.length > 0) {
-      console.log('[SidePanelApp] ⚠️ Perplexity does not support image input via API');
-      // Perplexity API는 현재 이미지 입력을 지원하지 않음
-    }
-
-    // 3. 일반 웹 모델(WebView/iframe) 처리 - 자동 붙여넣기 시도
-    const webModels = activeModels.filter(m =>
-      !m.modelId.startsWith('byok-') && m.modelId !== 'perplexity'
-    );
+    // 2. 일반 웹 모델(WebView/iframe) 처리 - 자동 붙여넣기 시도
+    const webModels = activeModels.filter(m => !m.modelId.startsWith('byok-'));
 
     // 클립보드 복사 (백업 및 수동 붙여넣기용)
     try {

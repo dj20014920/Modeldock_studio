@@ -2158,24 +2158,6 @@ function resolveManifestFromCache(hostname) {
       excludeUserMessage: true,
       stabilizationTime: 18000
     },
-    // === Perplexity ===
-    {
-      hosts: ['perplexity.ai', 'www.perplexity.ai'],
-      customParser: dynamicParser,
-      responseSelectors: [
-        'div.prose:last-of-type',
-        'div[dir="auto"]:last-of-type',
-        'div[class*="markdown"]:last-of-type'
-      ],
-      stopSelectors: [
-        'button[aria-label*="Stop"]',
-        'button:has(svg[data-icon="pause"])',
-        'button:has(svg[data-icon="stop"])'
-      ],
-      inputSelector: 'textarea[placeholder*="Ask anything"]',
-      submitSelector: 'button[type="submit"]',
-      stabilizationTime: 15000
-    },
     // === Grok (X/Twitter AI) ===
     // 🔧 v15.2 UPDATE: 실제 Grok DOM 구조 기반 (last-response + ProseMirror)
     {
@@ -2683,11 +2665,6 @@ function resolveManifestFromCache(hostname) {
       return Math.max(3000, baseThreshold);
     }
 
-    if (hostname.includes('perplexity.ai')) {
-      // Perplexity: 검색 시간 변동, 20% 증가, 최소 4초
-      return Math.max(4000, baseThreshold * 1.2);
-    }
-
     if (hostname.includes('chat.deepseek.com')) {
       // DeepSeek: R1 모델 감지
       const isR1Model = window.location.href.includes('deepthink') ||
@@ -2879,13 +2856,6 @@ function resolveManifestFromCache(hostname) {
     if (hostname.includes('grok.com') || hostname.includes('x.com')) {
       // Grok: Stop 버튼
       return document.querySelector('button[aria-label*="Stop"]') !== null;
-    }
-
-    if (hostname.includes('perplexity.ai')) {
-      // Perplexity: Stop + Pause 버튼
-      const stopBtn = document.querySelector('button[aria-label*="Stop"]') ||
-        document.querySelector('button:has(svg[data-icon="pause"])');
-      return stopBtn !== null;
     }
 
     if (hostname.includes('chat.deepseek.com')) {
@@ -4225,19 +4195,6 @@ function resolveManifestFromCache(hostname) {
       loadingIndicators: ['[class*="loading"]', '.bprogress'],
       // 🔑 전송 버튼: bg-primary 클래스 + disabled 시 opacity-40
       submitButton: '[data-testid="playground-composer"] button.bg-primary'
-    },
-
-    // ========== Perplexity (iframe 내부용) ==========
-    perplexity: {
-      hosts: ['perplexity.ai'],
-      stopButton: [
-        'button[aria-label*="Stop"]',
-        'button:has(svg[data-icon="pause"])'
-      ],
-      inputSelector: 'textarea',
-      inputDisabledCheck: (input) => input.disabled,
-      loadingIndicators: ['[class*="loading"]', '[class*="searching"]'],
-      submitButton: 'button[aria-label*="Submit"]'
     },
 
     // ========== GitHub Copilot ==========

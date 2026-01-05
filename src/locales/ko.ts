@@ -113,52 +113,9 @@ export default {
         privacyNote: '모든 데이터는 브라우저에 로컬로 저장됩니다.',
     },
 
-    // === Perplexity ===
-    perplexity: {
-        error: {
-            404: '리소스를 찾을 수 없습니다. 일일 검색 쿼터를 초과했거나 API 엔드포인트가 변경되었을 수 있습니다.',
-            403: '접근이 거부되었습니다. 로그인 상태를 확인하거나 perplexity.ai에서 보안 점검을 통과해주세요.',
-            429: '요청이 너무 많습니다. 사용 한도를 초과했습니다. 잠시 후 다시 시도해주세요.',
-            500: '서버 오류입니다. Perplexity 서버에 문제가 발생했습니다. 잠시 후 다시 시도해주세요.',
-            quotaExceeded: '{{tier}} 티어의 심층 연구(Deep Research) 쿼터를 초과했습니다. 일반 검색으로 전환하거나 플랜을 업그레이드하세요.',
-            generic: '오류가 발생했습니다: {{message}}',
-        },
-        tier: {
-            free: '무료',
-            pro: '프로',
-        },
-        login: {
-            required: '로그인 필요',
-            message: '심층 연구 및 파일 첨부와 같은 고급 기능을 사용하려면 Perplexity에 로그인해주세요.',
-            actionButton: 'Perplexity 열고 로그인하기',
-            featureLimited: '로그인하지 않으면 일부 기능이 제한됩니다',
-            tabOpened: 'Perplexity 로그인 탭을 열었습니다. 인증을 완료해주세요.',
-            alreadyLoggedIn: '이미 Perplexity에 로그인되어 있습니다',
-        },
-        quota: {
-            left: '남음',
-            selectTier: '구독 티어 선택',
-            freePlan: '무료 플랜',
-            proPlan: '프로 플랜',
-        },
-        chat: {
-            placeholder: '무엇이든 물어보세요...',
-            deepResearchPlaceholder: '심층 연구 질문을 입력하세요...',
-            emptyTitle: '지식이 시작되는 곳',
-            emptyDescription: '무엇이든 물어보세요. Perplexity가 인터넷을 검색하여 인용과 함께 답변을 제공합니다.',
-            thinking: 'Perplexity가 생각하고 있습니다...',
-            proSearch: '프로 검색',
-            quickSearch: '빠른 검색',
-            proSearchInfo: '프로 검색은 고급 모델을 사용합니다. {{remaining}}개 쿼리가 남았습니다.',
-            quickSearchInfo: '빠른 검색은 무제한이며 빠릅니다.',
-            attachment: '첨부파일',
-        },
-    },
-
     // === 알림 ===
     notifications: {
         loginRequired: '로그인 필요',
-        loginToPerplexity: '계속하려면 Perplexity에 로그인해주세요',
         featureRestricted: '이 기능은 제한되어 있습니다',
         networkError: '네트워크 오류. 연결을 확인해주세요.',
         unknownError: '알 수 없는 오류가 발생했습니다',

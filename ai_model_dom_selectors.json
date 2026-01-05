@@ -2,7 +2,7 @@
   "metadata": {
     "version": "1.0.0",
     "last_updated": "2025-12-04",
-    "description": "DOM selectors for 13 major AI chat interfaces",
+    "description": "DOM selectors for 12 major AI chat interfaces",
     "note": "These selectors may change as websites update. Always verify before use."
   },
   "models": {
@@ -284,49 +284,6 @@
         "usesNetworkMonitor": true,
         "disableInputOnGenerate": true,
         "hasThinkingMode": true
-      }
-    },
-    "perplexity": {
-      "name": "Perplexity AI",
-      "url": "https://perplexity.ai",
-      "selectors": {
-        "stop_button": {
-          "primary": "button[aria-label='Stop generating']",
-          "alternatives": [
-            "[data-testid='stop-button']",
-            "button.stop-generating"
-          ],
-          "detection": "button:has-text('Stop')"
-        },
-        "loading_indicator": {
-          "primary": "[data-testid='perplexity-loading']",
-          "alternatives": [
-            ".loading-animation",
-            "[aria-live='polite']"
-          ]
-        },
-        "input_field": {
-          "primary": "textarea[placeholder*='Ask anything']",
-          "alternatives": [
-            "[data-testid='search-input']",
-            "textarea.w-full"
-          ],
-          "disabled_detection": "textarea:disabled"
-        },
-        "response_area": {
-          "primary": "[data-testid='answer-container']",
-          "alternatives": [
-            ".prose",
-            "main article"
-          ]
-        },
-        "submit_button": {
-          "primary": "button[aria-label='Submit']",
-          "alternatives": [
-            "button[type='submit']",
-            "[data-testid='submit-button']"
-          ]
-        }
       }
     },
     "deepseek": {

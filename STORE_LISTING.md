@@ -25,10 +25,9 @@ Many AI websites intentionally prevent embedding via `X-Frame-Options` and `Cont
 - Use only in controlled development/research environments.
 - Do not use with sensitive data.
 - You must have legitimate access (accounts/subscriptions) to any AI website you use. This extension does not bypass logins or paywalls.
-- ModelDock Studio is not affiliated with OpenAI, Anthropic, Google, Perplexity, X Corp, or other providers. All trademarks belong to their respective owners.
+- ModelDock Studio is not affiliated with OpenAI, Anthropic, Google, X Corp, or other providers. All trademarks belong to their respective owners.
 
 [Privacy]
 No remote server. All data stays in your browser.
 
 ModelDock Studio does not operate a backend service and does not transmit your prompts, AI responses, cookies, or browsing data to any server controlled by us.
-

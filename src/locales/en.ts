@@ -113,52 +113,9 @@ export default {
         privacyNote: 'All data is stored locally in your browser.',
     },
 
-    // === Perplexity ===
-    perplexity: {
-        error: {
-            404: 'Resource not found. Daily search quota may be exceeded or API endpoint has changed.',
-            403: 'Access forbidden. Please check your login status or pass security check on perplexity.ai.',
-            429: 'Too many requests. You have exceeded your rate limit. Please try again later.',
-            500: 'Server error. Perplexity is experiencing issues. Please try again later.',
-            quotaExceeded: 'Deep Research quota exceeded for {{tier}} tier. Switch to Quick Search or upgrade your plan.',
-            generic: 'An error occurred: {{message}}',
-        },
-        tier: {
-            free: 'Free',
-            pro: 'Pro',
-        },
-        login: {
-            required: 'Login Required',
-            message: 'Please log in to Perplexity to use advanced features like Deep Research and file attachments.',
-            actionButton: 'Open Perplexity & Login',
-            featureLimited: 'Some features are limited without login',
-            tabOpened: 'Perplexity login tab opened. Please complete authentication.',
-            alreadyLoggedIn: 'Already logged in to Perplexity',
-        },
-        quota: {
-            left: 'left',
-            selectTier: 'Select Subscription Tier',
-            freePlan: 'Free Plan',
-            proPlan: 'Pro Plan',
-        },
-        chat: {
-            placeholder: 'Ask anything...',
-            deepResearchPlaceholder: 'Ask a deep research question...',
-            emptyTitle: 'Where knowledge begins',
-            emptyDescription: 'Ask anything. Perplexity searches the internet to give you an answer with citations.',
-            thinking: 'Perplexity is thinking...',
-            proSearch: 'Pro Search',
-            quickSearch: 'Quick Search',
-            proSearchInfo: 'Pro Search uses advanced models. {{remaining}} queries remaining.',
-            quickSearchInfo: 'Quick Search is unlimited and fast.',
-            attachment: 'Attachment',
-        },
-    },
-
     // === Notifications ===
     notifications: {
         loginRequired: 'Login Required',
-        loginToPerplexity: 'Please log in to Perplexity to continue',
         featureRestricted: 'This feature is restricted',
         networkError: 'Network error. Please check your connection.',
         unknownError: 'An unknown error occurred',
