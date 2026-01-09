@@ -355,4 +355,12 @@ Parse and synthesize the above responses, perform fact-checking, verification, a
         cacheAge: 'Updated {{minutes}} min ago',
         cached: 'Cached',
     },
+
+    // === Security Warning ===
+    securityWarning: {
+        title: 'Security Warning',
+        message: 'This extension modifies browser security headers for testing purposes. Do you agree?',
+        agree: 'I Agree',
+    },
+
 };

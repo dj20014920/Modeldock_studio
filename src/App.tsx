@@ -6,6 +6,7 @@ import { ChatMessageInput } from './components/ChatMessageInput';
 import { PromptLibrary } from './components/PromptLibrary';
 import { ModelCard } from './components/ModelCard';
 import { SettingsModal } from './components/SettingsModal';
+import { SecurityWarningModal } from './components/SecurityWarningModal';
 import { ModelId, ActiveModel, SidebarView, ChatMessage, ImageContentPart, MessageContentPart, BYOKProviderId } from './types';
 import { SUPPORTED_MODELS } from './constants';
 import { usePersistentState } from './hooks/usePersistentState';
@@ -567,6 +568,9 @@ export const App: React.FC = () => {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
       />
+
+      {/* Security Warning Modal (First Launch) */}
+      <SecurityWarningModal />
 
       {/* Prompt Library Modal */}
       <PromptLibrary

@@ -1,43 +1,44 @@
 # ModelDock Studio - Multi-AI Testing Platform
 
 ## Short Description (≤132 chars)
-Developer's tool to test LLMs side-by-side locally.
+Testing platform for AI developers to compare ChatGPT, Claude, Gemini & 11+ models side-by-side locally.
 
 ## Long Description
-[WARNING]
-This tool modifies browser headers for LOCAL TESTING PURPOSES ONLY.
 
-ModelDock Studio is a developer-focused testing utility to compare multiple AI web interfaces side-by-side in a single workspace. It is designed for debugging prompts, validating model behavior, and running repeatable comparison experiments using your own existing AI web sessions.
+⚠️ **FOR DEVELOPMENT, TESTING, AND RESEARCH PURPOSES ONLY**
 
-[Why X-Frame-Removal?]
-To allow developers to embed their own AI chat sessions for comparison without API costs.
+ModelDock Studio is a powerful local testing workspace designed for AI developers, researchers, and power users who need to compare multiple AI models simultaneously using their existing accounts.
 
-Many AI websites intentionally prevent embedding via `X-Frame-Options`, `Content-Security-Policy (frame-ancestors)`, `Cross-Origin-Opener-Policy`, and `Cross-Origin-Embedder-Policy`. For local testing, ModelDock Studio uses Chrome’s `declarativeNetRequest` to remove these response headers **only for subframe loads**, enabling your comparison layout inside the extension UI.
+### 🧪 Multi-Model Testing
+- **Test 11+ AI models side-by-side**: Compare responses from ChatGPT, Claude, Gemini, DeepSeek, Grok, and more in real-time.
+- **BrainFlow™ Orchestration**: Chain AI responses together for complex testing scenarios.
+- **Unified Interface**: One consistent UI for all your AI interactions.
 
-[Features]
-- Side-by-side LLM response comparison for testing and evaluation
-- Prompt injection simulation (auto or manual) for debugging workflows
-- Response monitoring signals to help determine “generating” vs “complete”
-- Repeatable test setup via local configuration (no remote backend)
-
-[Security / Responsible Use]
-- This extension disables important browser security mechanisms for embedded pages by removing anti-framing headers.
-- Use only in controlled development/research environments.
-- Do not use with sensitive data.
-- You must have legitimate access (accounts/subscriptions) to any AI website you use. This extension does not bypass logins or paywalls.
-- ModelDock Studio is not affiliated with OpenAI, Anthropic, Google, X Corp, or other providers. All trademarks belong to their respective owners.
-
-[Privacy]
-No remote server. All data stays in your browser.
-
-ModelDock Studio does not operate a backend service and does not transmit your prompts, AI responses, cookies, or browsing data to any server controlled by us.
+### 🔧 Developer-Focused Features
+- **BYOK (Bring Your Own Key)**: Support for API keys where available.
+- **Iframe-based Architecture**: Uses your actual logged-in web sessions for authentic model behavior testing.
+- **Prompt Library**: Manage and test prompts across different models.
+- **Local-First**: No remote backend. All configuration and history are stored locally on your machine.
 
 ---
 
-## [For Chrome Web Store - Justification]
-**Why do we need `<all_urls>` permission?**
-ModelDock Studio creates a side-by-side comparison view for AI models. This requires two capabilities that necessitate broader host permissions:
-1.  **Screenshot & Area Capture:** Users need to capture context from *any* active tab (e.g., coding documentation, news articles, internal tools) to send to the AI models in the side panel. The `activeTab` permission is insufficient for Side Panel interactions due to focus/context limitations.
-2.  **Universal AI Support:** Developers may use internal or less common AI interfaces (e.g., self-hosted LLMs, new startups). Restricting to a fixed list of domains would break functionality for these legitimate use cases.
+### ⚠️ Security Notice & Permissions
 
-**We only execute code on a page when the user explicitly triggers a capture action or loads a specific AI model.**
+**This extension modifies browser security headers (`X-Frame-Options` and `Content-Security-Policy`) for specific AI domains.**
+
+This is **REQUIRED** to allow these websites to be embedded within the ModelDock Studio interface for side-by-side comparison. By design, this disables certain browser security mechanisms for the embedded pages.
+
+*   **Intended Use**: Only use this extension in a **controlled development or research environment**.
+*   **Data Safety**: Do not use with highly sensitive or production data.
+*   **User Responsibility**: You are responsible for ensuring you have legitimate access to the AI services you use. This extension does **not** bypass login screens or paywalls.
+
+---
+
+### 🔒 Privacy Policy
+**We value your privacy.**
+- **No Remote Server**: ModelDock Studio does not operate a backend server.
+- **No Data Transmission**: Your prompts, chat history, and API keys are stored **locally** in your browser (`chrome.storage.local`). We cannot see your data.
+- **Direct Connection**: All network requests are made directly from your browser to the AI providers (OpenAI, Anthropic, etc.).
+
+### ⚖️ Legal Disclaimer
+ModelDock Studio is an independent open-source project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, X Corp, Perplexity AI, or any other AI service providers. All trademarks are the property of their respective owners.

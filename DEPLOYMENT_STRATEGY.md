@@ -1,4 +1,104 @@
-# 🚀 ModelDock Studio 배포 전략 및 Chrome Web Store 승인 가이드 (iframe 아키텍처 유지)
+# 🚀 ModelDock Studio Final Deployment Strategy
+
+## 📌 Executive Summary
+**"Portfolio First, Store Second"**
+
+We have decided to pivot from a pure "user acquisition" strategy to a **"High-Quality Engineering Portfolio"** strategy. Given the strict policies of the Chrome Web Store regarding `declarativeNetRequest` and `iframe` security headers, we will adopt a multi-tiered distribution approach that prioritizes developer accessibility and professional verification.
+
+---
+
+## 🗺️ Distribution Roadmap
+
+### Phase 1: Professional Portfolio (The "Source of Truth") 🌟
+**Target:** Recruiters, Fellow Developers, Tech Reviewers
+**Platform:** GitHub Releases
+**Status:** ✅ Ready Immediately
+
+1.  **GitHub Releases**:
+    *   Automated CI/CD build (`release.yml`).
+    *   Professional versioning (v1.0.0).
+    *   Artifact: `.zip` file for manual installation.
+    *   **Advantage**: Bypass all store reviews, immediate availability, proves capability to manage release pipelines.
+
+2.  **One-Line Demo**:
+    *   Command: `npm install && npm run modeldock`
+    *   **Mechanism**: Launches a temporary, isolated Chrome instance in Developer Mode with the extension pre-loaded.
+    *   **Advantage**: Zero-friction experience for developers checking the code.
+
+### Phase 2: The "Official Store" Badge (Low Hanging Fruit) 🥈
+**Target:** General Users, Verification of Legitimacy
+**Platforms:** Microsoft Edge Add-ons, Naver Whale Store
+**Status:** 📅 Next Week
+
+1.  **Microsoft Edge Add-ons**:
+    *   **Cost**: Free.
+    *   **Review**: Lenient (3-7 days).
+    *   **Strategy**: Register as "Productivity" tool. Edge is Chromium-based, so compatibility is 100%.
+    *   **Benefit**: Gives us a legitimate "Available in Store" badge to put on the README.
+
+2.  **Naver Whale Store**:
+    *   **Cost**: Free.
+    *   **Review**: Fast (3-5 days).
+    *   **Strategy**: Localized for Korean market.
+    *   **Benefit**: Strong appeal for domestic (Korean) portfolio reviews.
+
+### Phase 3: Chrome Web Store (The Challenge) 🥉
+**Target:** Power Users, Chrome Loyalists
+**Platform:** Chrome Web Store
+**Status:** 📅 Week 4+
+
+*   **Cost**: $5 (One-time).
+*   **Positioning**: **"Developer Tools"** (NOT General Productivity).
+*   **Key Justification**:
+    *   Allows `declarativeNetRequest` header modification for "testing & debugging" purposes.
+    *   Mandatory bold security warnings in description.
+*   **Fallback**: If rejected, we direct users to the "Developer Mode" installation via GitHub Releases, citing policy restrictions as a badge of honor ("Too powerful for the store").
+
+---
+
+## 📝 Store Listing Strategy
+
+### App Identity
+*   **Name**: ModelDock Studio
+*   **Tagline**: Multi-AI Testing Platform for Developers
+*   **Category**: **Developer Tools** (Crucial for Chrome approval)
+
+### Critical Disclaimers (Must include)
+To avoid policy violations and legal risks:
+1.  **"For Development/Testing Only"**: Explicitly state that header modifications are for local testing.
+2.  **"No Affiliation"**: Disclaim any relationship with OpenAI, Anthropic, Google, etc.
+3.  **"Security Warning"**: Warn users that `X-Frame-Options` are disabled for the frames within the tool.
+
+---
+
+## 🛠️ Technical Operations
+
+### 1. Build & Release
+We use GitHub Actions to automate the release process.
+*   **Trigger**: Push to tag `v*`
+*   **Output**: `modeldock-studio-v{version}.zip` in GitHub Releases.
+
+### 2. Local Demo Mode
+*   **Script**: `scripts/launch.cjs`
+*   **Behavior**:
+    *   Builds the project (`npm run build`).
+    *   Launches Chrome with `--load-extension=./dist`.
+    *   Uses a temporary user data dir to avoid messing with user's main profile.
+
+### 3. Header Modification Rules
+*   **File**: `public/net_request_rules.json`
+*   **Scope**: Restricted strictly to the domains of supported AI providers (e.g., `*.openai.com`, `*.claude.ai`).
+*   **Justification**: "Necessary for embedding third-party AI interfaces for side-by-side comparison in a local development environment."
+
+---
+
+## ✅ Checklist for Launch
+
+- [ ] **GitHub**: Create Release v1.0.0 with `.zip`.
+- [ ] **Assets**: Prepare 5 Screenshots (1280x800) & Promotile (440x280).
+- [ ] **Edge**: Create Developer Account & Submit.
+- [ ] **Chrome**: Create Developer Account ($5) & Submit as "Developer Tool".
+- [ ] **Marketing**: Update README with "Available on Edge" badge (once approved).
 
 ## 📌 핵심 발견: iframe 아키텍처로도 승인 가능!
 

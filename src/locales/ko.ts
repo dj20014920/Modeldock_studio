@@ -359,4 +359,12 @@ export default {
         cacheAge: '{{minutes}}분 전 갱신',
         cached: '캐시됨',
     },
+
+    // === Security Warning ===
+    securityWarning: {
+        title: '보안 경고',
+        message: '이 확장 프로그램은 테스트 목적으로 브라우저 보안 헤더를 수정합니다. 동의하십니까?',
+        agree: '동의합니다',
+    },
+
 };
