@@ -1,5 +1,5 @@
 {
   "name": "ModelDock",
-  "description": "A unified interface for AI models using Electron, optimized for multitasking with Gemini, Claude, and more.",
+  "description": "A unified interface for AI models, optimized for multitasking with Gemini, Claude, and more. Built for Chrome.",
   "requestFramePermissions": []
 }

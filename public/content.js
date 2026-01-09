@@ -537,7 +537,16 @@ function resolveManifestFromCache(hostname) {
   }
 
   // --- postMessage Bridge (iframe <-> parent) ---
+  // 🔒 SECURITY: Strict Origin Verification (Fixed v1.1.2)
+  const EXTENSION_ORIGIN = chrome.runtime.getURL('').slice(0, -1);
+
   window.addEventListener('message', async (event) => {
+    // 🛡️ CRITICAL: Block messages from untrusted origins
+    if (event.origin !== EXTENSION_ORIGIN) {
+      // Ignore unknown origins (noise reduction)
+      return;
+    }
+
     const data = event.data;
     if (!data || data.type !== 'MODEL_DOCK_INJECT_TEXT') return;
     const { text, targets, requestId, submit = true, forceKey = false, modelId, skipInject = false } = data.payload || {};
@@ -554,7 +563,7 @@ function resolveManifestFromCache(hostname) {
           host: window.location.host,
           modelId
         }
-      }, '*');
+      }, EXTENSION_ORIGIN); // 🔒 SECURE: Send only to our extension
     } catch (err) {
       console.warn('[ModelDock] Response postMessage failed', err);
     }
@@ -575,6 +584,9 @@ function resolveManifestFromCache(hostname) {
 
   // PostMessage Bridge for Images (if needed via iframe)
   window.addEventListener('message', async (event) => {
+    // 🛡️ CRITICAL: Origin Check
+    if (event.origin !== EXTENSION_ORIGIN) return;
+
     const data = event.data;
     if (!data || data.type !== 'MODEL_DOCK_INJECT_IMAGE') return;
 
@@ -592,7 +604,7 @@ function resolveManifestFromCache(hostname) {
           status: result.status,
           host: window.location.host
         }
-      }, '*');
+      }, EXTENSION_ORIGIN); // 🔒 SECURE
     } catch (err) {
       console.warn('[ModelDock] Image response postMessage failed', err);
     }

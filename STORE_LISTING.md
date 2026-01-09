@@ -12,7 +12,7 @@ ModelDock Studio is a developer-focused testing utility to compare multiple AI w
 [Why X-Frame-Removal?]
 To allow developers to embed their own AI chat sessions for comparison without API costs.
 
-Many AI websites intentionally prevent embedding via `X-Frame-Options` and `Content-Security-Policy (frame-ancestors)`. For local testing, ModelDock Studio uses Chrome’s `declarativeNetRequest` to remove these response headers **only for subframe loads**, enabling your comparison layout inside the extension UI.
+Many AI websites intentionally prevent embedding via `X-Frame-Options`, `Content-Security-Policy (frame-ancestors)`, `Cross-Origin-Opener-Policy`, and `Cross-Origin-Embedder-Policy`. For local testing, ModelDock Studio uses Chrome’s `declarativeNetRequest` to remove these response headers **only for subframe loads**, enabling your comparison layout inside the extension UI.
 
 [Features]
 - Side-by-side LLM response comparison for testing and evaluation
@@ -31,3 +31,13 @@ Many AI websites intentionally prevent embedding via `X-Frame-Options` and `Cont
 No remote server. All data stays in your browser.
 
 ModelDock Studio does not operate a backend service and does not transmit your prompts, AI responses, cookies, or browsing data to any server controlled by us.
+
+---
+
+## [For Chrome Web Store - Justification]
+**Why do we need `<all_urls>` permission?**
+ModelDock Studio creates a side-by-side comparison view for AI models. This requires two capabilities that necessitate broader host permissions:
+1.  **Screenshot & Area Capture:** Users need to capture context from *any* active tab (e.g., coding documentation, news articles, internal tools) to send to the AI models in the side panel. The `activeTab` permission is insufficient for Side Panel interactions due to focus/context limitations.
+2.  **Universal AI Support:** Developers may use internal or less common AI interfaces (e.g., self-hosted LLMs, new startups). Restricting to a fixed list of domains would break functionality for these legitimate use cases.
+
+**We only execute code on a page when the user explicitly triggers a capture action or loads a specific AI model.**
